@@ -2,3 +2,6 @@ node_modules/
 dist/
 *.tgz
 .DS_Store
+
+# Ignore agent memory / scratch docs in any tmp directory
+tmp/
