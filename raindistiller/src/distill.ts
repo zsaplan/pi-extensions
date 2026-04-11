@@ -4,8 +4,11 @@ import path from "node:path";
 import { withFileMutationQueue } from "@mariozechner/pi-coding-agent";
 import {
   extractBulletText,
+  lintKnowledgeBase,
   parseFactFileContent,
+  parseStructuredFactBulletText,
   renderMarkdown,
+  renderStructuredFactBullet,
   resolveMarkdownFiles,
   scanDuplicateCandidateGroups,
   type DuplicateCandidateGroup,
@@ -58,10 +61,31 @@ type ApplyFileResult = {
   removedCount: number;
 };
 
+function summarizeFiles(files: string[], max = 5): string {
+  if (files.length <= max) return files.join(", ");
+  return `${files.slice(0, max).join(", ")}, ...`;
+}
+
+function getStructuredCanonicalFact(text: string): string | null {
+  try {
+    return renderStructuredFactBullet(parseStructuredFactBulletText(text));
+  } catch {
+    return null;
+  }
+}
+
+function getStructuredKeepOccurrenceId(group: DuplicateGroup): string | undefined {
+  for (const occurrence of group.occurrences) {
+    if (getStructuredCanonicalFact(occurrence.text)) return occurrence.id;
+  }
+
+  return group.occurrences[0]?.id;
+}
+
 function buildDefaultDecision(group: DuplicateGroup): DuplicateGroupDecision {
   return {
     action: "dedupe",
-    keepOccurrenceId: group.occurrences[0]?.id,
+    keepOccurrenceId: getStructuredKeepOccurrenceId(group),
     reason: group.kind === "exact" ? "default exact-match dedupe" : "default near-duplicate dedupe",
   };
 }
@@ -69,7 +93,13 @@ function buildDefaultDecision(group: DuplicateGroup): DuplicateGroupDecision {
 function validateDecision(group: DuplicateGroup, decision: DuplicateGroupDecision): DuplicateGroupDecision | null {
   if (decision.action === "keep_all") return decision;
   if (!decision.keepOccurrenceId) return null;
-  if (!group.occurrences.some((occurrence) => occurrence.id === decision.keepOccurrenceId)) return null;
+
+  const keptOccurrence = group.occurrences.find((occurrence) => occurrence.id === decision.keepOccurrenceId);
+  if (!keptOccurrence) return null;
+
+  const hasStructuredOccurrence = group.occurrences.some((occurrence) => getStructuredCanonicalFact(occurrence.text) !== null);
+  if (hasStructuredOccurrence && getStructuredCanonicalFact(keptOccurrence.text) === null) return null;
+
   return decision;
 }
 
@@ -135,9 +165,26 @@ export async function distillKnowledgeFiles(
     directories: request.directories,
     recursive: request.recursive,
   });
-  const scannedFiles = selection.files;
   const warnings = [...selection.warnings];
+  const kbLint = lintKnowledgeBase(request.kbRoot);
+  warnings.push(...kbLint.warnings);
 
+  const malformedKbFiles = [...new Set(kbLint.issues.map((issue) => issue.file))].sort();
+  if (malformedKbFiles.length > 0) {
+    warnings.push(
+      `KB contains ${malformedKbFiles.length} malformed fact file${malformedKbFiles.length === 1 ? "" : "s"}; structured dedupe will prefer lint-clean occurrences. Examples: ${summarizeFiles(malformedKbFiles)}`,
+    );
+  }
+
+  const malformedKbFileSet = new Set(malformedKbFiles);
+  const skippedSelectedFiles = selection.files.filter((file) => malformedKbFileSet.has(file));
+  if (skippedSelectedFiles.length > 0) {
+    warnings.push(
+      `Skipped ${skippedSelectedFiles.length} malformed selected fact file${skippedSelectedFiles.length === 1 ? "" : "s"} from distillation: ${summarizeFiles(skippedSelectedFiles)}`,
+    );
+  }
+
+  const scannedFiles = selection.files.filter((file) => !malformedKbFileSet.has(file));
   if (scannedFiles.length === 0) {
     return {
       kbRoot: request.kbRoot,

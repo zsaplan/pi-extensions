@@ -1,7 +1,12 @@
 import fs from "node:fs";
 import { completeSimple, type AssistantMessage, type ThinkingLevel } from "@mariozechner/pi-ai";
 import { getAgentDir, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { KB_ROOT_ENV_VAR, getKbRoot } from "../../rain-core/src/index.ts";
+import {
+  KB_ROOT_ENV_VAR,
+  getKbRoot,
+  parseStructuredFactBulletText,
+  renderStructuredFactBullet,
+} from "../../rain-core/src/index.ts";
 import {
   type DistillRequest,
   type DistillResult,
@@ -72,6 +77,7 @@ Rules:
 - Use dedupe only when the occurrences clearly express the same durable fact.
 - keepOccurrenceId must exactly match one provided occurrenceId.
 - Prefer keeping a non-selected existing KB occurrence over a selected occurrence when equally canonical.
+- Prefer valid structured occurrences over malformed or legacy occurrences when the fact is otherwise the same.
 - Prefer more specific and authoritative-looking file context over generic context.
 - Never invent an occurrenceId.`;
 
@@ -192,9 +198,31 @@ function parseDecision(text: string): DuplicateGroupDecision {
   return parsed;
 }
 
+function describeStructuredOccurrence(text: string): {
+  canonical: string;
+  relation: string;
+  object: string;
+  qualifiers: string[];
+} | null {
+  try {
+    const parsed = parseStructuredFactBulletText(text);
+    return {
+      canonical: renderStructuredFactBullet(parsed),
+      relation: parsed.relation,
+      object: parsed.object,
+      qualifiers: parsed.qualifiers.map((qualifier) => `${qualifier.key}=${qualifier.value}`),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function buildAdjudicationPrompt(group: DuplicateGroup): string {
+  const structuredById = new Map(group.occurrences.map((occurrence) => [occurrence.id, describeStructuredOccurrence(occurrence.text)]));
+
   const renderedOccurrences = group.occurrences
     .map((occurrence, index) => {
+      const structured = structuredById.get(occurrence.id) ?? null;
       return [
         `Occurrence ${index + 1}`,
         `occurrenceId: ${occurrence.id}`,
@@ -204,17 +232,33 @@ function buildAdjudicationPrompt(group: DuplicateGroup): string {
         `lineNumber: ${occurrence.lineNumber}`,
         `normalized: ${occurrence.normalized}`,
         `fact: ${occurrence.text}`,
+        `structured: ${structured ? "valid" : "invalid_or_legacy"}`,
+        ...(structured
+          ? [
+            `canonicalStructured: ${structured.canonical}`,
+            `relation: ${structured.relation}`,
+            `object: ${structured.object}`,
+            `qualifiers: ${structured.qualifiers.length > 0 ? structured.qualifiers.join(", ") : "(none)"}`,
+          ]
+          : []),
       ].join("\n");
     })
     .join("\n\n");
 
   const strongestPairs = group.strongestPairs.length > 0
     ? group.strongestPairs.map((pair, index) => {
+      const leftStructured = structuredById.get(pair.leftId) ?? null;
+      const rightStructured = structuredById.get(pair.rightId) ?? null;
+      const structuredExact = leftStructured && rightStructured
+        ? leftStructured.canonical === rightStructured.canonical
+        : null;
+
       return [
         `Pair ${index + 1}`,
         `leftId: ${pair.leftId}`,
         `rightId: ${pair.rightId}`,
         `exactNormalized: ${pair.similarity.exactNormalized ? "true" : "false"}`,
+        `structuredExact: ${structuredExact === null ? "unknown" : structuredExact ? "true" : "false"}`,
         `sharedTokenCount: ${pair.similarity.sharedTokenCount}`,
         `tokenJaccard: ${pair.similarity.tokenJaccard.toFixed(2)}`,
         `trigramJaccard: ${pair.similarity.trigramJaccard.toFixed(2)}`,
@@ -230,6 +274,7 @@ function buildAdjudicationPrompt(group: DuplicateGroup): string {
     "If these occurrences are the same durable fact in context, choose one keepOccurrenceId.",
     "If the occurrences differ materially in scope, meaning, or ownership, keep_all.",
     "Prefer keeping non-selected existing KB occurrences over selected occurrences when equally canonical.",
+    "Prefer valid structured occurrences over malformed or legacy occurrences when the fact is otherwise the same.",
     "",
     `Group id: ${group.id}`,
     `Group kind: ${group.kind}`,

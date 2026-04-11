@@ -18,7 +18,8 @@ This package is the shared deterministic substrate for the Rain extension repo.
 - KB root resolution
 - safe root-relative path handling
 - markdown file discovery
-- raincatcher-style fact-file parsing
+- canonical structured fact parsing
+- canonical fact-schema validation and linting
 - fact normalization helpers
 - fact record construction
 - lexical similarity scoring
@@ -47,8 +48,15 @@ Those concerns belong in package-specific orchestration layers such as `raindist
   - root-relative path safety
 - `src/markdown.ts`
   - markdown file inventory and selection expansion
+- `src/factSchema.ts`
+  - strict structured fact grammar
+  - centralized allowed relation set
+  - structured fact bullet parsing helpers
+- `src/lint.ts`
+  - fact-file linting
+  - KB-root markdown lint aggregation
 - `src/facts.ts`
-  - fact bullet parsing and normalization
+  - legacy generic fact bullet parsing and normalization helpers used by current consumers
 - `src/dedupe.ts`
   - fact records, lexical similarity, blocking, and duplicate candidate clustering
 - `src/index.ts`
@@ -59,10 +67,14 @@ Those concerns belong in package-specific orchestration layers such as `raindist
 - `raincatcher`
   - KB root/path helpers
   - fact normalization and filename helpers
+  - structured fact parsing/linting will be the canonical contract for future writes
 - `raindistiller`
   - markdown selection helpers
   - fact parsing helpers
   - duplicate candidate generation
+  - structured fact parsing/linting can gate future KB hygiene workflows
+- `rainman`
+  - structured fact parsing/linting can gate future evidence ingestion and verification hygiene
 
 ## Design intent
 

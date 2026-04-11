@@ -8,10 +8,13 @@ A pi extension that distills Raincatcher knowledge files using model-reviewed ex
 - Auto-runs after captures using the written files as the target set
 - Compares those files against the full KB before removing duplicates
 - Uses a lightweight lexical dedupe core to generate exact and near-duplicate candidate groups
+- Augments candidate review with canonical structured-fact parsing when occurrences are valid structured bullets
 - Uses the active pi model to adjudicate each candidate group conservatively before removal
 - Defaults to `medium` reasoning for automatic post-capture distillation
 - Defaults to `xhigh` reasoning for manual `/raindistiller distill` runs
 - Prefers keeping existing KB copies over newly captured duplicates when possible
+- Prefers valid structured occurrences over malformed or legacy occurrences when deduping
+- Warns when malformed fact files exist and skips malformed selected files from mutation
 - Deletes empty raincatcher-generated fact files after dedupe
 - Supports manual distillation of explicit files and directories
 

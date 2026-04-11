@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import path from "node:path";
 import { Type, type Static } from "@sinclair/typebox";
 import {
   DefaultResourceLoader,
@@ -10,6 +9,21 @@ import {
   type ExtensionAPI,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
+import {
+  KB_ROOT_ENV_VAR,
+  STRUCTURED_FACT_SYNTAX_GUIDANCE,
+  ensureMarkdownRelativePath,
+  ensureWithinRoot,
+  getKbRoot as getSharedKbRoot,
+  lintKnowledgeBase,
+  listMarkdownFiles,
+  normalizeNewlines,
+  parseStructuredFactFileContent,
+  renderStructuredFactBullet,
+  splitIntoLines,
+  toRootRelativePath,
+  type FactLintIssue,
+} from "../../rain-core/src/index.ts";
 
 type Citation = {
   path: string;
@@ -31,11 +45,21 @@ type VerificationResult = {
   };
 };
 
+type StructuredReadFact = {
+  lineNumber: number;
+  canonical: string;
+  relation: string;
+  object: string;
+  qualifiers: string[];
+};
+
 type ReadOutput = {
   filePath: string;
   startLine: number;
   endLine: number;
   totalLines: number;
+  heading: string | null;
+  structuredFacts: StructuredReadFact[];
   content: string;
 };
 
@@ -50,6 +74,14 @@ type SubmitResultInput = VerificationResult;
 type ValidationContext = {
   kbRoot: string;
   model: string;
+  fileIndex?: FactFileIndex;
+};
+
+type FactFileIndex = {
+  validFiles: string[];
+  validFileSet: Set<string>;
+  invalidFiles: Array<{ file: string; issues: FactLintIssue[] }>;
+  warnings: string[];
 };
 
 type RainmanQueryEntry = {
@@ -124,8 +156,6 @@ const grepParameters = Type.Object({
   limit: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 
-const DEFAULT_KB_ROOT = path.join(getAgentDir(), "data", "raincatcher");
-const KB_ROOT_ENV_VAR = "PI_RAINMAN_KB_ROOT";
 const QUERY_ENTRY_TYPE = "rainman-query";
 const DEFAULT_READ_LIMIT = 200;
 const DEFAULT_FIND_LIMIT = 20;
@@ -135,9 +165,12 @@ const MAX_REPAIR_ATTEMPTS = 1;
 const MAX_AGENT_EXECUTION_MS = 20_000;
 
 const SYSTEM_PROMPT = `You are a correctness-first verification agent.
-You answer only from markdown files inside the configured knowledge root.
+Knowledge files use the strict canonical Rain fact format.
+${STRUCTURED_FACT_SYNTAX_GUIDANCE}
+You answer only from lint-clean markdown files inside the configured knowledge root.
 Use find and grep only for navigation.
 Only read output counts as evidence.
+The read tool returns raw line-numbered content plus parsed structured fact summaries for the requested range.
 Every populated field in data must have one or more exact citations.
 If the knowledge base cannot safely answer, return status insufficient_evidence.
 If relevant knowledge files conflict, return status conflict.
@@ -172,17 +205,6 @@ class ResultValidationError extends Error {
     this.code = code;
     this.details = details;
   }
-}
-
-function normalizeNewlines(value: string): string {
-  return value.replace(/\r\n/g, "\n");
-}
-
-function splitIntoLines(value: string): string[] {
-  const normalized = normalizeNewlines(value);
-  const lines = normalized.split("\n");
-  if (normalized.endsWith("\n")) lines.pop();
-  return lines;
 }
 
 function escapeSegment(segment: string | number): string {
@@ -236,8 +258,7 @@ function collectLeafPointers(value: unknown, baseSegments: Array<string | number
 }
 
 function getKbRoot(): string {
-  const fromEnv = process.env[KB_ROOT_ENV_VAR]?.trim();
-  return fromEnv ? path.resolve(fromEnv) : DEFAULT_KB_ROOT;
+  return getSharedKbRoot(getAgentDir());
 }
 
 function ensureKbReady(kbRoot: string): void {
@@ -250,66 +271,75 @@ function ensureKbReady(kbRoot: string): void {
   }
 }
 
-function ensureMarkdownRelativePath(filePath: string): void {
-  if (!filePath.endsWith(".md")) {
-    throw new ToolInputError("NON_MARKDOWN_FILE", "Only markdown files are allowed", { filePath });
-  }
-
-  if (path.isAbsolute(filePath)) {
-    throw new ToolInputError("PATH_ESCAPE", "Absolute paths are not allowed", { filePath });
+function ensureKnowledgeMarkdownPath(filePath: string): void {
+  try {
+    ensureMarkdownRelativePath(filePath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const code = message.includes("Only markdown files") ? "NON_MARKDOWN_FILE" : "PATH_ESCAPE";
+    throw new ToolInputError(code, message, { filePath });
   }
 }
 
 function ensureWithinKbRoot(kbRoot: string, relativePath: string): string {
-  const realKbRoot = fs.realpathSync.native(kbRoot);
-  const candidatePath = path.resolve(realKbRoot, relativePath);
-  const actualPath = fs.existsSync(candidatePath) ? fs.realpathSync.native(candidatePath) : candidatePath;
-  const relative = path.relative(realKbRoot, actualPath);
-
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new ToolInputError("PATH_ESCAPE", "Path escapes knowledge root", {
-      kbRoot: realKbRoot,
+  try {
+    return ensureWithinRoot(kbRoot, relativePath);
+  } catch (error) {
+    throw new ToolInputError("PATH_ESCAPE", error instanceof Error ? error.message : String(error), {
+      kbRoot,
       relativePath,
     });
   }
-
-  return actualPath;
 }
 
 function toKbRelativePath(kbRoot: string, absolutePath: string): string {
-  const realKbRoot = fs.realpathSync.native(kbRoot);
-  const actualPath = fs.existsSync(absolutePath) ? fs.realpathSync.native(absolutePath) : absolutePath;
-  const relative = path.relative(realKbRoot, actualPath);
-
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new ToolInputError("PATH_ESCAPE", "Resolved path escapes knowledge root", { absolutePath });
+  try {
+    return toRootRelativePath(kbRoot, absolutePath);
+  } catch (error) {
+    throw new ToolInputError("PATH_ESCAPE", error instanceof Error ? error.message : String(error), {
+      kbRoot,
+      absolutePath,
+    });
   }
-
-  return relative.split(path.sep).join("/");
 }
 
-function listMarkdownFiles(kbRoot: string): string[] {
-  const entries: string[] = [];
-
-  function walk(currentDir: string): void {
-    const directoryEntries = fs.readdirSync(currentDir, { withFileTypes: true });
-    for (const entry of directoryEntries) {
-      const fullPath = path.join(currentDir, entry.name);
-      if (entry.isDirectory()) {
-        walk(fullPath);
-        continue;
-      }
-
-      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-      entries.push(toKbRelativePath(kbRoot, fullPath));
-    }
-  }
-
-  walk(kbRoot);
-  return entries.sort();
+function summarizeFiles(files: string[], max = 5): string {
+  if (files.length <= max) return files.join(", ");
+  return `${files.slice(0, max).join(", ")}, ...`;
 }
 
-function readTool(kbRoot: string, input: Static<typeof readParameters>): ReadOutput {
+function buildFactFileIndex(kbRoot: string): FactFileIndex {
+  const lintResult = lintKnowledgeBase(kbRoot);
+  const issuesByFile = new Map<string, FactLintIssue[]>();
+
+  for (const issue of lintResult.issues) {
+    const list = issuesByFile.get(issue.file) ?? [];
+    list.push(issue);
+    issuesByFile.set(issue.file, list);
+  }
+
+  const allFiles = listMarkdownFiles(kbRoot);
+  const invalidFiles = [...issuesByFile.entries()]
+    .map(([file, issues]) => ({ file, issues }))
+    .sort((left, right) => left.file.localeCompare(right.file));
+  const validFiles = allFiles.filter((file) => !issuesByFile.has(file));
+  const warnings = [...lintResult.warnings];
+
+  if (invalidFiles.length > 0) {
+    warnings.push(
+      `Skipped ${invalidFiles.length} malformed fact file${invalidFiles.length === 1 ? "" : "s"} from evidence: ${summarizeFiles(invalidFiles.map((entry) => entry.file))}`,
+    );
+  }
+
+  return {
+    validFiles,
+    validFileSet: new Set(validFiles),
+    invalidFiles,
+    warnings,
+  };
+}
+
+function readTool(kbRoot: string, fileIndex: FactFileIndex, input: Static<typeof readParameters>): ReadOutput {
   const offset = input.offset ?? 1;
   const limit = input.limit ?? DEFAULT_READ_LIMIT;
 
@@ -321,41 +351,61 @@ function readTool(kbRoot: string, input: Static<typeof readParameters>): ReadOut
     throw new ToolInputError("INVALID_LIMIT", "limit must be a positive integer", { limit });
   }
 
-  ensureMarkdownRelativePath(input.filePath);
+  ensureKnowledgeMarkdownPath(input.filePath);
+  if (!fileIndex.validFileSet.has(input.filePath)) {
+    throw new ToolInputError(
+      "INVALID_FACT_FILE",
+      "File is malformed or unavailable as structured evidence.",
+      { filePath: input.filePath },
+    );
+  }
+
   const absolutePath = ensureWithinKbRoot(kbRoot, input.filePath);
   const content = fs.readFileSync(absolutePath, "utf8");
   const lines = splitIntoLines(content);
+  const parsed = parseStructuredFactFileContent(content);
   const startIndex = Math.min(offset - 1, lines.length);
   const selectedLines = lines.slice(startIndex, startIndex + limit);
   const startLine = selectedLines.length > 0 ? startIndex + 1 : offset;
   const endLine = selectedLines.length > 0 ? startIndex + selectedLines.length : startIndex;
+  const structuredFacts = parsed.bullets
+    .filter((bullet) => bullet.lineNumber >= startLine && bullet.lineNumber <= endLine)
+    .map((bullet) => ({
+      lineNumber: bullet.lineNumber,
+      canonical: renderStructuredFactBullet(bullet.parsed),
+      relation: bullet.parsed.relation,
+      object: bullet.parsed.object,
+      qualifiers: bullet.parsed.qualifiers.map((qualifier) => `${qualifier.key}=${qualifier.value}`),
+    }));
 
   return {
     filePath: toKbRelativePath(kbRoot, absolutePath),
     startLine,
     endLine,
     totalLines: lines.length,
+    heading: parsed.heading,
+    structuredFacts,
     content: selectedLines.map((line, index) => `${startIndex + index + 1} | ${line}`).join("\n"),
   };
 }
 
-function findTool(kbRoot: string, input: Static<typeof findParameters>): string[] {
+function findTool(fileIndex: FactFileIndex, input: Static<typeof findParameters>): string[] {
   const query = input.query.trim().toLowerCase();
   const limit = input.limit ?? DEFAULT_FIND_LIMIT;
 
-  return listMarkdownFiles(kbRoot)
+  return fileIndex.validFiles
     .filter((file) => file.toLowerCase().includes(query))
     .slice(0, limit);
 }
 
-function grepTool(kbRoot: string, input: Static<typeof grepParameters>): GrepHit[] {
+function grepTool(kbRoot: string, fileIndex: FactFileIndex, input: Static<typeof grepParameters>): GrepHit[] {
   const pattern = input.pattern.trim().toLowerCase();
   const limit = input.limit ?? DEFAULT_GREP_LIMIT;
   if (!pattern) return [];
 
   const hits: GrepHit[] = [];
-  for (const file of listMarkdownFiles(kbRoot)) {
-    const content = fs.readFileSync(path.join(kbRoot, file), "utf8");
+  for (const file of fileIndex.validFiles) {
+    const content = fs.readFileSync(ensureWithinKbRoot(kbRoot, file), "utf8");
     const lines = splitIntoLines(content);
     for (let index = 0; index < lines.length; index += 1) {
       const line = lines[index] ?? "";
@@ -375,7 +425,7 @@ function grepTool(kbRoot: string, input: Static<typeof grepParameters>): GrepHit
 }
 
 function readCitationLines(kbRoot: string, relativeFilePath: string, startLine: number, endLine: number): string {
-  ensureMarkdownRelativePath(relativeFilePath);
+  ensureKnowledgeMarkdownPath(relativeFilePath);
   const absolutePath = ensureWithinKbRoot(kbRoot, relativeFilePath);
   const content = fs.readFileSync(absolutePath, "utf8");
   const lines = splitIntoLines(content);
@@ -392,7 +442,7 @@ function readCitationLines(kbRoot: string, relativeFilePath: string, startLine: 
   return lines.slice(startLine - 1, endLine).join("\n");
 }
 
-function validateCitations(kbRoot: string, citations: Citation[]): void {
+function validateCitations(kbRoot: string, citations: Citation[], fileIndex?: FactFileIndex): void {
   for (const citation of citations) {
     if (!citation.path.startsWith("/data")) {
       throw new ResultValidationError("INVALID_CITATION_PATH", "Citation path must target /data", {
@@ -400,8 +450,14 @@ function validateCitations(kbRoot: string, citations: Citation[]): void {
       });
     }
 
-    ensureMarkdownRelativePath(citation.file);
+    ensureKnowledgeMarkdownPath(citation.file);
     ensureWithinKbRoot(kbRoot, citation.file);
+
+    if (fileIndex && !fileIndex.validFileSet.has(citation.file)) {
+      throw new ResultValidationError("INVALID_CITATION_FILE", "Citation file is malformed or unavailable as structured evidence", {
+        file: citation.file,
+      });
+    }
 
     if (citation.endLine < citation.startLine) {
       throw new ResultValidationError(
@@ -494,7 +550,7 @@ function validateResult(input: SubmitResultInput, context: ValidationContext): V
     }
   }
 
-  validateCitations(context.kbRoot, input.citations);
+  validateCitations(context.kbRoot, input.citations, context.fileIndex);
   validateFieldCoverage(input.data, input.citations);
 
   if (status === "answered" && typeof input.data.answer !== "string") {
@@ -543,11 +599,18 @@ function toToolErrorMessage(error: unknown): string {
 
 function formatReadResult(result: ReadOutput): string {
   const linesSection = result.content || "(no content in requested range)";
+  const structuredFactsSection = result.structuredFacts.length > 0
+    ? result.structuredFacts.map((fact) => `- line ${fact.lineNumber} | ${fact.canonical}`).join("\n")
+    : "(none in requested range)";
+
   return [
     `file: ${result.filePath}`,
+    `heading: ${result.heading ?? "(none)"}`,
     `startLine: ${result.startLine}`,
     `endLine: ${result.endLine}`,
     `totalLines: ${result.totalLines}`,
+    "structured_facts:",
+    structuredFactsSection,
     "content:",
     linesSection,
   ].join("\n");
@@ -563,11 +626,13 @@ function formatGrepResult(matches: GrepHit[]): string {
   return matches.map((match) => `${match.file}:${match.lineNumber} | ${match.line}`).join("\n");
 }
 
-function buildPrompt(question: string): string {
+function buildPrompt(question: string, fileIndex: FactFileIndex): string {
   return [
     "Answer the question using only markdown evidence from the knowledge root.",
     "Use grep and find only for navigation.",
-    "Use read to gather exact evidence.",
+    "Use read to gather exact evidence from lint-clean structured fact files.",
+    `Available structured fact files: ${fileIndex.validFiles.length}`,
+    `Malformed fact files unavailable as evidence: ${fileIndex.invalidFiles.length}`,
     "Prefer the smallest valid data payload.",
     "For a normal direct answer, use data.answer and cite /data/answer.",
     "When you are ready, call submit_result.",
@@ -631,13 +696,14 @@ function createCustomTools(
   kbRoot: string,
   modelName: string,
   submittedResult: { value?: VerificationResult },
+  fileIndex: FactFileIndex,
 ): ToolDefinition[] {
   return [
     {
       name: "read",
       label: "Read",
-      description: "Read a markdown file under the knowledge root and return stable line-numbered content.",
-      promptSnippet: "read(filePath, offset?, limit?) - read markdown evidence with stable line numbers",
+      description: "Read a lint-clean structured fact file under the knowledge root and return line-numbered content plus parsed fact summaries.",
+      promptSnippet: "read(filePath, offset?, limit?) - read structured markdown evidence with stable line numbers",
       promptGuidelines: [
         "Use read to gather evidence.",
         "Only read output counts as evidence.",
@@ -646,7 +712,7 @@ function createCustomTools(
       parameters: readParameters,
       execute: async (_toolCallId, params: Static<typeof readParameters>) => {
         try {
-          const result = readTool(kbRoot, params);
+          const result = readTool(kbRoot, fileIndex, params);
           return {
             content: [{ type: "text", text: formatReadResult(result) }],
             details: result,
@@ -665,7 +731,7 @@ function createCustomTools(
       parameters: findParameters,
       execute: async (_toolCallId, params: Static<typeof findParameters>) => {
         try {
-          const result = findTool(kbRoot, params);
+          const result = findTool(fileIndex, params);
           return {
             content: [{ type: "text", text: formatFindResult(result) }],
             details: result,
@@ -684,7 +750,7 @@ function createCustomTools(
       parameters: grepParameters,
       execute: async (_toolCallId, params: Static<typeof grepParameters>) => {
         try {
-          const result = grepTool(kbRoot, params);
+          const result = grepTool(kbRoot, fileIndex, params);
           return {
             content: [{ type: "text", text: formatGrepResult(result) }],
             details: result,
@@ -708,11 +774,14 @@ function createCustomTools(
       parameters: submitResultSchema,
       execute: async (_toolCallId, params: Static<typeof submitResultSchema>) => {
         try {
-          const validated = validateResult(params as SubmitResultInput, { kbRoot, model: modelName });
-          submittedResult.value = validated;
+          const validated = validateResult(params as SubmitResultInput, { kbRoot, model: modelName, fileIndex });
+          submittedResult.value = {
+            ...validated,
+            warnings: [...new Set([...validated.warnings, ...fileIndex.warnings])],
+          };
           return {
             content: [{ type: "text", text: "submit_result accepted. Stop now." }],
-            details: validated,
+            details: submittedResult.value,
           };
         } catch (error) {
           throw new Error(toToolErrorMessage(error));
@@ -750,6 +819,7 @@ async function promptWithTimeout(
 async function runVerification(question: string, kbRoot: string, model: any, modelRegistry: any, thinkingLevel: any) {
   const submittedResult: { value?: VerificationResult } = {};
   const modelName = `${model.provider}/${model.id}`;
+  const fileIndex = buildFactFileIndex(kbRoot);
   const resourceLoader = new DefaultResourceLoader({
     cwd: kbRoot,
     agentDir: getAgentDir(),
@@ -770,7 +840,7 @@ async function runVerification(question: string, kbRoot: string, model: any, mod
     thinkingLevel,
     modelRegistry,
     tools: [],
-    customTools: createCustomTools(kbRoot, modelName, submittedResult),
+    customTools: createCustomTools(kbRoot, modelName, submittedResult, fileIndex),
     resourceLoader,
     sessionManager: SessionManager.inMemory(),
     settingsManager: SettingsManager.inMemory({
@@ -782,7 +852,7 @@ async function runVerification(question: string, kbRoot: string, model: any, mod
   try {
     const maxAttempts = MAX_REPAIR_ATTEMPTS + 1;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      const prompt = attempt === 1 ? buildPrompt(question) : buildRepairPrompt(question, attempt - 1);
+      const prompt = attempt === 1 ? buildPrompt(question, fileIndex) : buildRepairPrompt(question, attempt - 1);
       await promptWithTimeout(session.prompt(prompt), session, MAX_AGENT_EXECUTION_MS);
       if (submittedResult.value) return submittedResult.value;
     }
@@ -795,7 +865,7 @@ async function runVerification(question: string, kbRoot: string, model: any, mod
     data: {},
     citations: [],
     missingInformation: ["The verifier did not produce a validated evidence-backed result."],
-    warnings: ["The verification session ended without submit_result."],
+    warnings: ["The verification session ended without submit_result.", ...fileIndex.warnings],
     meta: {
       model: modelName,
       kbRoot,
@@ -938,6 +1008,7 @@ export default function rainman(pi: ExtensionAPI): void {
     handler: async (_args, ctx) => {
       const kbRoot = getKbRoot();
       const exists = fs.existsSync(kbRoot);
+      const fileIndex = exists ? buildFactFileIndex(kbRoot) : null;
       const fileCount = exists ? listMarkdownFiles(kbRoot).length : 0;
       const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(uses first available model)";
       const lastRun = state.lastRunAt ? new Date(state.lastRunAt).toLocaleString() : "never";
@@ -948,6 +1019,8 @@ export default function rainman(pi: ExtensionAPI): void {
           `KB root: ${kbRoot}`,
           `Exists: ${exists ? "yes" : "no"}`,
           `Markdown files: ${fileCount}`,
+          `Lint-clean fact files: ${fileIndex?.validFiles.length ?? 0}`,
+          `Malformed fact files: ${fileIndex?.invalidFiles.length ?? 0}`,
           `Model: ${model}`,
           `Thinking level: ${RAINMAN_THINKING_LEVEL}`,
           `Session queries: ${state.sessionQueries}`,
@@ -956,6 +1029,7 @@ export default function rainman(pi: ExtensionAPI): void {
           `Last run: ${lastRun}`,
           `Last status: ${state.lastStatus ?? "none"}`,
           `KB root override env: ${KB_ROOT_ENV_VAR}`,
+          ...(fileIndex?.warnings ?? []).map((warning) => `Warning: ${warning}`),
         ].join("\n"),
         exists ? "info" : "warning",
       );

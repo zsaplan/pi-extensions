@@ -15,6 +15,30 @@ export {
   type ResolveMarkdownFilesResult,
 } from "./markdown.ts";
 export {
+  DEFAULT_FACT_RELATIONS,
+  STRUCTURED_FACT_SYNTAX_GUIDANCE,
+  StructuredFactParseError,
+  parseStructuredFactBulletText,
+  parseStructuredFactFileContent,
+  parseStructuredFactLine,
+  renderStructuredFactBullet,
+  renderStructuredFactLine,
+  type FactQualifier,
+  type ParsedStructuredFactFile,
+  type StructuredFactBullet,
+  type StructuredFactParseIssueCode,
+  type StructuredFactParseOptions,
+} from "./factSchema.ts";
+export {
+  lintFactFileContent,
+  lintKnowledgeBase,
+  type FactFileLintResult,
+  type FactLintIssue,
+  type FactLintOptions,
+  type KnowledgeBaseLintResult,
+  type LintSeverity,
+} from "./lint.ts";
+export {
   extractBulletText,
   factHeading,
   normalizeFact,

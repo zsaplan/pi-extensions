@@ -7,9 +7,12 @@ A minimal pi extension that adapts the core Rainman idea into a local verificati
 - Registers `rainman_verify`
 - Uses an isolated in-memory pi sub-session
 - Restricts that sub-session to KB-safe `find`, `grep`, `read`, and `submit_result` tools
+- Uses shared `rain-core` linting and structured fact parsing to expose only lint-clean fact files as evidence
+- The read tool returns raw lines plus parsed structured fact summaries for the requested range
 - Validates citations before returning an evidence-backed result
 - Tracks session-local TUI metrics for queries, hits, and errors
 - Targets `~/.pi/agent/data/raincatcher` by default
+- Skips malformed fact files and surfaces warnings when malformed KB content is present
 
 ## Configuration
 
