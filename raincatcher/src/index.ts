@@ -1,8 +1,18 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { complete } from "@mariozechner/pi-ai";
 import { getAgentDir, type ExtensionAPI, withFileMutationQueue } from "@mariozechner/pi-coding-agent";
+import {
+  KB_ROOT_ENV_VAR,
+  factHeading,
+  getKbRoot as getSharedKbRoot,
+  normalizeFact,
+  normalizeWhitespace,
+  sanitizeSubject,
+  sanitizeTopic,
+  toFactFilename,
+} from "../../rain-core/src/index.ts";
 
 type ToolRecord = {
   toolName: string;
@@ -35,8 +45,6 @@ type RuntimeState = {
   sessionFilesWritten: string[];
 };
 
-const DEFAULT_KB_ROOT = join(getAgentDir(), "data", "raincatcher");
-const KB_ROOT_ENV_VAR = "PI_RAINMAN_KB_ROOT";
 const MAX_MESSAGES = 8;
 const MAX_TOOL_RECORDS = 8;
 const MAX_FACTS = 6;
@@ -118,8 +126,7 @@ function now(): number {
 }
 
 function getKbRoot(): string {
-  const fromEnv = process.env[KB_ROOT_ENV_VAR]?.trim();
-  return fromEnv ? resolve(fromEnv) : DEFAULT_KB_ROOT;
+  return getSharedKbRoot(getAgentDir());
 }
 
 function truncate(text: string, max: number): string {
@@ -139,16 +146,6 @@ function redactSecrets(text: string): string {
 function looksSecretish(text: string): boolean {
   return SECRET_PATTERNS_NO_GLOBAL.some((pattern) => pattern.test(text))
     || /\b(?:token|secret|password|passwd|api[_ -]?key|private key)\b\s*[:=]\s*\S+/i.test(text);
-}
-
-function normalizeWhitespace(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-function normalizeFact(text: string): string {
-  return normalizeWhitespace(text)
-    .replace(/[.]+$/g, "")
-    .toLowerCase();
 }
 
 function extractTextParts(content: unknown): string {
@@ -185,33 +182,6 @@ function getRoleLabel(message: any): string {
   const role = String(message?.role ?? "message");
   if (role === "toolResult") return "tool_result";
   return role;
-}
-
-function sanitizeKeyPart(value: string, fallback: string): string {
-  const cleaned = value
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .replace(/_+/g, "_")
-    .slice(0, 80);
-  return cleaned || fallback;
-}
-
-function sanitizeSubject(subject: string): string {
-  return sanitizeKeyPart(subject, "GENERAL");
-}
-
-function sanitizeTopic(topic: string): string {
-  return sanitizeKeyPart(topic, "NOTES");
-}
-
-function toFactFilename(subject: string, topic: string): string {
-  return `${sanitizeSubject(subject)}__${sanitizeTopic(topic)}.md`;
-}
-
-function factHeading(subject: string, topic: string): string {
-  return `${sanitizeSubject(subject)} / ${sanitizeTopic(topic)}`;
 }
 
 function shouldKeepFact(fact: string): boolean {
@@ -473,6 +443,15 @@ export default function raincatcher(pi: ExtensionAPI): void {
     ctx.ui.setStatus("raincatcher", `${icon}${counts}${delta}${suffix}`);
   }
 
+  function emitCaptureFiles(writeResult: { filesWritten: string[]; factsWritten: number }): void {
+    if (writeResult.filesWritten.length === 0) return;
+    pi.events.emit("raincatcher:files-written", {
+      kbRoot: getKbRoot(),
+      filesWritten: writeResult.filesWritten,
+      factsWritten: writeResult.factsWritten,
+    });
+  }
+
   function recordCapture(piApi: ExtensionAPI, capturedAt: number, writeResult: { filesWritten: string[]; factsWritten: number }): void {
     state.lastRunAt = capturedAt;
     state.lastFilesWritten = writeResult.filesWritten;
@@ -486,6 +465,7 @@ export default function raincatcher(pi: ExtensionAPI): void {
         filesWritten: writeResult.filesWritten,
       });
     }
+    emitCaptureFiles(writeResult);
   }
 
   function notifyCaptureSummary(ctx: any, writeResult: { filesWritten: string[]; factsWritten: number }): void {

@@ -1,0 +1,31 @@
+{
+  "name": "@zsaplan/pi-raindistiller",
+  "version": "0.1.0",
+  "description": "Pi extension that distills Raincatcher knowledge files using model-reviewed exact and near-duplicate dedupe.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zsaplan/pi-extensions.git",
+    "directory": "raindistiller"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "raindistiller",
+    "knowledge-base"
+  ],
+  "files": [
+    "src",
+    "README.md",
+    "package.json"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  }
+}
