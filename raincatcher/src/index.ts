@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { complete } from "@mariozechner/pi-ai";
 import { getAgentDir, type ExtensionAPI, withFileMutationQueue } from "@mariozechner/pi-coding-agent";
 
@@ -35,7 +35,8 @@ type RuntimeState = {
   sessionFilesWritten: string[];
 };
 
-const DATA_DIR = join(getAgentDir(), "data", "raincatcher");
+const DEFAULT_KB_ROOT = join(getAgentDir(), "data", "raincatcher");
+const KB_ROOT_ENV_VAR = "PI_RAINMAN_KB_ROOT";
 const MAX_MESSAGES = 8;
 const MAX_TOOL_RECORDS = 8;
 const MAX_FACTS = 6;
@@ -114,6 +115,11 @@ Rules:
 
 function now(): number {
   return Date.now();
+}
+
+function getKbRoot(): string {
+  const fromEnv = process.env[KB_ROOT_ENV_VAR]?.trim();
+  return fromEnv ? resolve(fromEnv) : DEFAULT_KB_ROOT;
 }
 
 function truncate(text: string, max: number): string {
@@ -360,9 +366,10 @@ async function resolveModel(ctx: any): Promise<{ model: any; apiKey?: string; he
 async function appendFactsToDisk(facts: CandidateFact[]): Promise<{ filesWritten: string[]; factsWritten: number }> {
   if (facts.length === 0) return { filesWritten: [], factsWritten: 0 };
 
+  const kbRoot = getKbRoot();
   const factsByFile = new Map<string, CandidateFact[]>();
   for (const fact of facts) {
-    const filePath = join(DATA_DIR, toFactFilename(fact.subject, fact.topic));
+    const filePath = join(kbRoot, toFactFilename(fact.subject, fact.topic));
     const list = factsByFile.get(filePath) ?? [];
     list.push(fact);
     factsByFile.set(filePath, list);
@@ -490,7 +497,7 @@ export default function raincatcher(pi: ExtensionAPI): void {
   }
 
   pi.on("session_start", async (_event, ctx: any) => {
-    await ensureDir(DATA_DIR);
+    await ensureDir(getKbRoot());
     state.busy = false;
     resetPromptState();
     restoreSessionState(ctx);
@@ -677,10 +684,11 @@ export default function raincatcher(pi: ExtensionAPI): void {
       ctx.ui.notify(
         [
           `Raincatcher: ${state.enabled ? "on" : "off"}`,
-          `Data dir: ${DATA_DIR}`,
+          `KB root: ${getKbRoot()}`,
           `Session file: ${ctx.sessionManager.getSessionFile() ?? "ephemeral"}`,
           `Uses active model: ${ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "none"}`,
           `Last run: ${lastRun}`,
+          `KB root override env: ${KB_ROOT_ENV_VAR}`,
           `Session facts written: ${state.sessionFactsWritten}`,
           `Session files written: ${state.sessionFilesWritten.length}`,
           `Last facts written: ${state.lastFactsWritten}`,

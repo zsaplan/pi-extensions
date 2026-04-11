@@ -3,6 +3,7 @@
 A minimal pi extension that watches agent activity and records durable facts to markdown files under:
 
 - `~/.pi/agent/data/raincatcher/`
+- or `PI_RAINMAN_KB_ROOT=/path/to/markdown/root`
 
 ## Current behavior
 
@@ -24,5 +25,6 @@ A minimal pi extension that watches agent activity and records durable facts to 
 
 ## Notes
 
-- This first version is intentionally quiet: no widgets, no custom editor UI, no persistent config yet
+- Raincatcher now honors the same KB root override env var as Rainman: `PI_RAINMAN_KB_ROOT`
+- This first version is intentionally quiet: no widgets, no custom editor UI, no persistent config beyond the shared env override
 - If no active model or auth is available, it simply does nothing
