@@ -1,0 +1,26 @@
+{
+  "name": "@zsaplan/rain-core",
+  "version": "0.1.0",
+  "description": "Shared knowledge-base utilities for Rain pi extensions.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zsaplan/pi-extensions.git",
+    "directory": "rain-core"
+  },
+  "keywords": [
+    "rain",
+    "knowledge-base",
+    "pi-extension"
+  ],
+  "files": [
+    "src",
+    "CODEBASE.md",
+    "README.md",
+    "package.json"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  }
+}

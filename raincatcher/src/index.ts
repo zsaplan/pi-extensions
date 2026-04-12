@@ -1,8 +1,24 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { complete } from "@mariozechner/pi-ai";
 import { getAgentDir, type ExtensionAPI, withFileMutationQueue } from "@mariozechner/pi-coding-agent";
+import {
+  KB_ROOT_ENV_VAR,
+  STRUCTURED_FACT_SYNTAX_GUIDANCE,
+  factHeading,
+  getKbRoot as getSharedKbRoot,
+  lintFactFileContent,
+  normalizeFact,
+  normalizeWhitespace,
+  parseStructuredFactBulletText,
+  parseStructuredFactFileContent,
+  renderStructuredFactBullet,
+  sanitizeSubject,
+  sanitizeTopic,
+  toFactFilename,
+  type StructuredFactBullet,
+} from "../../rain-core/src/index.ts";
 
 type ToolRecord = {
   toolName: string;
@@ -14,7 +30,7 @@ type ToolRecord = {
 type CandidateFact = {
   subject: string;
   topic: string;
-  fact: string;
+  bullet: StructuredFactBullet;
 };
 
 type RaincatcherCaptureEntry = {
@@ -35,8 +51,6 @@ type RuntimeState = {
   sessionFilesWritten: string[];
 };
 
-const DEFAULT_KB_ROOT = join(getAgentDir(), "data", "raincatcher");
-const KB_ROOT_ENV_VAR = "PI_RAINMAN_KB_ROOT";
 const MAX_MESSAGES = 8;
 const MAX_TOOL_RECORDS = 8;
 const MAX_FACTS = 6;
@@ -79,10 +93,13 @@ Bad facts:
 - ephemeral plans that were not decided
 - raw secrets, credentials, tokens, passwords, or private keys
 
-Each fact must include:
+Use the shared canonical Rain fact syntax.
+${STRUCTURED_FACT_SYNTAX_GUIDANCE}
+
+Each fact entry must include:
 - subject: the stable system, component, repo, service, or product name
 - topic: the stable knowledge category
-- fact: one reusable sentence
+- bullet: one canonical structured fact bullet without the leading '- '
 
 Use uppercase identifiers with underscores for subject and topic.
 Convert spaces and hyphens to underscores.
@@ -104,12 +121,13 @@ Good topic examples:
 
 Return JSON only. No markdown. No code fences.
 Return an array of objects like:
-[{"subject":"BC_SITES","topic":"GITOPS","fact":"Flux monitors the platform-sites repository for deployment manifest changes."}]
+[{"subject":"PI","topic":"WORKFLOW","bullet":"PREFERS | pi install . | when=installing from source | scope=repo root"}]
 
 Rules:
 - return at most 6 facts
-- each fact must be a single sentence
-- each fact must stand on its own
+- every bullet must use the canonical structured grammar
+- choose a relation from the allowed relation set
+- object and qualifier values must be durable and non-secret
 - be conservative; if unsure, leave it out
 - never include secret values or credential-looking strings`;
 
@@ -118,8 +136,7 @@ function now(): number {
 }
 
 function getKbRoot(): string {
-  const fromEnv = process.env[KB_ROOT_ENV_VAR]?.trim();
-  return fromEnv ? resolve(fromEnv) : DEFAULT_KB_ROOT;
+  return getSharedKbRoot(getAgentDir());
 }
 
 function truncate(text: string, max: number): string {
@@ -139,16 +156,6 @@ function redactSecrets(text: string): string {
 function looksSecretish(text: string): boolean {
   return SECRET_PATTERNS_NO_GLOBAL.some((pattern) => pattern.test(text))
     || /\b(?:token|secret|password|passwd|api[_ -]?key|private key)\b\s*[:=]\s*\S+/i.test(text);
-}
-
-function normalizeWhitespace(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-function normalizeFact(text: string): string {
-  return normalizeWhitespace(text)
-    .replace(/[.]+$/g, "")
-    .toLowerCase();
 }
 
 function extractTextParts(content: unknown): string {
@@ -187,36 +194,9 @@ function getRoleLabel(message: any): string {
   return role;
 }
 
-function sanitizeKeyPart(value: string, fallback: string): string {
-  const cleaned = value
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .replace(/_+/g, "_")
-    .slice(0, 80);
-  return cleaned || fallback;
-}
-
-function sanitizeSubject(subject: string): string {
-  return sanitizeKeyPart(subject, "GENERAL");
-}
-
-function sanitizeTopic(topic: string): string {
-  return sanitizeKeyPart(topic, "NOTES");
-}
-
-function toFactFilename(subject: string, topic: string): string {
-  return `${sanitizeSubject(subject)}__${sanitizeTopic(topic)}.md`;
-}
-
-function factHeading(subject: string, topic: string): string {
-  return `${sanitizeSubject(subject)} / ${sanitizeTopic(topic)}`;
-}
-
-function shouldKeepFact(fact: string): boolean {
+function shouldKeepStructuredFact(fact: string): boolean {
   const cleaned = normalizeWhitespace(fact);
-  if (cleaned.length < 16 || cleaned.length > 280) return false;
+  if (cleaned.length < 12 || cleaned.length > 320) return false;
   if (looksSecretish(cleaned)) return false;
   return true;
 }
@@ -254,12 +234,28 @@ function parseFacts(raw: string): CandidateFact[] {
 
     const subject = sanitizeSubject(rawSubject);
     const topic = sanitizeTopic(rawTopic);
-    const fact = redactSecrets(typeof item?.fact === "string" ? item.fact : "").trim();
-    if (!fact || !shouldKeepFact(fact)) continue;
-    const key = `${toFactFilename(subject, topic)}::${normalizeFact(fact)}`;
+    const rawBullet = typeof item?.bullet === "string"
+      ? item.bullet
+      : typeof item?.fact === "string"
+        ? item.fact
+        : "";
+
+    if (!rawBullet.trim() || looksSecretish(rawBullet)) continue;
+
+    let bullet: StructuredFactBullet;
+    try {
+      bullet = parseStructuredFactBulletText(rawBullet);
+    } catch {
+      continue;
+    }
+
+    const canonicalBullet = renderStructuredFactBullet(bullet);
+    if (!shouldKeepStructuredFact(canonicalBullet)) continue;
+
+    const key = `${toFactFilename(subject, topic)}::${normalizeFact(canonicalBullet)}`;
     if (unique.has(key)) continue;
     unique.add(key);
-    facts.push({ subject, topic, fact: normalizeWhitespace(fact) });
+    facts.push({ subject, topic, bullet });
     if (facts.length >= MAX_FACTS) break;
   }
   return facts;
@@ -369,30 +365,40 @@ async function appendFactsToDisk(facts: CandidateFact[]): Promise<{ filesWritten
   const kbRoot = getKbRoot();
   const factsByFile = new Map<string, CandidateFact[]>();
   for (const fact of facts) {
-    const filePath = join(kbRoot, toFactFilename(fact.subject, fact.topic));
-    const list = factsByFile.get(filePath) ?? [];
+    const fileName = toFactFilename(fact.subject, fact.topic);
+    const list = factsByFile.get(fileName) ?? [];
     list.push(fact);
-    factsByFile.set(filePath, list);
+    factsByFile.set(fileName, list);
   }
 
   const filesWritten: string[] = [];
   let factsWritten = 0;
 
-  for (const [filePath, fileFacts] of factsByFile.entries()) {
+  for (const [fileName, fileFacts] of factsByFile.entries()) {
+    const filePath = join(kbRoot, fileName);
     const result = await withFileMutationQueue(filePath, async () => {
       await ensureParent(filePath);
       const existing = existsSync(filePath) ? await readFile(filePath, "utf8") : "";
-      const existingFacts = new Set(
-        existing
-          .split(/\r?\n/)
-          .map((line) => line.match(/^\s*-\s+(.*)$/)?.[1] ?? "")
-          .filter(Boolean)
-          .map((line) => normalizeFact(line)),
-      );
 
-      const newFacts = fileFacts
-        .map((entry) => entry.fact)
-        .filter((fact) => !existingFacts.has(normalizeFact(fact)));
+      if (existing.trim()) {
+        const existingLint = lintFactFileContent(fileName, existing);
+        if (existingLint.issues.length > 0) {
+          return { wrote: false, count: 0 };
+        }
+      }
+
+      const existingFacts = existing.trim()
+        ? new Set(
+          parseStructuredFactFileContent(existing).bullets
+            .map((bullet) => normalizeFact(renderStructuredFactBullet(bullet.parsed))),
+        )
+        : new Set<string>();
+
+      const newFacts = [...new Set(
+        fileFacts
+          .map((entry) => renderStructuredFactBullet(entry.bullet))
+          .filter((fact) => !existingFacts.has(normalizeFact(fact))),
+      )];
 
       if (newFacts.length === 0) return { wrote: false, count: 0 };
 
@@ -403,6 +409,11 @@ async function appendFactsToDisk(facts: CandidateFact[]): Promise<{ filesWritten
       if (!next.endsWith("\n")) next += "\n";
       if (!next.endsWith("\n\n")) next += "\n";
       next += `${newFacts.map((fact) => `- ${fact}`).join("\n")}\n`;
+
+      const nextLint = lintFactFileContent(fileName, next);
+      if (nextLint.issues.length > 0) {
+        return { wrote: false, count: 0 };
+      }
 
       await writeFile(filePath, next, "utf8");
       return { wrote: true, count: newFacts.length };
@@ -473,6 +484,15 @@ export default function raincatcher(pi: ExtensionAPI): void {
     ctx.ui.setStatus("raincatcher", `${icon}${counts}${delta}${suffix}`);
   }
 
+  function emitCaptureFiles(writeResult: { filesWritten: string[]; factsWritten: number }): void {
+    if (writeResult.filesWritten.length === 0) return;
+    pi.events.emit("raincatcher:files-written", {
+      kbRoot: getKbRoot(),
+      filesWritten: writeResult.filesWritten,
+      factsWritten: writeResult.factsWritten,
+    });
+  }
+
   function recordCapture(piApi: ExtensionAPI, capturedAt: number, writeResult: { filesWritten: string[]; factsWritten: number }): void {
     state.lastRunAt = capturedAt;
     state.lastFilesWritten = writeResult.filesWritten;
@@ -486,6 +506,7 @@ export default function raincatcher(pi: ExtensionAPI): void {
         filesWritten: writeResult.filesWritten,
       });
     }
+    emitCaptureFiles(writeResult);
   }
 
   function notifyCaptureSummary(ctx: any, writeResult: { filesWritten: string[]; factsWritten: number }): void {

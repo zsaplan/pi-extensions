@@ -1,0 +1,36 @@
+{
+  "name": "@zsaplan/pi-extensions",
+  "version": "0.1.0",
+  "description": "Personal repo-backed source for Rain pi extensions.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zsaplan/pi-extensions.git"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "rain"
+  ],
+  "files": [
+    "rain-core",
+    "raincatcher",
+    "raindistiller",
+    "rainman",
+    "README.md",
+    "package.json"
+  ],
+  "pi": {
+    "extensions": [
+      "./raincatcher/src/index.ts",
+      "./raindistiller/src/index.ts",
+      "./rainman/src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@sinclair/typebox": "*"
+  }
+}

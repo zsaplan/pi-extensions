@@ -1,33 +1,34 @@
 {
-  "name": "@zsaplan/pi-rainman",
+  "name": "@zsaplan/pi-raindistiller",
   "version": "0.1.0",
-  "description": "Pi extension that looks up stable previously-derived project knowledge from Raincatcher knowledge files with evidence-backed citations.",
+  "description": "Pi extension that distills Raincatcher knowledge files using model-reviewed exact and near-duplicate dedupe.",
   "type": "module",
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zsaplan/pi-extensions.git",
-    "directory": "rainman"
+    "directory": "raindistiller"
   },
   "keywords": [
     "pi-package",
     "pi-extension",
-    "rainman",
-    "lookup",
-    "knowledge-cache"
+    "raindistiller",
+    "knowledge-base"
   ],
   "files": [
     "src",
     "README.md",
     "package.json"
   ],
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  },
   "pi": {
     "extensions": [
       "./src/index.ts"
     ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
-    "@sinclair/typebox": "*"
+    "@mariozechner/pi-coding-agent": "*"
   }
 }
