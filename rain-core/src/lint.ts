@@ -24,6 +24,7 @@ export type FactLintIssue = {
   file: string;
   line?: number;
   message: string;
+  details?: Record<string, unknown>;
 };
 
 export type FactLintOptions = StructuredFactParseOptions;
@@ -49,7 +50,7 @@ function createIssue(file: string, code: string, message: string, line?: number)
   };
 }
 
-function compareIssues(left: FactLintIssue, right: FactLintIssue): number {
+export function compareFactLintIssues(left: FactLintIssue, right: FactLintIssue): number {
   const fileCompare = left.file.localeCompare(right.file);
   if (fileCompare !== 0) return fileCompare;
 
@@ -59,8 +60,8 @@ function compareIssues(left: FactLintIssue, right: FactLintIssue): number {
   return left.code.localeCompare(right.code);
 }
 
-function sortIssues(issues: FactLintIssue[]): FactLintIssue[] {
-  return [...issues].sort(compareIssues);
+export function sortFactLintIssues(issues: FactLintIssue[]): FactLintIssue[] {
+  return [...issues].sort(compareFactLintIssues);
 }
 
 function hasExplicitSelection(input?: ResolveMarkdownFilesInput): boolean {
@@ -220,7 +221,7 @@ export function lintFactFileContent(
 
   return {
     file: filePath,
-    issues: sortIssues(issues),
+    issues: sortFactLintIssues(issues),
   };
 }
 
@@ -260,7 +261,7 @@ export function lintKnowledgeBase(
 
   return {
     files: [...resolved.files],
-    issues: sortIssues(issues),
+    issues: sortFactLintIssues(issues),
     warnings,
   };
 }

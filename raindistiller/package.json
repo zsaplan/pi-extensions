@@ -20,6 +20,9 @@
     "README.md",
     "package.json"
   ],
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  },
   "pi": {
     "extensions": [
       "./src/index.ts"

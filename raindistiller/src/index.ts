@@ -1,24 +1,38 @@
 import fs from "node:fs";
 import { completeSimple, type AssistantMessage, type ThinkingLevel } from "@mariozechner/pi-ai";
-import { getAgentDir, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { keyText, getAgentDir, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { Box, Spacer, Text } from "@mariozechner/pi-tui";
 import {
   KB_ROOT_ENV_VAR,
   getKbRoot,
+  lintKnowledgeBase,
+  lintKnowledgeBaseSemanticCleanup,
   parseStructuredFactBulletText,
   renderStructuredFactBullet,
 } from "../../rain-core/src/index.ts";
 import {
+  type DistillProgress,
+  type DistillProgressStage,
   type DistillRequest,
   type DistillResult,
   type DuplicateGroup,
   type DuplicateGroupDecision,
   distillKnowledgeFiles,
 } from "./distill.ts";
+import {
+  SEMANTIC_CLEANUP_SYSTEM_PROMPT,
+  buildSemanticCleanupPrompt,
+  parseSemanticCleanupProposal,
+  type SemanticCleanupProposal,
+  type SemanticCleanupProposalRequest,
+} from "./semanticCleanup.ts";
 
 type RaincatcherFilesWrittenEvent = {
   kbRoot?: string;
   filesWritten?: string[];
 };
+
+type SemanticCleanupMode = "off" | "manual_only" | "all";
 
 type DistillRunEntry = {
   ranAt: number;
@@ -27,26 +41,41 @@ type DistillRunEntry = {
   modifiedFiles: string[];
   duplicatesRemoved: number;
   duplicateGroups: number;
+  semanticIssuesResolved: number;
+  semanticFilesModified: string[];
   warnings: number;
   modelName?: string | null;
   thinkingLevel?: ThinkingLevel | null;
+  semanticCleanupMode: SemanticCleanupMode;
+  semanticCleanupEnabled: boolean;
 };
 
 type RuntimeState = {
   autoEnabled: boolean;
   busy: boolean;
+  progressStage: DistillProgressStage | null;
+  progressProcessed: number;
+  progressTotal: number;
   pendingFiles: string[];
   sessionRuns: number;
   sessionDuplicatesRemoved: number;
+  sessionSemanticIssuesResolved: number;
   sessionModifiedFiles: string[];
+  currentLintWarnings: number | null;
+  currentStructuralIssues: number | null;
+  currentSemanticWarnings: number | null;
   lastRunAt: number | null;
   lastDuplicatesRemoved: number;
+  lastSemanticIssuesResolved: number;
   lastModifiedFiles: string[];
+  lastSemanticFilesModified: string[];
   lastDuplicateGroups: number;
   lastWarnings: number;
   lastSource: "auto" | "manual" | null;
   lastModelName: string | null;
   lastThinkingLevel: ThinkingLevel | null;
+  lastSemanticCleanupMode: SemanticCleanupMode | null;
+  lastSemanticCleanupEnabled: boolean | null;
 };
 
 type ResolvedModel = {
@@ -56,9 +85,16 @@ type ResolvedModel = {
   modelName: string;
 };
 
+type DistillSummaryMessageDetails = {
+  summaryText: string;
+};
+
 const RUN_ENTRY_TYPE = "raindistiller-run";
+const RUN_MESSAGE_TYPE = "raindistiller-summary";
 const MANUAL_THINKING_LEVEL = "xhigh" as const;
 const AUTO_THINKING_LEVEL = "medium" as const;
+const DEFAULT_SEMANTIC_CLEANUP_MODE = "manual_only" as const;
+const SEMANTIC_CLEANUP_MODE_ENV_VAR = "RAINDISTILLER_SEMANTIC_CLEANUP_MODE";
 
 const ADJUDICATION_SYSTEM_PROMPT = `You are Raindistiller, a conservative knowledge-base dedupe reviewer.
 
@@ -107,12 +143,19 @@ function tokenizeArgs(input: string): string[] {
   return tokens;
 }
 
-function parseDistillArgs(input: string): { files: string[]; directories: string[]; recursive: boolean; warnings: string[] } {
+function parseDistillArgs(input: string): {
+  files: string[];
+  directories: string[];
+  recursive: boolean;
+  semanticCleanupOverride: boolean | null;
+  warnings: string[];
+} {
   const files: string[] = [];
   const directories: string[] = [];
   const warnings: string[] = [];
   const tokens = tokenizeArgs(input);
   let recursive = true;
+  let semanticCleanupOverride: boolean | null = null;
 
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index] ?? "";
@@ -148,6 +191,16 @@ function parseDistillArgs(input: string): { files: string[]; directories: string
       continue;
     }
 
+    if (token === "--semantic-cleanup") {
+      semanticCleanupOverride = true;
+      continue;
+    }
+
+    if (token === "--no-semantic-cleanup") {
+      semanticCleanupOverride = false;
+      continue;
+    }
+
     if (token.endsWith(".md")) {
       files.push(token);
       continue;
@@ -158,7 +211,7 @@ function parseDistillArgs(input: string): { files: string[]; directories: string
 
   if (files.length === 0 && directories.length === 0) directories.push(".");
 
-  return { files, directories, recursive, warnings };
+  return { files, directories, recursive, semanticCleanupOverride, warnings };
 }
 
 function getThinkingLevel(source: "auto" | "manual"): ThinkingLevel {
@@ -289,6 +342,54 @@ function buildAdjudicationPrompt(group: DuplicateGroup): string {
   ].join("\n");
 }
 
+function isSemanticCleanupMode(value: unknown): value is SemanticCleanupMode {
+  return value === "off" || value === "manual_only" || value === "all";
+}
+
+function getConfiguredSemanticCleanupMode(): { mode: SemanticCleanupMode; warning?: string } {
+  const raw = (process.env[SEMANTIC_CLEANUP_MODE_ENV_VAR] ?? DEFAULT_SEMANTIC_CLEANUP_MODE).trim().toLowerCase();
+  if (raw.length === 0) {
+    return { mode: DEFAULT_SEMANTIC_CLEANUP_MODE };
+  }
+
+  if (isSemanticCleanupMode(raw)) {
+    return { mode: raw };
+  }
+
+  return {
+    mode: DEFAULT_SEMANTIC_CLEANUP_MODE,
+    warning: `Invalid ${SEMANTIC_CLEANUP_MODE_ENV_VAR}='${raw}'; using ${DEFAULT_SEMANTIC_CLEANUP_MODE}.`,
+  };
+}
+
+function isSemanticCleanupEnabled(
+  mode: SemanticCleanupMode,
+  source: "auto" | "manual",
+  override: boolean | null | undefined,
+): boolean {
+  if (override === true) return true;
+  if (override === false) return false;
+  if (mode === "off") return false;
+  if (mode === "all") return true;
+  return source === "manual";
+}
+
+function formatSemanticCleanupMode(mode: SemanticCleanupMode): string {
+  if (mode === "manual_only") return "manual_only";
+  return mode;
+}
+
+function formatProgressStage(stage: DistillProgressStage): string {
+  switch (stage) {
+    case "initial_dedupe":
+      return "dedupe";
+    case "semantic_cleanup":
+      return "semantic";
+    case "post_semantic_dedupe":
+      return "dedupe2";
+  }
+}
+
 async function resolveModel(ctx: any): Promise<ResolvedModel | null> {
   const availableModels = ctx?.modelRegistry?.getAvailable?.() ?? [];
   const model = ctx?.model ?? availableModels[0];
@@ -332,11 +433,46 @@ async function adjudicateGroup(
   return parseDecision(extractMessageText(response));
 }
 
-function summarizeResult(result: DistillResult, modelName: string | null, thinkingLevel: ThinkingLevel | null): string {
+async function proposeSemanticCleanupForFile(
+  request: SemanticCleanupProposalRequest,
+  resolvedModel: ResolvedModel,
+  thinkingLevel: ThinkingLevel,
+  signal?: AbortSignal,
+): Promise<SemanticCleanupProposal> {
+  const response = await completeSimple(
+    resolvedModel.model,
+    {
+      systemPrompt: SEMANTIC_CLEANUP_SYSTEM_PROMPT,
+      messages: [{
+        role: "user",
+        content: [{ type: "text", text: buildSemanticCleanupPrompt(request) }],
+        timestamp: Date.now(),
+      }],
+    },
+    {
+      apiKey: resolvedModel.apiKey,
+      headers: resolvedModel.headers,
+      signal,
+      reasoning: thinkingLevel,
+    },
+  );
+
+  return parseSemanticCleanupProposal(extractMessageText(response));
+}
+
+function summarizeResult(
+  result: DistillResult,
+  modelName: string | null,
+  thinkingLevel: ThinkingLevel | null,
+  semanticCleanupMode: SemanticCleanupMode,
+  semanticCleanupEnabled: boolean,
+): string {
   const lines = [
     `KB root: ${result.kbRoot}`,
     `Model: ${modelName ?? "none"}`,
     `Thinking: ${thinkingLevel ?? "none"}`,
+    `Semantic cleanup mode: ${formatSemanticCleanupMode(semanticCleanupMode)}`,
+    `Semantic cleanup enabled: ${semanticCleanupEnabled ? "yes" : "no"}`,
     `Scanned files: ${result.scannedFiles.length}`,
     `Compared files: ${result.comparedFiles.length}`,
     `Candidate groups reviewed: ${result.candidateGroupsReviewed}`,
@@ -344,11 +480,29 @@ function summarizeResult(result: DistillResult, modelName: string | null, thinki
     `Deleted files: ${result.deletedFiles.length}`,
     `Duplicate groups: ${result.duplicateGroups}`,
     `Duplicates removed: ${result.duplicatesRemoved}`,
+    `Semantic files reviewed: ${result.semanticFilesReviewed}`,
+    `Semantic files modified: ${result.semanticFilesModified.length}`,
+    `Semantic issues found: ${result.semanticIssuesFound}`,
+    `Semantic issues resolved: ${result.semanticIssuesResolved}`,
+    `Semantic issues skipped: ${result.semanticIssuesSkipped}`,
+    `Semantic backup root: ${result.semanticBackupRoot ?? "none"}`,
   ];
+
+  if (result.duplicatePasses.length > 0) {
+    lines.push("Duplicate passes:");
+    for (const pass of result.duplicatePasses) {
+      lines.push(`- ${pass.pass}: ${pass.duplicatesRemoved} removed across ${pass.modifiedFiles.length} files`);
+    }
+  }
 
   if (result.modifiedFiles.length > 0) {
     lines.push("Modified files:");
     for (const filePath of result.modifiedFiles) lines.push(`- ${filePath}`);
+  }
+
+  if (result.semanticFilesModified.length > 0) {
+    lines.push("Semantic files modified:");
+    for (const filePath of result.semanticFilesModified) lines.push(`- ${filePath}`);
   }
 
   if (result.deletedFiles.length > 0) {
@@ -364,22 +518,67 @@ function summarizeResult(result: DistillResult, modelName: string | null, thinki
   return lines.join("\n");
 }
 
+function summarizeHeadline(result: DistillResult): string {
+  const parts = [`removed ${result.duplicatesRemoved} duplicates`];
+
+  if (result.semanticIssuesResolved > 0) {
+    parts.push(`resolved ${result.semanticIssuesResolved} semantic issues`);
+  }
+
+  parts.push(`modified ${result.modifiedFiles.length} files`);
+
+  if (result.deletedFiles.length > 0) {
+    parts.push(`deleted ${result.deletedFiles.length} files`);
+  }
+
+  if (result.warnings.length > 0) {
+    parts.push(`${result.warnings.length} warnings`);
+  }
+
+  return `Manual distill ${parts.join(", ")}.`;
+}
+
 export default function raindistiller(pi: ExtensionAPI): void {
+  pi.registerMessageRenderer(RUN_MESSAGE_TYPE, (message, { expanded }, theme) => {
+    const details = message.details as DistillSummaryMessageDetails | undefined;
+    const label = theme.fg("customMessageLabel", "\x1b[1m[raindistiller]\x1b[22m");
+    const body = expanded && details?.summaryText
+      ? details.summaryText
+      : `${typeof message.content === "string" ? message.content : "Raindistiller run completed."} (${keyText("app.tools.expand")} to expand)`;
+
+    const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+    box.addChild(new Text(label, 0, 0));
+    box.addChild(new Spacer(1));
+    box.addChild(new Text(theme.fg("customMessageText", body), 0, 0));
+    return box;
+  });
+
   const state: RuntimeState = {
     autoEnabled: true,
     busy: false,
+    progressStage: null,
+    progressProcessed: 0,
+    progressTotal: 0,
     pendingFiles: [],
     sessionRuns: 0,
     sessionDuplicatesRemoved: 0,
+    sessionSemanticIssuesResolved: 0,
     sessionModifiedFiles: [],
+    currentLintWarnings: null,
+    currentStructuralIssues: null,
+    currentSemanticWarnings: null,
     lastRunAt: null,
     lastDuplicatesRemoved: 0,
+    lastSemanticIssuesResolved: 0,
     lastModifiedFiles: [],
+    lastSemanticFilesModified: [],
     lastDuplicateGroups: 0,
     lastWarnings: 0,
     lastSource: null,
     lastModelName: null,
     lastThinkingLevel: null,
+    lastSemanticCleanupMode: null,
+    lastSemanticCleanupEnabled: null,
   };
 
   let latestCtx: any = null;
@@ -388,35 +587,94 @@ export default function raindistiller(pi: ExtensionAPI): void {
     state.sessionModifiedFiles = [...new Set([...state.sessionModifiedFiles, ...files])];
   }
 
+  function updateLintStatus(kbRoot: string): void {
+    try {
+      if (!fs.existsSync(kbRoot) || !fs.statSync(kbRoot).isDirectory()) {
+        state.currentLintWarnings = null;
+        state.currentStructuralIssues = null;
+        state.currentSemanticWarnings = null;
+        syncStatus();
+        return;
+      }
+
+      const structural = lintKnowledgeBase(kbRoot);
+      const semantic = lintKnowledgeBaseSemanticCleanup(kbRoot);
+      state.currentStructuralIssues = structural.issues.length;
+      state.currentSemanticWarnings = semantic.issues.length;
+      state.currentLintWarnings = structural.issues.length + semantic.issues.length;
+    } catch {
+      state.currentLintWarnings = null;
+      state.currentStructuralIssues = null;
+      state.currentSemanticWarnings = null;
+    }
+
+    syncStatus();
+  }
+
+  function updateProgress(progress: DistillProgress): void {
+    state.progressStage = progress.stage;
+    state.progressProcessed = progress.processed;
+    state.progressTotal = progress.total;
+    syncStatus();
+  }
+
+  function clearProgress(): void {
+    state.progressStage = null;
+    state.progressProcessed = 0;
+    state.progressTotal = 0;
+  }
+
   function syncStatus(ctx = latestCtx): void {
     if (!ctx?.hasUI) return;
 
+    const { mode } = getConfiguredSemanticCleanupMode();
     const theme = ctx.ui.theme;
     const icon = state.busy ? theme.fg("accent", "🧼") : theme.fg("success", "🧼");
     const auto = state.autoEnabled ? theme.fg("dim", " auto") : theme.fg("dim", " off");
+    const semanticMode = theme.fg("dim", ` sem:${mode === "manual_only" ? "manual" : mode}`);
     const counts = theme.fg(
       "dim",
-      ` r:${state.sessionRuns} d:${state.sessionDuplicatesRemoved} f:${state.sessionModifiedFiles.length}`,
+      ` r:${state.sessionRuns} d:${state.sessionDuplicatesRemoved} s:${state.sessionSemanticIssuesResolved} f:${state.sessionModifiedFiles.length} w:${state.currentLintWarnings ?? "?"}`,
     );
-    const delta = state.lastDuplicatesRemoved > 0 ? theme.fg("dim", ` (+${state.lastDuplicatesRemoved})`) : "";
+    const deltaParts: string[] = [];
+    if (state.lastDuplicatesRemoved > 0) deltaParts.push(`+${state.lastDuplicatesRemoved}d`);
+    if (state.lastSemanticIssuesResolved > 0) deltaParts.push(`+${state.lastSemanticIssuesResolved}s`);
+    const delta = deltaParts.length > 0 ? theme.fg("dim", ` (${deltaParts.join(" ")})`) : "";
+    const progress = state.busy && state.progressStage
+      ? theme.fg(
+        "dim",
+        state.progressTotal > 0
+          ? ` p:${formatProgressStage(state.progressStage)} ${Math.min(state.progressProcessed, state.progressTotal)}/${state.progressTotal}`
+          : ` p:${formatProgressStage(state.progressStage)} scan`,
+      )
+      : "";
     const suffix = state.busy ? theme.fg("dim", " distilling") : "";
-    ctx.ui.setStatus("raindistiller", `${icon}${auto}${counts}${delta}${suffix}`);
+    ctx.ui.setStatus("raindistiller", `${icon}${auto}${semanticMode}${counts}${delta}${progress}${suffix}`);
   }
 
   function restoreSessionState(ctx: any): void {
     state.busy = false;
+    clearProgress();
     state.pendingFiles = [];
     state.sessionRuns = 0;
     state.sessionDuplicatesRemoved = 0;
+    state.sessionSemanticIssuesResolved = 0;
     state.sessionModifiedFiles = [];
+    state.currentLintWarnings = null;
+    state.currentStructuralIssues = null;
+    state.currentSemanticWarnings = null;
     state.lastRunAt = null;
     state.lastDuplicatesRemoved = 0;
+    state.lastSemanticIssuesResolved = 0;
     state.lastModifiedFiles = [];
+    state.lastSemanticFilesModified = [];
     state.lastDuplicateGroups = 0;
     state.lastWarnings = 0;
     state.lastSource = null;
     state.lastModelName = null;
     state.lastThinkingLevel = null;
+    state.lastSemanticCleanupMode = null;
+    state.lastSemanticCleanupEnabled = null;
 
     const branchEntries = ctx?.sessionManager?.getBranch?.() ?? [];
     for (const entry of branchEntries) {
@@ -426,31 +684,56 @@ export default function raindistiller(pi: ExtensionAPI): void {
 
       state.sessionRuns += 1;
       state.sessionDuplicatesRemoved += typeof data.duplicatesRemoved === "number" ? data.duplicatesRemoved : 0;
+      state.sessionSemanticIssuesResolved += typeof data.semanticIssuesResolved === "number" ? data.semanticIssuesResolved : 0;
       addSessionFiles(Array.isArray(data.modifiedFiles) ? data.modifiedFiles : []);
       state.lastRunAt = typeof data.ranAt === "number" ? data.ranAt : state.lastRunAt;
       state.lastDuplicatesRemoved = typeof data.duplicatesRemoved === "number" ? data.duplicatesRemoved : state.lastDuplicatesRemoved;
+      state.lastSemanticIssuesResolved = typeof data.semanticIssuesResolved === "number"
+        ? data.semanticIssuesResolved
+        : state.lastSemanticIssuesResolved;
       state.lastModifiedFiles = Array.isArray(data.modifiedFiles) ? data.modifiedFiles : state.lastModifiedFiles;
+      state.lastSemanticFilesModified = Array.isArray(data.semanticFilesModified)
+        ? data.semanticFilesModified
+        : state.lastSemanticFilesModified;
       state.lastDuplicateGroups = typeof data.duplicateGroups === "number" ? data.duplicateGroups : state.lastDuplicateGroups;
       state.lastWarnings = typeof data.warnings === "number" ? data.warnings : state.lastWarnings;
       state.lastSource = data.source ?? state.lastSource;
       state.lastModelName = typeof data.modelName === "string" ? data.modelName : state.lastModelName;
       state.lastThinkingLevel = data.thinkingLevel ?? state.lastThinkingLevel;
+      state.lastSemanticCleanupMode = isSemanticCleanupMode(data.semanticCleanupMode)
+        ? data.semanticCleanupMode
+        : state.lastSemanticCleanupMode;
+      state.lastSemanticCleanupEnabled = typeof data.semanticCleanupEnabled === "boolean"
+        ? data.semanticCleanupEnabled
+        : state.lastSemanticCleanupEnabled;
     }
   }
 
-  function recordRun(source: "auto" | "manual", result: DistillResult, modelName: string, thinkingLevel: ThinkingLevel): void {
+  function recordRun(
+    source: "auto" | "manual",
+    result: DistillResult,
+    modelName: string,
+    thinkingLevel: ThinkingLevel,
+    semanticCleanupMode: SemanticCleanupMode,
+    semanticCleanupEnabled: boolean,
+  ): void {
     const ranAt = Date.now();
     state.sessionRuns += 1;
     state.sessionDuplicatesRemoved += result.duplicatesRemoved;
+    state.sessionSemanticIssuesResolved += result.semanticIssuesResolved;
     addSessionFiles(result.modifiedFiles);
     state.lastRunAt = ranAt;
     state.lastDuplicatesRemoved = result.duplicatesRemoved;
+    state.lastSemanticIssuesResolved = result.semanticIssuesResolved;
     state.lastModifiedFiles = result.modifiedFiles;
+    state.lastSemanticFilesModified = result.semanticFilesModified;
     state.lastDuplicateGroups = result.duplicateGroups;
     state.lastWarnings = result.warnings.length;
     state.lastSource = source;
     state.lastModelName = modelName;
     state.lastThinkingLevel = thinkingLevel;
+    state.lastSemanticCleanupMode = semanticCleanupMode;
+    state.lastSemanticCleanupEnabled = semanticCleanupEnabled;
 
     pi.appendEntry<DistillRunEntry>(RUN_ENTRY_TYPE, {
       ranAt,
@@ -459,9 +742,13 @@ export default function raindistiller(pi: ExtensionAPI): void {
       modifiedFiles: result.modifiedFiles,
       duplicatesRemoved: result.duplicatesRemoved,
       duplicateGroups: result.duplicateGroups,
+      semanticIssuesResolved: result.semanticIssuesResolved,
+      semanticFilesModified: result.semanticFilesModified,
       warnings: result.warnings.length,
       modelName,
       thinkingLevel,
+      semanticCleanupMode,
+      semanticCleanupEnabled,
     });
   }
 
@@ -472,27 +759,52 @@ export default function raindistiller(pi: ExtensionAPI): void {
   async function runDistill(
     request: DistillRequest,
     source: "auto" | "manual",
+    semanticCleanupOverride: boolean | null = null,
     ctx = latestCtx,
-  ): Promise<{ result: DistillResult; modelName: string; thinkingLevel: ThinkingLevel }> {
+  ): Promise<{
+    result: DistillResult;
+    modelName: string;
+    thinkingLevel: ThinkingLevel;
+    semanticCleanupMode: SemanticCleanupMode;
+    semanticCleanupEnabled: boolean;
+  }> {
     ensureKbReady(request.kbRoot);
     const resolvedModel = await resolveModel(ctx);
     if (!resolvedModel) {
       throw new Error("Raindistiller requires an available model with auth.");
     }
 
+    const { mode: semanticCleanupMode, warning: semanticModeWarning } = getConfiguredSemanticCleanupMode();
+    const semanticCleanupEnabled = isSemanticCleanupEnabled(semanticCleanupMode, source, semanticCleanupOverride);
     const thinkingLevel = getThinkingLevel(source);
     state.busy = true;
+    clearProgress();
     syncStatus(ctx);
 
     try {
       const result = await distillKnowledgeFiles(request, {
         adjudicateGroup: async (group) => adjudicateGroup(group, resolvedModel, thinkingLevel, ctx?.signal),
+        proposeSemanticCleanup: semanticCleanupEnabled
+          ? async (semanticRequest) => proposeSemanticCleanupForFile(semanticRequest, resolvedModel, thinkingLevel, ctx?.signal)
+          : undefined,
+        onProgress: updateProgress,
       });
-      recordRun(source, result, resolvedModel.modelName, thinkingLevel);
+      if (semanticModeWarning) {
+        result.warnings.unshift(semanticModeWarning);
+      }
+      updateLintStatus(request.kbRoot);
+      recordRun(source, result, resolvedModel.modelName, thinkingLevel, semanticCleanupMode, semanticCleanupEnabled);
       syncStatus(ctx);
-      return { result, modelName: resolvedModel.modelName, thinkingLevel };
+      return {
+        result,
+        modelName: resolvedModel.modelName,
+        thinkingLevel,
+        semanticCleanupMode,
+        semanticCleanupEnabled,
+      };
     } finally {
       state.busy = false;
+      clearProgress();
       syncStatus(ctx);
     }
   }
@@ -507,9 +819,16 @@ export default function raindistiller(pi: ExtensionAPI): void {
 
       try {
         const { result, thinkingLevel } = await runDistill({ kbRoot, files }, "auto");
-        if (latestCtx?.hasUI && (result.duplicatesRemoved > 0 || result.warnings.length > 0)) {
+        const semanticHasWarnings = result.semanticCleanupResults.some((fileResult) => fileResult.warnings.length > 0);
+        if (latestCtx?.hasUI && (result.duplicatesRemoved > 0 || result.semanticIssuesResolved > 0 || result.warnings.length > 0)) {
+          const semanticSummary = result.semanticIssuesResolved > 0
+            ? ` and resolved ${result.semanticIssuesResolved} semantic issues`
+            : semanticHasWarnings
+              ? " and checked semantic cleanup with warnings"
+              : "";
+
           latestCtx.ui.notify(
-            `Raindistiller (${thinkingLevel}) removed ${result.duplicatesRemoved} duplicates across ${result.modifiedFiles.length} files`,
+            `Raindistiller (${thinkingLevel}) removed ${result.duplicatesRemoved} duplicates${semanticSummary} across ${result.modifiedFiles.length} files`,
             result.warnings.length > 0 ? "warning" : "info",
           );
         }
@@ -533,12 +852,14 @@ export default function raindistiller(pi: ExtensionAPI): void {
     latestCtx = ctx;
     restoreSessionState(ctx);
     syncStatus(ctx);
+    updateLintStatus(getSessionKbRoot());
   });
 
   pi.on("session_tree", async (_event, ctx: any) => {
     latestCtx = ctx;
     restoreSessionState(ctx);
     syncStatus(ctx);
+    updateLintStatus(getSessionKbRoot());
   });
 
   pi.on("session_shutdown", async (_event, ctx: any) => {
@@ -577,31 +898,64 @@ export default function raindistiller(pi: ExtensionAPI): void {
           return;
         }
 
-        try {
-          const kbRoot = getSessionKbRoot();
-          const parsed = parseDistillArgs(remainder);
-          const { result, modelName, thinkingLevel } = await runDistill(
-            {
-              kbRoot,
-              files: parsed.files,
-              directories: parsed.directories,
-              recursive: parsed.recursive,
-            },
-            "manual",
-            ctx,
-          );
-          const allWarnings = [...parsed.warnings, ...result.warnings];
-          ctx.ui.notify(
-            [
-              summarizeResult({ ...result, warnings: allWarnings }, modelName, thinkingLevel),
+        const kbRoot = getSessionKbRoot();
+        const parsed = parseDistillArgs(remainder);
+        ctx.ui.notify("Raindistiller distill started. Watch the status bar for progress.", "info");
+
+        void (async () => {
+          try {
+            const { result, modelName, thinkingLevel, semanticCleanupMode, semanticCleanupEnabled } = await runDistill(
+              {
+                kbRoot,
+                files: parsed.files,
+                directories: parsed.directories,
+                recursive: parsed.recursive,
+              },
+              "manual",
+              parsed.semanticCleanupOverride,
+              ctx,
+            );
+            const allWarnings = [...parsed.warnings, ...result.warnings];
+            const resultWithWarnings = { ...result, warnings: allWarnings };
+            const headline = summarizeHeadline(resultWithWarnings);
+            const summaryText = [
+              summarizeResult(
+                resultWithWarnings,
+                modelName,
+                thinkingLevel,
+                semanticCleanupMode,
+                semanticCleanupEnabled,
+              ),
               input.length > 0 ? `Command: /raindistiller ${input}` : "",
-            ].filter(Boolean).join("\n"),
-            allWarnings.length > 0 ? "warning" : "info",
-          );
-        } catch (error) {
-          ctx.ui.notify(`Raindistiller distill failed: ${error instanceof Error ? error.message : String(error)}`, "warning");
-        }
-        void drainAutoQueue();
+            ].filter(Boolean).join("\n");
+
+            ctx.ui.notify(headline, allWarnings.length > 0 ? "warning" : "info");
+
+            try {
+              await ctx.waitForIdle();
+            } catch {
+              // Best-effort only; if the session is no longer idle-waitable, still try to post the summary.
+            }
+
+            try {
+              await pi.sendMessage({
+                customType: RUN_MESSAGE_TYPE,
+                content: headline,
+                display: true,
+                details: { summaryText },
+              });
+            } catch (error) {
+              ctx.ui.notify(
+                `Raindistiller finished, but failed to post the summary message: ${error instanceof Error ? error.message : String(error)}`,
+                "warning",
+              );
+            }
+          } catch (error) {
+            ctx.ui.notify(`Raindistiller distill failed: ${error instanceof Error ? error.message : String(error)}`, "warning");
+          } finally {
+            void drainAutoQueue();
+          }
+        })();
         return;
       }
 
@@ -610,25 +964,42 @@ export default function raindistiller(pi: ExtensionAPI): void {
       const lastFiles = state.lastModifiedFiles.length > 0
         ? state.lastModifiedFiles.map((filePath) => `- ${filePath}`).join("\n")
         : "- none yet";
+      const { mode: configuredSemanticCleanupMode, warning: semanticModeWarning } = getConfiguredSemanticCleanupMode();
 
       ctx.ui.notify(
         [
           `Raindistiller auto mode: ${state.autoEnabled ? "on" : "off"}`,
+          `Semantic cleanup mode: ${formatSemanticCleanupMode(configuredSemanticCleanupMode)}`,
           `KB root: ${kbRoot}`,
           `Exists: ${fs.existsSync(kbRoot) ? "yes" : "no"}`,
           `Session runs: ${state.sessionRuns}`,
           `Session duplicates removed: ${state.sessionDuplicatesRemoved}`,
+          `Session semantic issues resolved: ${state.sessionSemanticIssuesResolved}`,
           `Session modified files: ${state.sessionModifiedFiles.length}`,
+          `Current lint findings: ${state.currentLintWarnings ?? "unknown"}`,
+          `Current structural issues: ${state.currentStructuralIssues ?? "unknown"}`,
+          `Current semantic warnings: ${state.currentSemanticWarnings ?? "unknown"}`,
+          ...(state.busy && state.progressStage
+            ? [state.progressTotal > 0
+              ? `Current progress: ${formatProgressStage(state.progressStage)} ${Math.min(state.progressProcessed, state.progressTotal)}/${state.progressTotal}`
+              : `Current progress: ${formatProgressStage(state.progressStage)} scan`]
+            : []),
           `Last run: ${lastRun}`,
           `Last source: ${state.lastSource ?? "none"}`,
           `Last model: ${state.lastModelName ?? "none"}`,
           `Last thinking: ${state.lastThinkingLevel ?? "none"}`,
           `Last duplicates removed: ${state.lastDuplicatesRemoved}`,
+          `Last semantic issues resolved: ${state.lastSemanticIssuesResolved}`,
           `Last duplicate groups: ${state.lastDuplicateGroups}`,
           `Last warnings: ${state.lastWarnings}`,
+          `Last semantic files modified: ${state.lastSemanticFilesModified.length}`,
+          `Last semantic cleanup mode: ${state.lastSemanticCleanupMode ?? "none"}`,
+          `Last semantic cleanup enabled: ${state.lastSemanticCleanupEnabled === null ? "none" : state.lastSemanticCleanupEnabled ? "yes" : "no"}`,
           `KB root override env: ${KB_ROOT_ENV_VAR}`,
+          `Semantic cleanup mode env: ${SEMANTIC_CLEANUP_MODE_ENV_VAR}`,
           `Auto thinking default: ${AUTO_THINKING_LEVEL}`,
           `Manual thinking default: ${MANUAL_THINKING_LEVEL}`,
+          ...(semanticModeWarning ? [`Warning: ${semanticModeWarning}`] : []),
           "Last modified files:",
           lastFiles,
         ].join("\n"),

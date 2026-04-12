@@ -39,6 +39,12 @@ export {
   type LintSeverity,
 } from "./lint.ts";
 export {
+  lintFactFileSemanticCleanup,
+  lintKnowledgeBaseSemanticCleanup,
+  type SemanticCleanupLintOptions,
+  type SemanticLintAnalysisStatus,
+} from "./semanticLint.ts";
+export {
   extractBulletText,
   factHeading,
   normalizeFact,

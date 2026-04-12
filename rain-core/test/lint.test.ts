@@ -26,6 +26,28 @@ test("lintFactFileContent rejects a legacy freeform bullet", () => {
   );
 });
 
+test("lintFactFileContent remains structural-only when semantic lint is not called", () => {
+  const result = lintFactFileContent(
+    "PI__WORKFLOW.md",
+    "# PI / WORKFLOW\n\n- prefers | pi install .\n",
+  );
+
+  assert.deepEqual(result, {
+    file: "PI__WORKFLOW.md",
+    issues: [
+      {
+        code: "INVALID_RELATION",
+        severity: "error",
+        file: "PI__WORKFLOW.md",
+        line: 3,
+        message: "Relation must match ^[A-Z][A-Z0-9_]*$.",
+      },
+    ],
+  });
+  assert.equal("analysisStatus" in result, false);
+  assert.equal("details" in result.issues[0], false);
+});
+
 test("lintFactFileContent reports filename heading mismatch", () => {
   const result = lintFactFileContent(
     "PI__WORKFLOW.md",

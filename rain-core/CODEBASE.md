@@ -20,6 +20,7 @@ This package is the shared deterministic substrate for the Rain extension repo.
 - markdown file discovery
 - canonical structured fact parsing
 - canonical fact-schema validation and linting
+- semantic cleanup detection for structurally valid canonical fact files
 - fact normalization helpers
 - fact record construction
 - lexical similarity scoring
@@ -55,6 +56,9 @@ Those concerns belong in package-specific orchestration layers such as `raindist
 - `src/lint.ts`
   - fact-file linting
   - KB-root markdown lint aggregation
+- `src/semanticLint.ts`
+  - warning-only semantic cleanup linting for structurally valid fact files
+  - deterministic detection of relation-refinement candidates and migrated grammar literals
 - `src/facts.ts`
   - legacy generic fact bullet parsing and normalization helpers used by current consumers
 - `src/dedupe.ts`

@@ -107,9 +107,9 @@ type ToolCallError = Error & {
   details?: ToolErrorDetails;
 };
 
-const VERIFY_TOOL_PARAMS = Type.Object({
+const LOOKUP_TOOL_PARAMS = Type.Object({
   question: Type.String({
-    description: "Question or claim to verify against Raincatcher knowledge files.",
+    description: "Question to look up against Raincatcher knowledge files.",
     minLength: 1,
   }),
 });
@@ -163,8 +163,66 @@ const DEFAULT_GREP_LIMIT = 20;
 const RAINMAN_THINKING_LEVEL = "low" as const;
 const MAX_REPAIR_ATTEMPTS = 1;
 const MAX_AGENT_EXECUTION_MS = 20_000;
+const LOOKUP_DIRECTIVE_PATTERNS = [
+  /\brainman\b/,
+  /\braincatcher\b/,
+  /\bknowledge base\b/,
+  /\bwhat do we know about\b/,
+  /\bwhat did we (?:already )?(?:determine|decide|learn)\b/,
+  /\baccording to\b/,
+  /\bpreviously-derived\b/,
+  /\bprior conclusion\b/,
+] as const;
+const LOOKUP_TOPIC_PATTERNS = [
+  /\bworkflow\b/,
+  /\bconvention\b/,
+  /\bpreference\b/,
+  /\bsource of truth\b/,
+  /\bowner(?:ship)?\b/,
+  /\brepo(?:sitory)?\b/,
+  /\bpath\b/,
+  /\blocation\b/,
+  /\bcache\b/,
+  /\bcaching\b/,
+  /\binvalidat(?:e|ion)\b/,
+  /\bbehavior\b/,
+  /\bworkaround\b/,
+  /\bexplanation\b/,
+  /\bdocumented\b/,
+  /\bknown\b/,
+] as const;
+const LOOKUP_SKIP_PATTERNS = [
+  /\bright now\b/,
+  /\bat the moment\b/,
+  /\bwhat changed\b/,
+  /\brecent changes?\b/,
+  /\bjust changed\b/,
+  /\blogs?\b/,
+  /\btrace(?:back|s)?\b/,
+  /\bgrafana\b/,
+  /\bloki\b/,
+  /\btempo\b/,
+  /\bprometheus\b/,
+  /\bmetric(?:s)?\b/,
+  /\bdashboard\b/,
+  /\brepro(?:duce|duction)?\b/,
+  /\bincident\b/,
+  /\boutage\b/,
+  /\bcurrently (?:failing|broken|erroring|timing out|slow)\b/,
+  /\b(?:failing|broken|erroring|timing out|slow)\b.*\b(?:right now|currently|today)\b/,
+  /\b(?:right now|currently|today)\b.*\b(?:failing|broken|erroring|timing out|slow)\b/,
+] as const;
+const QUESTION_PREFIX_PATTERN = /^(what|where|which|who|when|why|how|is|are|do|does|did|can|should|could|would|explain|describe|summarize|confirm)\b/;
 
-const SYSTEM_PROMPT = `You are a correctness-first verification agent.
+const LOOKUP_POLICY_APPEND = `Rainman lookup policy:
+- Rainman is a knowledge cache of stable, previously-derived project understanding captured in Raincatcher.
+- For likely-stable questions about workflows, conventions, preferences, ownership, source-of-truth repos, paths, locations, cache behavior, prior conclusions, or recurring explanations, call rainman_lookup before exploring code or files.
+- If rainman_lookup returns status answered, use that evidence-backed result.
+- If it returns status insufficient_evidence or conflict, continue with normal repo/code/log/db investigation as needed.
+- Skip rainman-first lookup for live-state, very recent change, or current-incident questions.`;
+
+const SYSTEM_PROMPT = `You are a correctness-first knowledge lookup agent.
+Rainman is a knowledge cache of stable, previously-derived project understanding captured in Raincatcher markdown files.
 Knowledge files use the strict canonical Rain fact format.
 ${STRUCTURED_FACT_SYNTAX_GUIDANCE}
 You answer only from lint-clean markdown files inside the configured knowledge root.
@@ -172,8 +230,8 @@ Use find and grep only for navigation.
 Only read output counts as evidence.
 The read tool returns raw line-numbered content plus parsed structured fact summaries for the requested range.
 Every populated field in data must have one or more exact citations.
-If the knowledge base cannot safely answer, return status insufficient_evidence.
-If relevant knowledge files conflict, return status conflict.
+If the knowledge base cannot safely answer, return status insufficient_evidence so the caller can continue with normal investigation.
+If relevant knowledge files conflict, return status conflict so the caller can investigate further.
 The only valid completion path is submit_result.
 If submit_result succeeds, stop immediately and do not add extra text.
 Prefer the smallest valid payload.
@@ -654,6 +712,22 @@ function buildRepairPrompt(question: string, attempt: number): string {
   ].join("\n\n");
 }
 
+function matchesAnyPattern(text: string, patterns: readonly RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+function shouldNudgeRainmanLookup(prompt: string): boolean {
+  const normalizedPrompt = prompt.trim().toLowerCase();
+  if (!normalizedPrompt) return false;
+  if (matchesAnyPattern(normalizedPrompt, LOOKUP_SKIP_PATTERNS)) return false;
+  if (matchesAnyPattern(normalizedPrompt, LOOKUP_DIRECTIVE_PATTERNS)) return true;
+
+  const hasStableTopic = matchesAnyPattern(normalizedPrompt, LOOKUP_TOPIC_PATTERNS);
+  if (!hasStableTopic) return false;
+
+  return QUESTION_PREFIX_PATTERN.test(normalizedPrompt) || normalizedPrompt.includes("?");
+}
+
 function summarizeCitations(citations: Citation[]): string[] {
   return citations.map((citation) => {
     const quote = citation.quote.replace(/\s+/g, " ").trim();
@@ -805,7 +879,7 @@ async function promptWithTimeout(
       } catch {
         // ignore abort failure
       }
-      reject(new Error(`Verification timed out after ${timeoutMs}ms`));
+      reject(new Error(`Rainman lookup timed out after ${timeoutMs}ms`));
     }, timeoutMs);
   });
 
@@ -864,8 +938,8 @@ async function runVerification(question: string, kbRoot: string, model: any, mod
     status: "insufficient_evidence",
     data: {},
     citations: [],
-    missingInformation: ["The verifier did not produce a validated evidence-backed result."],
-    warnings: ["The verification session ended without submit_result.", ...fileIndex.warnings],
+    missingInformation: ["The lookup session did not produce a validated evidence-backed result."],
+    warnings: ["The Rainman lookup session ended without submit_result.", ...fileIndex.warnings],
     meta: {
       model: modelName,
       kbRoot,
@@ -915,7 +989,7 @@ export default function rainman(pi: ExtensionAPI): void {
       theme.fg("dim", ` h:${state.sessionHits}`),
       state.sessionErrors > 0 ? theme.fg("error", ` e:${state.sessionErrors}`) : theme.fg("dim", " e:0"),
     ].join("");
-    const suffix = state.activeRuns > 0 ? theme.fg("dim", " verifying") : "";
+    const suffix = state.activeRuns > 0 ? theme.fg("dim", " looking up") : "";
 
     ctx.ui.setStatus("rainman", `${icon} ${counts}${suffix}`);
   }
@@ -944,19 +1018,32 @@ export default function rainman(pi: ExtensionAPI): void {
     ctx.ui.setStatus("rainman", undefined);
   });
 
+  pi.on("before_agent_start", async (event: any) => {
+    const prompt = typeof event?.prompt === "string" ? event.prompt : "";
+    if (!shouldNudgeRainmanLookup(prompt)) return;
+
+    const systemPrompt = typeof event?.systemPrompt === "string"
+      ? `${event.systemPrompt}\n\n${LOOKUP_POLICY_APPEND}`
+      : LOOKUP_POLICY_APPEND;
+
+    return { systemPrompt };
+  });
+
   pi.registerTool({
-    name: "rainman_verify",
-    label: "Rainman Verify",
+    name: "rainman_lookup",
+    label: "Rainman Lookup",
     description:
-      "Verify a question or claim against Raincatcher knowledge files and return only evidence-backed results with citations.",
-    promptSnippet: "Verify a claim or answer a narrow question using Raincatcher knowledge files.",
+      "Check Raincatcher knowledge for stable previously-derived project knowledge before re-deriving it from code or files, and return only evidence-backed results with citations.",
+    promptSnippet:
+      "Look up stable previously-derived project knowledge in Raincatcher before re-deriving it from code or files.",
     promptGuidelines: [
-      "Use this tool when you need to verify durable project, environment, workflow, or user-preference facts against Raincatcher knowledge.",
-      "Prefer this tool over guessing when the answer might already be captured in Raincatcher markdown knowledge files.",
-      "Treat answered results as verified only when the returned citations support the claim.",
+      "Use this tool first for likely-stable questions about workflows, conventions, preferences, ownership, source-of-truth repos, paths, locations, cache behavior, prior conclusions, recurring explanations, or other previously-derived project knowledge captured in Raincatcher.",
+      "If rainman_lookup returns status answered, use that evidence-backed result instead of re-deriving the same knowledge.",
+      "If rainman_lookup returns status insufficient_evidence or conflict, continue with normal repo/code/log/db investigation.",
+      "Do not use this tool first for live state, very recent changes, or current incidents.",
     ],
-    parameters: VERIFY_TOOL_PARAMS,
-    async execute(_toolCallId, params: Static<typeof VERIFY_TOOL_PARAMS>, _signal, _onUpdate, ctx) {
+    parameters: LOOKUP_TOOL_PARAMS,
+    async execute(_toolCallId, params: Static<typeof LOOKUP_TOOL_PARAMS>, _signal, _onUpdate, ctx) {
       state.activeRuns += 1;
       syncStatus(ctx);
 
@@ -972,7 +1059,7 @@ export default function rainman(pi: ExtensionAPI): void {
         const availableModels = ctx.modelRegistry.getAvailable();
         const model = ctx.model ?? availableModels[0];
         if (!model) {
-          throw new Error("No configured model is available for rainman_verify.");
+          throw new Error("No configured model is available for rainman_lookup.");
         }
 
         const result = await runVerification(question, kbRoot, model, ctx.modelRegistry, RAINMAN_THINKING_LEVEL);
@@ -1004,7 +1091,7 @@ export default function rainman(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("rainman", {
-    description: "Show Rainman verifier status",
+    description: "Show Rainman lookup status",
     handler: async (_args, ctx) => {
       const kbRoot = getKbRoot();
       const exists = fs.existsSync(kbRoot);

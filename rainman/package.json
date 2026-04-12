@@ -1,7 +1,7 @@
 {
   "name": "@zsaplan/pi-rainman",
   "version": "0.1.0",
-  "description": "Pi extension that verifies claims against Raincatcher knowledge files with evidence-backed citations.",
+  "description": "Pi extension that looks up stable previously-derived project knowledge from Raincatcher knowledge files with evidence-backed citations.",
   "type": "module",
   "license": "UNLICENSED",
   "repository": {
@@ -13,7 +13,8 @@
     "pi-package",
     "pi-extension",
     "rainman",
-    "verification"
+    "lookup",
+    "knowledge-cache"
   ],
   "files": [
     "src",
