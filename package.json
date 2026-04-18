@@ -18,6 +18,7 @@
     "raincatcher",
     "raindistiller",
     "rainman",
+    "response-review",
     "README.md",
     "package.json"
   ],
@@ -25,12 +26,17 @@
     "extensions": [
       "./raincatcher/src/index.ts",
       "./raindistiller/src/index.ts",
-      "./rainman/src/index.ts"
+      "./rainman/src/index.ts",
+      "./response-review/src/index.ts"
     ]
+  },
+  "dependencies": {
+    "glimpseui": "^0.6.0"
   },
   "peerDependencies": {
     "@mariozechner/pi-ai": "*",
     "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
     "@sinclair/typebox": "*"
   }
 }

@@ -8,6 +8,7 @@ Personal repo-backed source for pi extensions.
 - `raincatcher/` → `@zsaplan/pi-raincatcher`
 - `raindistiller/` → `@zsaplan/pi-raindistiller`
 - `rainman/` → `@zsaplan/pi-rainman`
+- `response-review/` → `@zsaplan/pi-response-review`
 
 Extension packages keep their own `package.json` and `pi` manifest. `rain-core/` is the shared deterministic utility layer; model policy and runtime orchestration stay in the extension packages.
 
@@ -32,6 +33,11 @@ pi-extensions/
 │   ├── package.json
 │   ├── README.md
 │   └── src/
+├── response-review/
+│   ├── package.json
+│   ├── README.md
+│   ├── src/
+│   └── web/
 └── README.md
 ```
 
@@ -45,10 +51,13 @@ pi -e .
 pi -e ./raincatcher
 pi -e ./raindistiller
 pi -e ./rainman
+pi -e ./response-review
 
 # install the whole repo-backed package so shared rain-core imports stay intact
 pi install .
 ```
+
+Note: `response-review/` has a runtime dependency on `glimpseui`, so direct source loading (`pi -e ./response-review`) needs an `npm install` inside that package first. `pi install .` handles package installs for you.
 
 ## Source of truth for this initial import
 
@@ -61,3 +70,4 @@ Repo-native additions after the initial import:
 
 - `rain-core/`
 - `raindistiller/`
+- `response-review/`
