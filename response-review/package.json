@@ -1,0 +1,45 @@
+{
+  "name": "@zsaplan/pi-response-review",
+  "version": "0.1.0",
+  "description": "Pi extension for line-targeted review of assistant responses, including retroactive session JSONL review.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zsaplan/pi-extensions.git",
+    "directory": "response-review"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "review",
+    "response-review",
+    "session"
+  ],
+  "files": [
+    "src",
+    "scripts",
+    "web",
+    "README.md",
+    "package.json"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "scripts": {
+    "build:web": "node ./scripts/build-web.mjs",
+    "prepare": "npm run build:web"
+  },
+  "dependencies": {
+    "glimpseui": "^0.6.0"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

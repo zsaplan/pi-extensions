@@ -13,11 +13,21 @@
     "pi-extension",
     "rain"
   ],
+  "scripts": {
+    "lint": "gts lint",
+    "fix": "gts fix && npm run build:response-review-web",
+    "typecheck": "tsc -p response-review/tsconfig.src.json --noEmit && tsc -p response-review/tsconfig.web.json --noEmit",
+    "build:response-review-web": "node response-review/scripts/build-web.mjs",
+    "knip": "knip -c knip.config.ts --include files,dependencies,unlisted,unresolved",
+    "verify": "npm run lint && npm run typecheck && npm run knip && npm run build:response-review-web && node --check response-review/web/app.js",
+    "prepare": "npm run build:response-review-web"
+  },
   "files": [
     "rain-core",
     "raincatcher",
     "raindistiller",
     "rainman",
+    "response-review",
     "README.md",
     "package.json"
   ],
@@ -25,12 +35,23 @@
     "extensions": [
       "./raincatcher/src/index.ts",
       "./raindistiller/src/index.ts",
-      "./rainman/src/index.ts"
+      "./rainman/src/index.ts",
+      "./response-review/src/index.ts"
     ]
+  },
+  "dependencies": {
+    "glimpseui": "^0.6.0"
   },
   "peerDependencies": {
     "@mariozechner/pi-ai": "*",
     "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
     "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "gts": "^7.0.0",
+    "knip": "^5.88.1",
+    "typescript": "^5.9.3"
   }
 }

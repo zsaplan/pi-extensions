@@ -1,0 +1,24 @@
+{
+  "extends": "./node_modules/gts/tsconfig-google.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": [
+    "response-review/src/**/*.ts",
+    "response-review/web/**/*.ts",
+    "knip.config.ts"
+  ],
+  "exclude": [
+    "node_modules/**",
+    "bc-zendesk/**",
+    "rain-core/**",
+    "raincatcher/**",
+    "raindistiller/**",
+    "rainman/**",
+    "response-review/web/**/*.js",
+    "response-review/tmp/**",
+    "src/**",
+    "tmp/**"
+  ]
+}
