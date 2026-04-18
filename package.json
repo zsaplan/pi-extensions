@@ -18,7 +18,8 @@
     "fix": "gts fix && npm run build:response-review-web",
     "build:response-review-web": "node response-review/scripts/build-web.mjs",
     "knip": "knip -c knip.config.ts --include files,dependencies,unlisted,unresolved",
-    "verify": "npm run lint && npm run knip && npm run build:response-review-web && node --check response-review/web/app.js"
+    "verify": "npm run lint && npm run knip && npm run build:response-review-web && node --check response-review/web/app.js",
+    "prepare": "npm run build:response-review-web"
   },
   "files": [
     "rain-core",

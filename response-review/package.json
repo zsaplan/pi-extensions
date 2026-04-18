@@ -27,11 +27,18 @@
       "./src/index.ts"
     ]
   },
+  "scripts": {
+    "build:web": "node ./scripts/build-web.mjs",
+    "prepare": "npm run build:web"
+  },
   "dependencies": {
     "glimpseui": "^0.6.0"
   },
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": "*",
     "@mariozechner/pi-tui": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }

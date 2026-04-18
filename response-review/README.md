@@ -45,7 +45,8 @@ The command:
 - The generated feedback prompt is meant to work retroactively. It always includes targeted excerpts, and it conditionally includes the full original assistant response with line numbers when needed.
 - Session review uses the branch currently stored in the chosen session file; there is no in-window branch picker.
 - Assistant messages without visible text are skipped.
-- If you load this package directly from a repo checkout with `pi -e ./response-review`, run `npm install` in `response-review/` first so `glimpseui` is available. Using `pi install .` handles that for installed package flows.
+- `response-review/web/app.ts` is the source-of-truth browser code. `response-review/web/app.js` is generated from it at install/build time and is not tracked in git.
+- If you load this package directly from a repo checkout with `pi -e ./response-review`, run `npm install` in `response-review/` first so `glimpseui` is available and the generated web bundle is built. Using `pi install .` handles that for installed package flows.
 
 ## Requirements
 

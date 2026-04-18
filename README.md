@@ -74,7 +74,8 @@ npm run verify
 
 Notes:
 
-- `npm run fix` applies `gts` formatting and regenerates `response-review/web/app.js` from `response-review/web/app.ts`.
+- `response-review/web/app.ts` is the tracked source-of-truth browser file.
+- `npm run fix` applies `gts` formatting and regenerates the untracked `response-review/web/app.js` runtime artifact from `response-review/web/app.ts`.
 - `npm run verify` runs linting, `knip`, rebuilds the generated web script, and checks the generated `response-review/web/app.js` syntax.
 - The other extensions can be onboarded to the same tooling in a later pass.
 
