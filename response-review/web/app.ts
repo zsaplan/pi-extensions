@@ -665,6 +665,19 @@ function getActiveCommentTarget() {
   };
 }
 
+function isSelectionBackward(selection) {
+  const anchorLine =
+    selection.selectionStartLineNumber ?? selection.startLineNumber ?? 1;
+  const focusLine =
+    selection.positionLineNumber ?? selection.endLineNumber ?? 1;
+  if (anchorLine !== focusLine) return anchorLine > focusLine;
+
+  const anchorColumn =
+    selection.selectionStartColumn ?? selection.startColumn ?? 1;
+  const focusColumn = selection.positionColumn ?? selection.endColumn ?? 1;
+  return anchorColumn > focusColumn;
+}
+
 function createWholeLineSelection(anchorLine: number, focusLine: number) {
   if (!model || !monacoApi) return null;
   const safeAnchorLine = Math.max(
@@ -672,6 +685,16 @@ function createWholeLineSelection(anchorLine: number, focusLine: number) {
     Math.min(anchorLine, model.getLineCount()),
   );
   const safeFocusLine = Math.max(1, Math.min(focusLine, model.getLineCount()));
+
+  if (safeFocusLine < safeAnchorLine) {
+    return new monacoApi.Selection(
+      safeAnchorLine,
+      model.getLineMaxColumn(safeAnchorLine),
+      safeFocusLine,
+      1,
+    );
+  }
+
   return new monacoApi.Selection(
     safeAnchorLine,
     1,
@@ -689,10 +712,12 @@ function normalizeEditorSelectionToWholeLines() {
   const selectionRange = getSelectionLineRange();
   if (!selectionRange) return false;
 
-  const normalizedSelection = createWholeLineSelection(
-    selectionRange.startLine,
-    selectionRange.endLine,
-  );
+  const normalizedSelection = isSelectionBackward(selection)
+    ? createWholeLineSelection(selectionRange.endLine, selectionRange.startLine)
+    : createWholeLineSelection(
+        selectionRange.startLine,
+        selectionRange.endLine,
+      );
   if (!normalizedSelection) return false;
 
   if (
