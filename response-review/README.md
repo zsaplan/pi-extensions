@@ -36,8 +36,10 @@ The command:
 ## Review window behavior
 
 - The smallest inline selection unit is a whole line; partial-line selections are normalized to full lines.
+- `Shift+Up` / `Shift+Down` extend whole-line selections in either direction, but stop before overlapping an existing inline note.
 - Inline notes are exclusive by covered line range. If a line is already covered by an existing inline note, the UI reopens that note instead of creating an overlapping one.
-- Keyboard-driven review is supported in the native window, including line navigation into existing notes and confirm prompts for destructive/finalize actions.
+- Keyboard-driven review is supported in the native window, including arrow-key navigation into existing notes, immediate delete on `Escape` for empty notes, delete confirmation on `Escape` for non-empty notes, and confirm-before-finalize on `Cmd/Ctrl+Enter` from the read-only editor.
+- Inline notes opened near the bottom of the response auto-scroll into view so they stay usable.
 - Copy, cut, and paste inside note textareas use a host clipboard bridge instead of relying solely on WebView-native shortcuts.
 
 ## Notes
