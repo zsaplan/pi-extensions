@@ -665,6 +665,21 @@ function getActiveCommentTarget() {
   };
 }
 
+function createWholeLineSelection(anchorLine: number, focusLine: number) {
+  if (!model || !monacoApi) return null;
+  const safeAnchorLine = Math.max(
+    1,
+    Math.min(anchorLine, model.getLineCount()),
+  );
+  const safeFocusLine = Math.max(1, Math.min(focusLine, model.getLineCount()));
+  return new monacoApi.Selection(
+    safeAnchorLine,
+    1,
+    safeFocusLine,
+    model.getLineMaxColumn(safeFocusLine),
+  );
+}
+
 function normalizeEditorSelectionToWholeLines() {
   if (!editor || !model || !monacoApi || isNormalizingEditorSelection)
     return false;
@@ -674,12 +689,11 @@ function normalizeEditorSelectionToWholeLines() {
   const selectionRange = getSelectionLineRange();
   if (!selectionRange) return false;
 
-  const normalizedSelection = new monacoApi.Selection(
+  const normalizedSelection = createWholeLineSelection(
     selectionRange.startLine,
-    1,
     selectionRange.endLine,
-    model.getLineMaxColumn(selectionRange.endLine),
   );
+  if (!normalizedSelection) return false;
 
   if (
     selection.startLineNumber === normalizedSelection.startLineNumber &&
@@ -696,6 +710,56 @@ function normalizeEditorSelectionToWholeLines() {
   } finally {
     isNormalizingEditorSelection = false;
   }
+  return true;
+}
+
+function handleEditorShiftArrowLineSelection(event) {
+  if (!editor || !model || !monacoApi) return false;
+  if (!event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
+    return false;
+  }
+  if (
+    ![monacoApi.KeyCode.UpArrow, monacoApi.KeyCode.DownArrow].includes(
+      event.keyCode,
+    )
+  ) {
+    return false;
+  }
+
+  const selection = editor.getSelection();
+  if (!selection) return false;
+
+  const anchorLine =
+    selection.selectionStartLineNumber ?? selection.startLineNumber ?? 1;
+  const focusLine =
+    selection.positionLineNumber ?? selection.endLineNumber ?? 1;
+  const delta = event.keyCode === monacoApi.KeyCode.UpArrow ? -1 : 1;
+  const nextFocusLine = Math.max(
+    1,
+    Math.min(model.getLineCount(), focusLine + delta),
+  );
+
+  event.preventDefault();
+  event.stopPropagation();
+  if (nextFocusLine === focusLine) return true;
+
+  const proposedStartLine = Math.min(anchorLine, nextFocusLine);
+  const proposedEndLine = Math.max(anchorLine, nextFocusLine);
+  if (findInlineCommentOverlappingRange(proposedStartLine, proposedEndLine)) {
+    debugLog('editor shift-arrow selection blocked by note', {
+      anchorLine,
+      focusLine,
+      nextFocusLine,
+      proposedStartLine,
+      proposedEndLine,
+    });
+    return true;
+  }
+
+  const nextSelection = createWholeLineSelection(anchorLine, nextFocusLine);
+  if (!nextSelection) return true;
+  editor.setSelection(nextSelection);
+  updateSelectionWidget();
   return true;
 }
 
@@ -1137,6 +1201,53 @@ function findCommentTextarea(commentId: string): HTMLTextAreaElement | null {
   );
 }
 
+function findInlineCommentContainer(commentId: string): HTMLElement | null {
+  return (
+    Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '.view-zone-container[data-comment-id]',
+      ),
+    ).find(
+      container => container.getAttribute('data-comment-id') === commentId,
+    ) || null
+  );
+}
+
+function scrollInlineCommentIntoView(commentId: string) {
+  if (!editor) return;
+  const container = findInlineCommentContainer(commentId);
+  const editorDomNode = editor.getDomNode?.();
+  if (container === null || !(editorDomNode instanceof HTMLElement)) return;
+
+  const editorRect = editorDomNode.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  const paddingTop = 16;
+  const paddingBottom = 24;
+  let nextScrollTop = editor.getScrollTop();
+
+  if (containerRect.bottom + paddingBottom > editorRect.bottom) {
+    nextScrollTop += containerRect.bottom + paddingBottom - editorRect.bottom;
+  } else if (containerRect.top - paddingTop < editorRect.top) {
+    nextScrollTop -= editorRect.top - (containerRect.top - paddingTop);
+  }
+
+  const clampedScrollTop = Math.max(0, nextScrollTop);
+  if (Math.abs(clampedScrollTop - editor.getScrollTop()) > 0.5) {
+    editor.setScrollTop(clampedScrollTop);
+  }
+}
+
+function scheduleEnsureInlineCommentVisible(
+  commentId: string,
+  remainingAttempts = 4,
+) {
+  if (remainingAttempts <= 0) return;
+  requestAnimationFrame(() => {
+    scrollInlineCommentIntoView(commentId);
+    scheduleEnsureInlineCommentVisible(commentId, remainingAttempts - 1);
+  });
+}
+
 function captureTextareaSelection(textarea: HTMLTextAreaElement) {
   return {
     start: textarea.selectionStart ?? 0,
@@ -1201,6 +1312,7 @@ function scheduleFocusCommentInput(
       editor.revealLineInCenter(Number(options.revealLineNumber));
     }
     focusCommentTextareaAtEnd(textarea);
+    scheduleEnsureInlineCommentVisible(commentId);
   };
 
   requestAnimationFrame(tryFocus);
@@ -1217,6 +1329,7 @@ function expandAndFocusInlineComment(
   if (!isCommentCollapsed(comment.id) && textarea !== null) {
     if (editor) editor.revealLineInCenter(revealLineNumber);
     focusCommentTextareaAtEnd(textarea);
+    scheduleEnsureInlineCommentVisible(comment.id);
     return;
   }
 
@@ -1744,6 +1857,7 @@ function measureCommentZoneHeight(comment, domNode) {
 function renderCommentDOM(comment, onDelete, onLayoutChange = () => {}) {
   const container = document.createElement('div');
   container.className = 'view-zone-container';
+  container.setAttribute('data-comment-id', comment.id);
   const collapsed = isCommentCollapsed(comment.id);
   container.innerHTML = `
     <div class="mb-2 flex items-center justify-between gap-3">
@@ -1785,6 +1899,16 @@ function renderCommentDOM(comment, onDelete, onLayoutChange = () => {}) {
       const selectionStart = textarea.selectionStart ?? 0;
       const selectionEnd = textarea.selectionEnd ?? selectionStart;
       const textLength = textarea.value.length;
+      const deleteOptions =
+        comment.startLine !== null && comment.startLine !== undefined
+          ? {focusLine: comment.startLine}
+          : {};
+      const isCommentOnLastEditorLine =
+        comment.startLine !== null &&
+        comment.startLine !== undefined &&
+        model !== null &&
+        model !== undefined &&
+        inlineCommentLineEnd(comment) >= model.getLineCount();
 
       if (
         comment.startLine !== null &&
@@ -1810,7 +1934,15 @@ function renderCommentDOM(comment, onDelete, onLayoutChange = () => {}) {
       ) {
         event.preventDefault();
         event.stopPropagation();
-        collapseComment(comment);
+        collapseComment(
+          comment,
+          isCommentOnLastEditorLine
+            ? {
+                targetLine: inlineCommentLineEnd(comment),
+                openCommentOnArrival: false,
+              }
+            : {},
+        );
         return;
       }
 
@@ -1818,30 +1950,25 @@ function renderCommentDOM(comment, onDelete, onLayoutChange = () => {}) {
         event.preventDefault();
         event.stopPropagation();
         comment.body = textarea.value;
-        if (textarea.value.trim().length > 0) {
-          const selectionSnapshot = captureTextareaSelection(textarea);
-          showConfirmModal({
-            title: 'Delete note?',
-            description: `Delete ${lineRangeLabel(comment).toLowerCase()} and its text?`,
-            confirmLabel: 'Delete note',
-            confirmTone: 'danger',
-            onConfirm: () => {
-              deleteComment(
-                comment,
-                comment.startLine !== null && comment.startLine !== undefined
-                  ? {focusLine: comment.startLine}
-                  : {},
-              );
-            },
-            onCancel: () => {
-              requestAnimationFrame(() => {
-                focusCommentTextarea(textarea, selectionSnapshot);
-              });
-            },
-          });
+        if (textarea.value.trim().length === 0) {
+          deleteComment(comment, deleteOptions);
           return;
         }
-        collapseComment(comment);
+        const selectionSnapshot = captureTextareaSelection(textarea);
+        showConfirmModal({
+          title: 'Delete note?',
+          description: `Delete ${lineRangeLabel(comment).toLowerCase()} and its text?`,
+          confirmLabel: 'Delete note',
+          confirmTone: 'danger',
+          onConfirm: () => {
+            deleteComment(comment, deleteOptions);
+          },
+          onCancel: () => {
+            requestAnimationFrame(() => {
+              focusCommentTextarea(textarea, selectionSnapshot);
+            });
+          },
+        });
         return;
       }
 
@@ -1857,6 +1984,9 @@ function renderCommentDOM(comment, onDelete, onLayoutChange = () => {}) {
       const heightChanged = autosizeCommentTextarea(textarea);
       if (heightChanged) {
         onLayoutChange();
+        if (document.activeElement === textarea) {
+          scheduleEnsureInlineCommentVisible(comment.id);
+        }
       }
       updateButtons();
     });
@@ -1869,7 +1999,10 @@ function renderCommentDOM(comment, onDelete, onLayoutChange = () => {}) {
   });
 
   if (!collapsed && textarea !== null && !comment.body) {
-    setTimeout(() => textarea.focus(), 50);
+    setTimeout(() => {
+      textarea.focus();
+      scheduleEnsureInlineCommentVisible(comment.id);
+    }, 50);
   }
 
   requestAnimationFrame(() => {
@@ -1902,6 +2035,10 @@ function syncViewZones() {
         zoneEntry.zone.heightInPx = measureCommentZoneHeight(comment, domNode);
         editor.changeViewZones(accessor => {
           accessor.layoutZone(zoneEntry.id);
+        });
+        requestAnimationFrame(() => {
+          layoutEditor();
+          scrollInlineCommentIntoView(comment.id);
         });
       },
     );
@@ -2320,10 +2457,15 @@ function setupMonaco() {
       });
     });
     editor.onKeyDown(event => {
+      if (handleEditorShiftArrowLineSelection(event)) {
+        shouldOpenCommentOnArrowNavigation = false;
+        return;
+      }
       if (
         !event.metaKey &&
         !event.ctrlKey &&
         !event.altKey &&
+        !event.shiftKey &&
         [monacoApi.KeyCode.UpArrow, monacoApi.KeyCode.DownArrow].includes(
           event.keyCode,
         )

@@ -3,6 +3,7 @@ dist/
 *.tgz
 .DS_Store
 tsconfig.tsbuildinfo
+response-review/*.tsbuildinfo
 response-review/web/app.js
 
 # Ignore agent memory / scratch docs in any tmp directory
