@@ -18,6 +18,7 @@
   ],
   "files": [
     "src",
+    "scripts",
     "web",
     "README.md",
     "package.json"

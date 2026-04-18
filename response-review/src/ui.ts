@@ -1,6 +1,7 @@
 import {readFileSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {ensureResponseReviewWebBundle} from '../scripts/web-bundle.mjs';
 import type {ResponseReviewWindowData} from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -17,6 +18,7 @@ export function buildResponseReviewHtml(
   data: ResponseReviewWindowData,
 ): string {
   const templateHtml = readFileSync(join(webDir, 'index.html'), 'utf8');
+  ensureResponseReviewWebBundle({rebuildIfStale: true});
   const appJs = readFileSync(join(webDir, 'app.js'), 'utf8');
   const payload = escapeForInlineScript(JSON.stringify(data));
   return templateHtml

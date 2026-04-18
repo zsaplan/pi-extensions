@@ -68,6 +68,7 @@ Run these from the repository root:
 ```bash
 npm run lint
 npm run fix
+npm run typecheck
 npm run knip
 npm run verify
 ```
@@ -75,8 +76,10 @@ npm run verify
 Notes:
 
 - `response-review/web/app.ts` is the tracked source-of-truth browser file.
+- `response-review/web/app.js` is an untracked runtime artifact that is rebuilt on demand if missing or stale.
 - `npm run fix` applies `gts` formatting and regenerates the untracked `response-review/web/app.js` runtime artifact from `response-review/web/app.ts`.
-- `npm run verify` runs linting, `knip`, rebuilds the generated web script, and checks the generated `response-review/web/app.js` syntax.
+- `npm run typecheck` runs semantic TypeScript checks for both `response-review/src` and `response-review/web`.
+- `npm run verify` runs linting, semantic typechecking, `knip`, rebuilds the generated web script, and checks the generated `response-review/web/app.js` syntax.
 - The other extensions can be onboarded to the same tooling in a later pass.
 
 ## Source of truth for this initial import

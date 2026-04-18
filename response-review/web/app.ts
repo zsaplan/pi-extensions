@@ -1,15 +1,177 @@
-const reviewData = JSON.parse(
-  document.getElementById('response-review-data').textContent || '{}',
+interface ResponseSummary {
+  id: string;
+  index: number;
+  timestamp: number;
+  provider: string | null;
+  model: string | null;
+  preview: string;
+  precedingUserPreview: string;
+  lineCount: number;
+  charCount: number;
+}
+
+interface ReviewWindowData {
+  session?: {
+    sessionPath?: string | null;
+    displayTitle?: string;
+  };
+  responses?: ResponseSummary[];
+}
+
+interface ResponseReviewComment {
+  id: string;
+  responseId: string;
+  startLine: number | null;
+  endLine: number | null;
+  excerpt: string;
+  body: string;
+}
+
+interface DraftData {
+  overallComment: string;
+  comments: ResponseReviewComment[];
+}
+
+interface CommentUiState {
+  collapsed: boolean;
+}
+
+interface ScrollPosition {
+  top: number;
+  left: number;
+}
+
+interface HostRequestMessage {
+  type: string;
+  requestId: string;
+  [key: string]: unknown;
+}
+
+interface HostRequestResult {
+  type: string;
+  requestId: string;
+  ok?: boolean;
+  message?: string;
+  text?: string;
+  [key: string]: unknown;
+}
+
+interface FocusTextareaOptions {
+  start?: number;
+  end?: number;
+  direction?: 'forward' | 'backward' | 'none';
+}
+
+interface ScheduleFocusCommentInputOptions {
+  maxAttempts?: number;
+  revealLineNumber?: number;
+}
+
+interface ExpandAndFocusInlineCommentOptions {
+  preserveScroll?: boolean;
+}
+
+interface MaybeOpenCommentForActiveEditorLineOptions {
+  excludeCommentId?: string;
+}
+
+interface DeleteCommentOptions {
+  preserveScroll?: boolean;
+  focusLine?: number;
+}
+
+interface CollapseCommentOptions {
+  targetLine?: number;
+  moveCursor?: boolean;
+  openCommentOnArrival?: boolean;
+}
+
+interface RenderResponseOptions {
+  preserveScroll?: boolean;
+  restoreScroll?: boolean;
+}
+
+interface TextModalOptions {
+  title: string;
+  description: string;
+  initialValue?: string;
+  saveLabel?: string;
+  onSave: (value: string) => void;
+}
+
+interface ConfirmModalOptions {
+  title: string;
+  description: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  confirmTone?: 'danger' | 'default';
+  onConfirm?: () => void;
+  onCancel?: () => void;
+}
+
+interface SendHostRequestOptions {
+  timeoutMs?: number;
+}
+
+interface FlushPendingClipboardActionOptions {
+  allowWhileModifierHeld?: boolean;
+  timeoutMs?: number;
+}
+
+interface IncomingHostMessage {
+  type?: string;
+  requestId?: string;
+  responseId?: string;
+  text?: string;
+  precedingUserText?: string;
+  message?: string;
+  details?: Record<string, unknown>;
+}
+
+interface ReviewState {
+  activeResponseId: string | null;
+  wrapLines: boolean;
+  sidebarCollapsed: boolean;
+  search: string;
+  drafts: Record<string, DraftData | undefined>;
+  commentUi: Record<string, CommentUiState | undefined>;
+  responseContents: Record<string, string | undefined>;
+  responseUserTexts: Record<string, string | undefined>;
+  responseErrors: Record<string, string | undefined>;
+  pendingRequestIds: Record<string, string | undefined>;
+  scrollPositions: Record<string, ScrollPosition | undefined>;
+}
+
+interface DebugState {
+  enabled: boolean;
+  lines: string[];
+  panel: HTMLDivElement | null;
+  pre: HTMLPreElement | null;
+}
+
+function getRequiredElement<T extends HTMLElement>(id: string): T {
+  const element = document.getElementById(id);
+  if (element === null) {
+    throw new Error(`Missing required element: ${id}`);
+  }
+  return element as T;
+}
+
+const reviewDataScript = getRequiredElement<HTMLScriptElement>(
+  'response-review-data',
 );
+const reviewData = JSON.parse(
+  reviewDataScript.textContent || '{}',
+) as ReviewWindowData;
 
 const allResponses = [...(reviewData.responses || [])].sort(
   (a, b) => b.index - a.index,
 );
-const responseById = new Map(
+const responseById = new Map<string, ResponseSummary>(
   allResponses.map(response => [response.id, response]),
 );
 
-const state = {
+const state: ReviewState = {
   activeResponseId: allResponses[0]?.id ?? null,
   wrapLines: true,
   sidebarCollapsed: false,
@@ -23,31 +185,40 @@ const state = {
   scrollPositions: {},
 };
 
-const sidebarEl = document.getElementById('sidebar');
-const sessionLabelEl = document.getElementById('session-label');
-const summaryEl = document.getElementById('summary');
-const toggleSidebarButton = document.getElementById('toggle-sidebar-button');
-const sidebarSearchInputEl = document.getElementById('sidebar-search-input');
-const responseListEl = document.getElementById('response-list');
-const currentResponseLabelEl = document.getElementById(
+const sidebarEl = getRequiredElement<HTMLElement>('sidebar');
+const sessionLabelEl = getRequiredElement<HTMLElement>('session-label');
+const summaryEl = getRequiredElement<HTMLElement>('summary');
+const toggleSidebarButton = getRequiredElement<HTMLButtonElement>(
+  'toggle-sidebar-button',
+);
+const sidebarSearchInputEl = getRequiredElement<HTMLInputElement>(
+  'sidebar-search-input',
+);
+const responseListEl = getRequiredElement<HTMLElement>('response-list');
+const currentResponseLabelEl = getRequiredElement<HTMLElement>(
   'current-response-label',
 );
-const responseMetaEl = document.getElementById('response-meta');
-const modeHintEl = document.getElementById('mode-hint');
-const editorContainerEl = document.getElementById('editor-container');
-const responseCommentsContainer = document.getElementById(
+const responseMetaEl = getRequiredElement<HTMLElement>('response-meta');
+const modeHintEl = getRequiredElement<HTMLElement>('mode-hint');
+const editorContainerEl = getRequiredElement<HTMLElement>('editor-container');
+const responseCommentsContainer = getRequiredElement<HTMLElement>(
   'response-comments-container',
 );
-const overallCommentButton = document.getElementById('overall-comment-button');
-const toggleWrapButton = document.getElementById('toggle-wrap-button');
-const cancelButton = document.getElementById('cancel-button');
-const submitButton = document.getElementById('submit-button');
+const overallCommentButton = getRequiredElement<HTMLButtonElement>(
+  'overall-comment-button',
+);
+const toggleWrapButton =
+  getRequiredElement<HTMLButtonElement>('toggle-wrap-button');
+const cancelButton = getRequiredElement<HTMLButtonElement>('cancel-button');
+const submitButton = getRequiredElement<HTMLButtonElement>('submit-button');
+const windowTitleEl = getRequiredElement<HTMLElement>('window-title');
 
 sessionLabelEl.textContent =
   reviewData.session?.sessionPath || reviewData.session?.displayTitle || '';
 
-document.getElementById('window-title').textContent =
-  `Response review · ${reviewData.session?.displayTitle || 'session'}`;
+windowTitleEl.textContent = `Response review · ${
+  reviewData.session?.displayTitle || 'session'
+}`;
 
 let monacoApi = null;
 let editor = null;
@@ -57,15 +228,18 @@ let activeViewZones = [];
 let editorResizeObserver = null;
 let hoverDecoration = [];
 let requestSequence = 0;
-const pendingHostRequests = new Map();
+const pendingHostRequests = new Map<
+  string,
+  (result: HostRequestResult) => void
+>();
 let selectionWidget = null;
-let pendingGutterClickTimer = null;
+let pendingGutterClickTimer: number | null = null;
 let hasInitializedEditorCursor = false;
 let isNormalizingEditorSelection = false;
 let shouldOpenCommentOnArrowNavigation = false;
 
 const DEBUG_STORAGE_KEY = 'response-review-debug';
-const debugState = {
+const debugState: DebugState = {
   enabled: false,
   lines: [],
   panel: null,
@@ -85,11 +259,14 @@ function nextRequestId(prefix) {
   return `${prefix}:${Date.now()}:${requestSequence}`;
 }
 
-function sendHostRequest(message, options = {}) {
+function sendHostRequest(
+  message: HostRequestMessage,
+  options: SendHostRequestOptions = {},
+): Promise<HostRequestResult> {
   const timeoutMs = Number.isFinite(options.timeoutMs)
     ? Number(options.timeoutMs)
     : 2000;
-  return new Promise(resolve => {
+  return new Promise<HostRequestResult>(resolve => {
     let settled = false;
     let timeoutId = null;
 
@@ -760,7 +937,7 @@ function openResponse(responseId) {
   ensureResponseLoaded(responseId);
 }
 
-function showTextModal(options) {
+function showTextModal(options: TextModalOptions) {
   const backdrop = document.createElement('div');
   backdrop.className = 'review-modal-backdrop';
   backdrop.innerHTML = `
@@ -775,7 +952,9 @@ function showTextModal(options) {
     </div>
   `;
   document.body.appendChild(backdrop);
-  const textarea = backdrop.querySelector('#review-modal-text');
+  const textarea = backdrop.querySelector(
+    '#review-modal-text',
+  ) as HTMLTextAreaElement;
   const close = () => backdrop.remove();
   backdrop
     .querySelector('#review-modal-cancel')
@@ -790,7 +969,7 @@ function showTextModal(options) {
   textarea.focus();
 }
 
-function showConfirmModal(options) {
+function showConfirmModal(options: ConfirmModalOptions) {
   const confirmClassName =
     options.confirmTone === 'danger'
       ? 'cursor-pointer rounded-md border border-red-500/20 bg-red-500/90 px-4 py-2 text-sm font-medium text-white hover:bg-red-500'
@@ -810,8 +989,12 @@ function showConfirmModal(options) {
   `;
   document.body.appendChild(backdrop);
 
-  const confirmButton = backdrop.querySelector('#review-modal-confirm');
-  const cancelButton = backdrop.querySelector('#review-modal-cancel');
+  const confirmButton = backdrop.querySelector(
+    '#review-modal-confirm',
+  ) as HTMLButtonElement;
+  const cancelButton = backdrop.querySelector(
+    '#review-modal-cancel',
+  ) as HTMLButtonElement;
   let closed = false;
 
   const close = () => {
@@ -942,15 +1125,19 @@ function findInlineCommentOverlappingRange(
   );
 }
 
-function findCommentTextarea(commentId) {
+function findCommentTextarea(commentId: string): HTMLTextAreaElement | null {
   return (
-    [...document.querySelectorAll('textarea[data-comment-id]')].find(
+    Array.from(
+      document.querySelectorAll<HTMLTextAreaElement>(
+        'textarea[data-comment-id]',
+      ),
+    ).find(
       textarea => textarea.getAttribute('data-comment-id') === commentId,
     ) || null
   );
 }
 
-function captureTextareaSelection(textarea) {
+function captureTextareaSelection(textarea: HTMLTextAreaElement) {
   return {
     start: textarea.selectionStart ?? 0,
     end: textarea.selectionEnd ?? textarea.selectionStart ?? 0,
@@ -958,7 +1145,10 @@ function captureTextareaSelection(textarea) {
   };
 }
 
-function focusCommentTextarea(textarea, options = {}) {
+function focusCommentTextarea(
+  textarea: HTMLTextAreaElement,
+  options: FocusTextareaOptions = {},
+) {
   textarea.focus();
   const maxOffset = textarea.value.length;
   const start = Math.max(
@@ -983,13 +1173,16 @@ function focusCommentTextarea(textarea, options = {}) {
   });
 }
 
-function focusCommentTextareaAtEnd(textarea) {
+function focusCommentTextareaAtEnd(textarea: HTMLTextAreaElement) {
   const caret = textarea.value.length;
   focusCommentTextarea(textarea, {start: caret, end: caret, direction: 'none'});
   logTextareaSelection(textarea, 'comment textarea focused at end');
 }
 
-function scheduleFocusCommentInput(commentId, options = {}) {
+function scheduleFocusCommentInput(
+  commentId: string,
+  options: ScheduleFocusCommentInputOptions = {},
+) {
   const maxAttempts = Number.isFinite(options.maxAttempts)
     ? Number(options.maxAttempts)
     : 12;
@@ -1013,7 +1206,10 @@ function scheduleFocusCommentInput(commentId, options = {}) {
   requestAnimationFrame(tryFocus);
 }
 
-function expandAndFocusInlineComment(comment, options = {}) {
+function expandAndFocusInlineComment(
+  comment: ResponseReviewComment,
+  options: ExpandAndFocusInlineCommentOptions = {},
+) {
   if (comment.startLine === null || comment.startLine === undefined) return;
   const revealLineNumber = inlineCommentLineEnd(comment);
   const textarea = findCommentTextarea(comment.id);
@@ -1127,7 +1323,9 @@ function moveEditorCursorToLine(lineNumber) {
   updateSelectionWidget();
 }
 
-function maybeOpenCommentForActiveEditorLine(options = {}) {
+function maybeOpenCommentForActiveEditorLine(
+  options: MaybeOpenCommentForActiveEditorLineOptions = {},
+) {
   if (!editor) return;
   const lineNumber =
     editor.getPosition()?.lineNumber ??
@@ -1139,7 +1337,10 @@ function maybeOpenCommentForActiveEditorLine(options = {}) {
   expandAndFocusInlineComment(comment);
 }
 
-function deleteComment(comment, options = {}) {
+function deleteComment(
+  comment: ResponseReviewComment,
+  options: DeleteCommentOptions = {},
+) {
   const draft = activeDraft();
   if (!draft) return;
   draft.comments = draft.comments.filter(item => item.id !== comment.id);
@@ -1151,7 +1352,10 @@ function deleteComment(comment, options = {}) {
   }
 }
 
-function collapseComment(comment, options = {}) {
+function collapseComment(
+  comment: ResponseReviewComment,
+  options: CollapseCommentOptions = {},
+) {
   const nextLine = Math.max(
     comment.startLine ?? 1,
     (comment.endLine ?? comment.startLine ?? 1) + 1,
@@ -1230,7 +1434,10 @@ function installTextareaShortcutFallback(textarea) {
     return action.key === 'x' ? 'cut' : 'copy';
   };
 
-  const flushPendingClipboardAction = (reason, options = {}) => {
+  const flushPendingClipboardAction = (
+    reason,
+    options: FlushPendingClipboardActionOptions = {},
+  ) => {
     const action = pendingClipboardAction;
     if (!action || action.inFlight) return;
 
@@ -1553,11 +1760,15 @@ function renderCommentDOM(comment, onDelete, onLayoutChange = () => {}) {
     </div>
   `;
 
-  const textarea = container.querySelector('textarea');
-  const deleteButton = container.querySelector("[data-action='delete']");
+  const textarea = container.querySelector(
+    'textarea',
+  ) as HTMLTextAreaElement | null;
+  const deleteButton = container.querySelector(
+    "[data-action='delete']",
+  ) as HTMLButtonElement | null;
   const toggleButton = container.querySelector(
     "[data-action='toggle-collapse']",
-  );
+  ) as HTMLButtonElement | null;
 
   [deleteButton, toggleButton].forEach(element => {
     if (element) wireCommentInput(element);
@@ -1807,7 +2018,7 @@ function maybeInitializeEditorCursor() {
   });
 }
 
-function mountResponse(options = {}) {
+function mountResponse(options: RenderResponseOptions = {}) {
   if (!editor || !monacoApi) return;
   const preserveScroll = options.preserveScroll === true;
   const scrollState = preserveScroll
@@ -1845,7 +2056,9 @@ function mountResponse(options = {}) {
 }
 
 function syncCommentBodiesFromDOM() {
-  const textareas = document.querySelectorAll('textarea[data-comment-id]');
+  const textareas = document.querySelectorAll<HTMLTextAreaElement>(
+    'textarea[data-comment-id]',
+  );
   textareas.forEach(textarea => {
     const commentId = textarea.getAttribute('data-comment-id');
     const draft = activeDraft();
@@ -1879,7 +2092,7 @@ function performSubmit() {
   return true;
 }
 
-function renderAll(options = {}) {
+function renderAll(options: RenderResponseOptions = {}) {
   renderSidebar();
   if (editor && monacoApi) {
     mountResponse(options);
@@ -1982,39 +2195,48 @@ function createGlyphHoverActions() {
 
 window.__responseReviewReceive = function (message) {
   if (!message || typeof message !== 'object') return;
+  const incoming = message as IncomingHostMessage;
 
-  if (message.type === 'debug-log') {
-    debugLog(`host ${message.message}`, message.details);
+  if (incoming.type === 'debug-log') {
+    debugLog(`host ${incoming.message || ''}`, incoming.details);
     return;
   }
 
   if (
-    typeof message.requestId === 'string' &&
-    pendingHostRequests.has(message.requestId)
+    typeof incoming.requestId === 'string' &&
+    pendingHostRequests.has(incoming.requestId)
   ) {
-    const resolve = pendingHostRequests.get(message.requestId);
-    resolve(message);
+    const resolve = pendingHostRequests.get(incoming.requestId);
+    if (resolve) resolve(incoming as HostRequestResult);
     return;
   }
 
-  if (message.type === 'response-data') {
-    state.responseContents[message.responseId] = message.text;
-    state.responseUserTexts[message.responseId] = message.precedingUserText;
-    delete state.responseErrors[message.responseId];
-    delete state.pendingRequestIds[message.responseId];
+  if (
+    incoming.type === 'response-data' &&
+    typeof incoming.responseId === 'string' &&
+    typeof incoming.text === 'string' &&
+    typeof incoming.precedingUserText === 'string'
+  ) {
+    state.responseContents[incoming.responseId] = incoming.text;
+    state.responseUserTexts[incoming.responseId] = incoming.precedingUserText;
+    delete state.responseErrors[incoming.responseId];
+    delete state.pendingRequestIds[incoming.responseId];
     renderSidebar();
-    if (state.activeResponseId === message.responseId) {
+    if (state.activeResponseId === incoming.responseId) {
       mountResponse({restoreScroll: true});
     }
     return;
   }
 
-  if (message.type === 'response-error') {
-    state.responseErrors[message.responseId] =
-      message.message || 'Unknown error';
-    delete state.pendingRequestIds[message.responseId];
+  if (
+    incoming.type === 'response-error' &&
+    typeof incoming.responseId === 'string'
+  ) {
+    state.responseErrors[incoming.responseId] =
+      incoming.message || 'Unknown error';
+    delete state.pendingRequestIds[incoming.responseId];
     renderSidebar();
-    if (state.activeResponseId === message.responseId) {
+    if (state.activeResponseId === incoming.responseId) {
       mountResponse({preserveScroll: false});
     }
   }

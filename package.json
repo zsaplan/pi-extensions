@@ -16,9 +16,10 @@
   "scripts": {
     "lint": "gts lint",
     "fix": "gts fix && npm run build:response-review-web",
+    "typecheck": "tsc -p response-review/tsconfig.src.json --noEmit && tsc -p response-review/tsconfig.web.json --noEmit",
     "build:response-review-web": "node response-review/scripts/build-web.mjs",
     "knip": "knip -c knip.config.ts --include files,dependencies,unlisted,unresolved",
-    "verify": "npm run lint && npm run knip && npm run build:response-review-web && node --check response-review/web/app.js",
+    "verify": "npm run lint && npm run typecheck && npm run knip && npm run build:response-review-web && node --check response-review/web/app.js",
     "prepare": "npm run build:response-review-web"
   },
   "files": [

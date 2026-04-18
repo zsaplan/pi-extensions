@@ -4,7 +4,6 @@ import {basename, resolve} from 'node:path';
 import {
   SessionManager,
   type ExtensionCommandContext,
-  type ReadonlySessionManager,
   type SessionEntry,
 } from '@mariozechner/pi-coding-agent';
 import type {
@@ -12,6 +11,11 @@ import type {
   ResponseReviewEntryData,
   ResponseReviewSessionSource,
 } from './types.js';
+
+type ResponseReviewSessionManager = Pick<
+  SessionManager,
+  'getCwd' | 'getSessionFile' | 'getSessionId' | 'getSessionName' | 'getBranch'
+>;
 
 const SESSION_PICK_LIMIT = 200;
 const RESPONSE_PREVIEW_LIMIT = 160;
@@ -95,7 +99,7 @@ function entryTimestampMs(entry: SessionEntry): number {
 }
 
 function buildSessionSource(
-  manager: ReadonlySessionManager,
+  manager: ResponseReviewSessionManager,
   kind: ResponseReviewSessionSource['kind'],
 ): ResponseReviewSessionSource {
   const sessionPath = manager.getSessionFile() ?? null;
@@ -115,7 +119,7 @@ function buildSessionSource(
 }
 
 function collectAssistantResponses(
-  manager: ReadonlySessionManager,
+  manager: ResponseReviewSessionManager,
 ): ResponseReviewEntryData[] {
   const branch = manager.getBranch();
   const responses: ResponseReviewEntryData[] = [];
