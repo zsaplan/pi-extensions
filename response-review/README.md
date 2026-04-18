@@ -1,6 +1,6 @@
 # response-review
 
-A pi extension for reviewing assistant responses with line-targeted comments, similar in spirit to `pi-diff-review`.
+A pi extension for reviewing assistant responses in a native window with line-targeted notes, similar in spirit to `pi-diff-review`.
 
 ## What it does
 
@@ -9,10 +9,10 @@ Adds a `/response-review` command to pi.
 The command:
 
 1. opens a native review window
-2. lists assistant responses from the current session branch or a selected retroactive session
-3. lets you comment on whole responses, individual lines, or selected line ranges
+2. lists assistant responses from the current session or a specific retroactive session
+3. lets you add whole-response notes or inline notes for one line or a whole-line range
 4. tracks comments per response with line pointers and quoted excerpts
-5. inserts a self-contained feedback prompt into the pi editor when you submit
+5. inserts a self-contained feedback prompt into the pi editor when you finish review
 
 ## Command
 
@@ -33,10 +33,17 @@ The command:
 - Open a saved session by JSONL path:
   - `/response-review ~/.pi/agent/sessions/.../2026-04-18T12-00-00-000Z_uuid.jsonl`
 
+## Review window behavior
+
+- The smallest inline selection unit is a whole line; partial-line selections are normalized to full lines.
+- Inline notes are exclusive by covered line range. If a line is already covered by an existing inline note, the UI reopens that note instead of creating an overlapping one.
+- Keyboard-driven review is supported in the native window, including line navigation into existing notes and confirm prompts for destructive/finalize actions.
+- Copy, cut, and paste inside note textareas use a host clipboard bridge instead of relying solely on WebView-native shortcuts.
+
 ## Notes
 
-- The generated feedback prompt includes the original response with line numbers so it can be used retroactively, not only when the original response is still in context.
-- Session review uses the current leaf branch of the chosen session file. In practice that means the JSONL session is treated like a tree, and `/response-review <session-id-or-path>` reads the branch that session currently points at rather than opening an in-window branch picker.
+- The generated feedback prompt is meant to work retroactively. It always includes targeted excerpts, and it conditionally includes the full original assistant response with line numbers when needed.
+- Session review uses the branch currently stored in the chosen session file; there is no in-window branch picker.
 - Assistant messages without visible text are skipped.
 - If you load this package directly from a repo checkout with `pi -e ./response-review`, run `npm install` in `response-review/` first so `glimpseui` is available. Using `pi install .` handles that for installed package flows.
 
@@ -46,6 +53,7 @@ The command:
 - Node.js 20+
 - `pi` installed
 - internet access for the Tailwind and Monaco CDNs used by the review window
+- for Linux clipboard shortcuts in note textareas: `wl-copy`/`wl-paste`, `xclip`, or `xsel`
 
 ### Windows notes
 

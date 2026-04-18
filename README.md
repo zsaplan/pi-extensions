@@ -59,6 +59,25 @@ pi install .
 
 Note: `response-review/` has a runtime dependency on `glimpseui`, so direct source loading (`pi -e ./response-review`) needs an `npm install` inside that package first. `pi install .` handles package installs for you.
 
+## Development workflow
+
+For now, the repo-root validation scripts are scoped to `response-review` only.
+
+Run these from the repository root:
+
+```bash
+npm run lint
+npm run fix
+npm run knip
+npm run verify
+```
+
+Notes:
+
+- `npm run fix` applies `gts` formatting and regenerates `response-review/web/app.js` from `response-review/web/app.ts`.
+- `npm run verify` runs linting, `knip`, rebuilds the generated web script, and checks the generated `response-review/web/app.js` syntax.
+- The other extensions can be onboarded to the same tooling in a later pass.
+
 ## Source of truth for this initial import
 
 Initial package sources were copied from:

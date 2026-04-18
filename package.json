@@ -13,6 +13,13 @@
     "pi-extension",
     "rain"
   ],
+  "scripts": {
+    "lint": "gts lint",
+    "fix": "gts fix && npm run build:response-review-web",
+    "build:response-review-web": "node response-review/scripts/build-web.mjs",
+    "knip": "knip -c knip.config.ts --include files,dependencies,unlisted,unresolved",
+    "verify": "npm run lint && npm run knip && npm run build:response-review-web && node --check response-review/web/app.js"
+  },
   "files": [
     "rain-core",
     "raincatcher",
@@ -38,5 +45,11 @@
     "@mariozechner/pi-coding-agent": "*",
     "@mariozechner/pi-tui": "*",
     "@sinclair/typebox": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "gts": "^7.0.0",
+    "knip": "^5.88.1",
+    "typescript": "^5.9.3"
   }
 }

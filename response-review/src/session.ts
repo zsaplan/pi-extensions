@@ -1,17 +1,17 @@
-import { access } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, resolve } from "node:path";
+import {access} from 'node:fs/promises';
+import {homedir} from 'node:os';
+import {basename, resolve} from 'node:path';
 import {
   SessionManager,
   type ExtensionCommandContext,
   type ReadonlySessionManager,
   type SessionEntry,
-} from "@mariozechner/pi-coding-agent";
+} from '@mariozechner/pi-coding-agent';
 import type {
   LoadedResponseReviewSession,
   ResponseReviewEntryData,
   ResponseReviewSessionSource,
-} from "./types.js";
+} from './types.js';
 
 const SESSION_PICK_LIMIT = 200;
 const RESPONSE_PREVIEW_LIMIT = 160;
@@ -29,12 +29,12 @@ function stripWrappingQuotes(value: string): string {
 }
 
 function normalizeWhitespace(value: string): string {
-  return value.replace(/\r\n?/g, "\n").replace(/\s+/g, " ").trim();
+  return value.replace(/\r\n?/g, '\n').replace(/\s+/g, ' ').trim();
 }
 
 function expandHome(value: string): string {
-  if (value === "~") return homedir();
-  if (value.startsWith("~/")) {
+  if (value === '~') return homedir();
+  if (value.startsWith('~/')) {
     return resolve(homedir(), value.slice(2));
   }
   return value;
@@ -48,54 +48,61 @@ function toPreview(value: string, maxLength: number): string {
 
 function countLines(value: string): number {
   if (value.length === 0) return 0;
-  return value.replace(/\r\n?/g, "\n").split("\n").length;
+  return value.replace(/\r\n?/g, '\n').split('\n').length;
 }
 
-function extractVisibleText(content: unknown, options?: { includeImages?: boolean }): string {
-  if (typeof content === "string") return content.trim();
-  if (!Array.isArray(content)) return "";
+function extractVisibleText(
+  content: unknown,
+  options?: {includeImages?: boolean},
+): string {
+  if (typeof content === 'string') return content.trim();
+  if (!Array.isArray(content)) return '';
 
   const blocks: string[] = [];
   for (const block of content) {
-    if (block == null || typeof block !== "object") continue;
-    const candidate = block as { type?: string; text?: string };
-    if (candidate.type === "text" && typeof candidate.text === "string") {
+    if (block === null || typeof block !== 'object') continue;
+    const candidate = block as {type?: string; text?: string};
+    if (candidate.type === 'text' && typeof candidate.text === 'string') {
       blocks.push(candidate.text);
       continue;
     }
-    if (candidate.type === "image" && options?.includeImages) {
-      blocks.push("[image]");
+    if (candidate.type === 'image' && options?.includeImages) {
+      blocks.push('[image]');
     }
   }
 
-  return blocks.join("\n\n").trim();
+  return blocks.join('\n\n').trim();
 }
 
 function getAssistantResponseText(entry: SessionEntry): string {
-  if (entry.type !== "message") return "";
-  if (entry.message.role !== "assistant") return "";
+  if (entry.type !== 'message') return '';
+  if (entry.message.role !== 'assistant') return '';
   return extractVisibleText(entry.message.content);
 }
 
 function getUserMessageText(entry: SessionEntry): string {
-  if (entry.type !== "message") return "";
-  if (entry.message.role !== "user") return "";
-  return extractVisibleText(entry.message.content, { includeImages: true });
+  if (entry.type !== 'message') return '';
+  if (entry.message.role !== 'user') return '';
+  return extractVisibleText(entry.message.content, {includeImages: true});
 }
 
 function entryTimestampMs(entry: SessionEntry): number {
-  if (entry.type === "message" && typeof entry.message.timestamp === "number") {
+  if (entry.type === 'message' && typeof entry.message.timestamp === 'number') {
     return entry.message.timestamp;
   }
   const parsed = Date.parse(entry.timestamp);
   return Number.isFinite(parsed) ? parsed : Date.now();
 }
 
-function buildSessionSource(manager: ReadonlySessionManager, kind: ResponseReviewSessionSource["kind"]): ResponseReviewSessionSource {
+function buildSessionSource(
+  manager: ReadonlySessionManager,
+  kind: ResponseReviewSessionSource['kind'],
+): ResponseReviewSessionSource {
   const sessionPath = manager.getSessionFile() ?? null;
   const sessionName = manager.getSessionName() ?? null;
-  const displayTitle = sessionName
-    ?? (sessionPath != null ? basename(sessionPath) : "Current live session");
+  const displayTitle =
+    sessionName ??
+    (sessionPath !== null ? basename(sessionPath) : 'Current live session');
 
   return {
     kind,
@@ -107,10 +114,12 @@ function buildSessionSource(manager: ReadonlySessionManager, kind: ResponseRevie
   };
 }
 
-function collectAssistantResponses(manager: ReadonlySessionManager): ResponseReviewEntryData[] {
+function collectAssistantResponses(
+  manager: ReadonlySessionManager,
+): ResponseReviewEntryData[] {
   const branch = manager.getBranch();
   const responses: ResponseReviewEntryData[] = [];
-  let lastUserText = "";
+  let lastUserText = '';
 
   for (const entry of branch) {
     const userText = getUserMessageText(entry);
@@ -126,18 +135,20 @@ function collectAssistantResponses(manager: ReadonlySessionManager): ResponseRev
       id: entry.id,
       index: responses.length + 1,
       timestamp: entryTimestampMs(entry),
-      provider: entry.type === "message" && entry.message.role === "assistant"
-        ? (entry.message.provider ?? null)
-        : null,
-      model: entry.type === "message" && entry.message.role === "assistant"
-        ? (entry.message.model ?? null)
-        : null,
+      provider:
+        entry.type === 'message' && entry.message.role === 'assistant'
+          ? (entry.message.provider ?? null)
+          : null,
+      model:
+        entry.type === 'message' && entry.message.role === 'assistant'
+          ? (entry.message.model ?? null)
+          : null,
       preview: toPreview(responseText, RESPONSE_PREVIEW_LIMIT),
       precedingUserPreview: toPreview(lastUserText, USER_PREVIEW_LIMIT),
       lineCount: countLines(responseText),
       charCount: responseText.length,
-      text: responseText.replace(/\r\n?/g, "\n"),
-      precedingUserText: lastUserText.replace(/\r\n?/g, "\n"),
+      text: responseText.replace(/\r\n?/g, '\n'),
+      precedingUserText: lastUserText.replace(/\r\n?/g, '\n'),
     });
   }
 
@@ -153,9 +164,12 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-async function resolveSessionPath(rawArg: string, ctx: ExtensionCommandContext): Promise<string | null> {
+async function resolveSessionPath(
+  rawArg: string,
+  ctx: ExtensionCommandContext,
+): Promise<string | null> {
   const arg = stripWrappingQuotes(rawArg);
-  if (arg.length === 0 || arg === "current") {
+  if (arg.length === 0 || arg === 'current') {
     return null;
   }
 
@@ -164,9 +178,11 @@ async function resolveSessionPath(rawArg: string, ctx: ExtensionCommandContext):
     return candidatePath;
   }
 
-  const sessions = (await SessionManager.listAll()).sort((a, b) => b.modified.getTime() - a.modified.getTime());
+  const sessions = (await SessionManager.listAll()).sort(
+    (a, b) => b.modified.getTime() - a.modified.getTime(),
+  );
   const lowered = arg.toLowerCase();
-  const matches = sessions.filter((session) => {
+  const matches = sessions.filter(session => {
     if (session.id.startsWith(arg)) return true;
     if (session.path.toLowerCase().includes(lowered)) return true;
     if (session.name?.toLowerCase().includes(lowered)) return true;
@@ -182,29 +198,39 @@ async function resolveSessionPath(rawArg: string, ctx: ExtensionCommandContext):
 
   const limitedMatches = matches
     .slice(0, SESSION_PICK_LIMIT)
-    .map((session) => {
+    .map(session => {
       const modified = Number.isFinite(session.modified.getTime())
-        ? session.modified.toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "Z")
-        : "unknown";
-      const label = session.name?.trim() || toPreview(session.firstMessage || "(empty session)", 72);
+        ? session.modified
+            .toISOString()
+            .replace('T', ' ')
+            .replace(/\.\d{3}Z$/, 'Z')
+        : 'unknown';
+      const label =
+        session.name?.trim() ||
+        toPreview(session.firstMessage || '(empty session)', 72);
       return `- ${session.id.slice(0, 8)} • ${modified} • ${label} • ${session.path}`;
     })
-    .join("\n");
+    .join('\n');
 
-  throw new Error([
-    `Multiple sessions matched: ${arg}`,
-    "Use /resume or /tree for interactive context selection, or pass a more specific session id/path.",
-    limitedMatches,
-  ].join("\n"));
+  throw new Error(
+    [
+      `Multiple sessions matched: ${arg}`,
+      'Use /resume or /tree for interactive context selection, or pass a more specific session id/path.',
+      limitedMatches,
+    ].join('\n'),
+  );
 }
 
-export async function loadResponseReviewSession(rawArgs: string, ctx: ExtensionCommandContext): Promise<LoadedResponseReviewSession> {
+export async function loadResponseReviewSession(
+  rawArgs: string,
+  ctx: ExtensionCommandContext,
+): Promise<LoadedResponseReviewSession> {
   const resolvedPath = await resolveSessionPath(rawArgs.trim(), ctx);
 
-  if (resolvedPath == null) {
+  if (resolvedPath === null) {
     const responses = collectAssistantResponses(ctx.sessionManager);
     return {
-      session: buildSessionSource(ctx.sessionManager, "current"),
+      session: buildSessionSource(ctx.sessionManager, 'current'),
       responses,
     };
   }
@@ -212,7 +238,7 @@ export async function loadResponseReviewSession(rawArgs: string, ctx: ExtensionC
   const manager = SessionManager.open(resolvedPath);
   const responses = collectAssistantResponses(manager);
   return {
-    session: buildSessionSource(manager, "session-file"),
+    session: buildSessionSource(manager, 'session-file'),
     responses,
   };
 }

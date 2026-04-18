@@ -1,5 +1,5 @@
 export interface ResponseReviewSessionSource {
-  kind: "current" | "session-file";
+  kind: 'current' | 'session-file';
   sessionId: string;
   sessionPath: string | null;
   cwd: string;
@@ -44,30 +44,30 @@ export interface ResponseReviewComment {
 }
 
 export interface ResponseReviewSubmitPayload {
-  type: "submit";
+  type: 'submit';
   responseId: string;
   overallComment: string;
   comments: ResponseReviewComment[];
 }
 
 export interface ResponseReviewCancelPayload {
-  type: "cancel";
+  type: 'cancel';
 }
 
 export interface ResponseReviewRequestPayload {
-  type: "request-response";
+  type: 'request-response';
   requestId: string;
   responseId: string;
 }
 
 export interface ResponseReviewClipboardWritePayload {
-  type: "clipboard-write";
+  type: 'clipboard-write';
   requestId: string;
   text: string;
 }
 
 export interface ResponseReviewClipboardReadPayload {
-  type: "clipboard-read";
+  type: 'clipboard-read';
   requestId: string;
 }
 
@@ -79,7 +79,7 @@ export type ResponseReviewWindowMessage =
   | ResponseReviewClipboardReadPayload;
 
 export interface ResponseReviewDataMessage {
-  type: "response-data";
+  type: 'response-data';
   requestId: string;
   responseId: string;
   text: string;
@@ -87,21 +87,21 @@ export interface ResponseReviewDataMessage {
 }
 
 export interface ResponseReviewErrorMessage {
-  type: "response-error";
+  type: 'response-error';
   requestId: string;
   responseId: string;
   message: string;
 }
 
 export interface ResponseReviewClipboardWriteResultMessage {
-  type: "clipboard-write-result";
+  type: 'clipboard-write-result';
   requestId: string;
   ok: boolean;
   message?: string;
 }
 
 export interface ResponseReviewClipboardReadResultMessage {
-  type: "clipboard-read-result";
+  type: 'clipboard-read-result';
   requestId: string;
   ok: boolean;
   text?: string;
@@ -109,8 +109,8 @@ export interface ResponseReviewClipboardReadResultMessage {
 }
 
 export interface ResponseReviewDebugLogMessage {
-  type: "debug-log";
-  source: "host" | "page";
+  type: 'debug-log';
+  source: 'host' | 'page';
   message: string;
   details?: Record<string, unknown>;
 }
