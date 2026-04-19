@@ -14,6 +14,28 @@ The command:
 4. tracks comments per response with line pointers and quoted excerpts
 5. inserts a self-contained feedback prompt into the pi editor when you finish review
 
+## Install with pi
+
+`response-review` ships from the repo-root pi package in this repository, so git/GitHub installs should target the repository root rather than the `response-review/` subdirectory.
+
+```bash
+# global install
+pi install git:github.com/zsaplan/pi-extensions
+
+# raw GitHub URL also works
+pi install https://github.com/zsaplan/pi-extensions
+
+# install into the current project's .pi/settings.json
+pi install -l git:github.com/zsaplan/pi-extensions
+
+# try it for one run without installing
+pi -e git:github.com/zsaplan/pi-extensions
+```
+
+After installing, restart pi or run `/reload`, then use `/response-review`.
+
+If you are loading directly from a local checkout instead, `pi -e ./response-review` still works; run `npm install` in `response-review/` first so `glimpseui` is available and the generated web bundle can be built locally.
+
 ## Command
 
 ```text
@@ -48,7 +70,7 @@ The command:
 - Session review uses the branch currently stored in the chosen session file; there is no in-window branch picker.
 - Assistant messages without visible text are skipped.
 - `response-review/web/app.ts` is the source-of-truth browser code. `response-review/web/app.js` is generated from it, rebuilt on demand when missing or stale, and is not tracked in git.
-- If you load this package directly from a repo checkout with `pi -e ./response-review`, run `npm install` in `response-review/` first so `glimpseui` is available and the generated web bundle can be built locally. Using `pi install .` handles package installs for you.
+- `pi install` from git/GitHub handles package installs for you, just like `pi install .` from a local checkout.
 
 ## Requirements
 

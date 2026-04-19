@@ -41,6 +41,26 @@ pi-extensions/
 └── README.md
 ```
 
+## Install with pi
+
+This repository is itself a pi package at the repo root. Installing it from git/GitHub loads the extensions declared in the root `package.json`, including `response-review`.
+
+```bash
+# global install
+pi install git:github.com/zsaplan/pi-extensions
+
+# raw GitHub URL also works
+pi install https://github.com/zsaplan/pi-extensions
+
+# install into the current project's .pi/settings.json
+pi install -l git:github.com/zsaplan/pi-extensions
+
+# try it for one run without installing
+pi -e git:github.com/zsaplan/pi-extensions
+```
+
+After installing, restart pi or run `/reload`.
+
 ## Local usage
 
 ```bash
@@ -57,7 +77,7 @@ pi -e ./response-review
 pi install .
 ```
 
-Note: `response-review/` has a runtime dependency on `glimpseui`, so direct source loading (`pi -e ./response-review`) needs an `npm install` inside that package first. `pi install .` handles package installs for you.
+Note: `response-review/` has a runtime dependency on `glimpseui`, so direct source loading (`pi -e ./response-review`) needs an `npm install` inside that package first. `pi install .`, `pi install git:github.com/zsaplan/pi-extensions`, and `pi install https://github.com/zsaplan/pi-extensions` handle package installs for you.
 
 ## Development workflow
 
