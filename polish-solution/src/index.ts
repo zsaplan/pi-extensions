@@ -95,10 +95,13 @@ const GIT_DIFF_SCHEMA = Type.Object({
 
 const DEFAULT_THINKING_LEVEL = 'low' as const;
 const MAX_REPAIR_ATTEMPTS = 3;
-const MAX_AGENT_EXECUTION_MS = 60_000;
+const MAX_AGENT_EXECUTION_MS = 600_000;
 const MAX_DIFF_BYTES = 120_000;
 const MAX_DIFF_LINES = 3_500;
 const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null';
+const STATUS_KEY = 'polish-solution-review';
+const HEARTBEAT_INTERVAL_MS = 2_000;
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 const REVIEWER_SYSTEM_PROMPT = `You are an adversarial code reviewer.
 Default to skepticism. Try to disprove the change rather than validate it.
@@ -147,6 +150,19 @@ function uniqueSorted(values: string[]): string[] {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right));
 }
 
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
 function formatBulletList(items: string[]): string {
   if (items.length === 0) return '- (none)';
   return items.map(item => `- ${item}`).join('\n');
@@ -167,6 +183,82 @@ function formatToolOutput(content: string, hint?: string): string {
     text += `\n\n[${extra.join('; ')}]`;
   }
   return text;
+}
+
+function createProgressReporter(onUpdate: any, ctx: any) {
+  let heartbeatId: NodeJS.Timeout | undefined;
+  let spinnerIndex = 0;
+
+  const setFooterStatus = (message: string | undefined): void => {
+    if (!ctx?.hasUI) return;
+    ctx.ui.setStatus(STATUS_KEY, message);
+  };
+
+  const emit = (
+    message: string,
+    details?: Record<string, unknown>,
+    options?: {notify?: boolean},
+  ): void => {
+    onUpdate?.({
+      content: [{type: 'text', text: message}],
+      details: {
+        phase: 'progress',
+        progressMessage: message,
+        ...(details ?? {}),
+      },
+    });
+    setFooterStatus(message);
+    if (options?.notify && ctx?.hasUI) {
+      ctx.ui.notify(message, 'info');
+    }
+  };
+
+  const stopHeartbeat = (): void => {
+    if (heartbeatId !== undefined) {
+      clearInterval(heartbeatId);
+      heartbeatId = undefined;
+    }
+  };
+
+  const startHeartbeat = (
+    baseMessage: string,
+    details?: Record<string, unknown>,
+  ): void => {
+    stopHeartbeat();
+    const startedAt = Date.now();
+
+    const tick = (): void => {
+      const elapsedMs = Date.now() - startedAt;
+      const frame = SPINNER_FRAMES[spinnerIndex % SPINNER_FRAMES.length];
+      spinnerIndex += 1;
+      emit(`${frame} ${baseMessage} (${formatElapsed(elapsedMs)})`, {
+        ...(details ?? {}),
+        phase: 'heartbeat',
+        baseMessage,
+        elapsedMs,
+      });
+    };
+
+    tick();
+    heartbeatId = setInterval(tick, HEARTBEAT_INTERVAL_MS);
+  };
+
+  return {
+    update(
+      message: string,
+      details?: Record<string, unknown>,
+      options?: {notify?: boolean},
+    ): void {
+      stopHeartbeat();
+      emit(message, details, options);
+    },
+    startHeartbeat,
+    stopHeartbeat,
+    clear(): void {
+      stopHeartbeat();
+      setFooterStatus(undefined);
+    },
+  };
 }
 
 async function runCommand(
@@ -499,10 +591,36 @@ async function buildReviewScope(
   cwd: string,
   requestedBaseRef: string | undefined,
   signal?: AbortSignal,
+  progress?: ReturnType<typeof createProgressReporter>,
 ): Promise<ReviewScope> {
+  progress?.update('🔎 Locating git repository…', {
+    phase: 'scope',
+    step: 'repo-root',
+  });
   const repoRoot = await getRepoRoot(cwd, signal);
+
+  progress?.update('🔎 Resolving review base ref…', {
+    phase: 'scope',
+    step: 'base-ref',
+    repoRoot,
+  });
   const baseRef = await resolveBaseRef(repoRoot, requestedBaseRef, signal);
+
+  progress?.update('🔎 Computing merge-base…', {
+    phase: 'scope',
+    step: 'merge-base',
+    repoRoot,
+    baseRef,
+  });
   const mergeBase = await resolveMergeBase(repoRoot, baseRef, signal);
+
+  progress?.update('🔎 Reading branch and diff scope…', {
+    phase: 'scope',
+    step: 'branch-and-diff',
+    repoRoot,
+    baseRef,
+    mergeBase,
+  });
   const branch = await getCurrentBranch(repoRoot, signal);
   const scopedDiff = await buildScopedDiff(repoRoot, mergeBase, signal);
 
@@ -519,6 +637,21 @@ async function buildReviewScope(
       `polish_solution_review did not run because the current diff is too large for one reviewer pass (${diffLines} lines, ${formatSize(diffBytes)}). Narrow the change set or choose a different baseRef.`,
     );
   }
+
+  progress?.update(
+    `🔎 Review scope ready: ${scopedDiff.changedFiles.length} file(s), ${diffLines} diff line(s).`,
+    {
+      phase: 'scope-ready',
+      repoRoot,
+      branch,
+      baseRef,
+      mergeBase,
+      changedFiles: scopedDiff.changedFiles.length,
+      untrackedFiles: scopedDiff.untrackedFiles.length,
+      diffLines,
+      diffBytes,
+    },
+  );
 
   return {
     repoRoot,
@@ -744,8 +877,14 @@ async function runReviewerSession(
   model: any,
   modelRegistry: any,
   thinkingLevel: ReturnType<ExtensionAPI['getThinkingLevel']>,
+  progress?: ReturnType<typeof createProgressReporter>,
 ): Promise<ReviewResult> {
   const submittedReview: {value?: ReviewResult} = {};
+  progress?.update('🛠 Preparing isolated reviewer resources…', {
+    phase: 'reviewer-setup',
+    step: 'resource-loader',
+    repoRoot: scope.repoRoot,
+  });
   const resourceLoader = new DefaultResourceLoader({
     cwd: scope.repoRoot,
     agentDir: getAgentDir(),
@@ -759,6 +898,11 @@ async function runReviewerSession(
   });
   await resourceLoader.reload();
 
+  progress?.update('🛠 Creating isolated reviewer session…', {
+    phase: 'reviewer-setup',
+    step: 'session-create',
+    repoRoot: scope.repoRoot,
+  });
   const {session} = await createAgentSession({
     cwd: scope.repoRoot,
     agentDir: getAgentDir(),
@@ -782,12 +926,47 @@ async function runReviewerSession(
         attempt === 1
           ? buildInitialPrompt(scope.diff)
           : buildRepairPrompt(attempt - 1);
-      await promptWithTimeout(
-        session.prompt(prompt),
-        session,
-        MAX_AGENT_EXECUTION_MS,
+      progress?.startHeartbeat(
+        `Running isolated adversarial reviewer (attempt ${attempt}/${maxAttempts})`,
+        {
+          phase: 'reviewer-run',
+          attempt,
+          maxAttempts,
+        },
       );
-      if (submittedReview.value) return submittedReview.value;
+      try {
+        await promptWithTimeout(
+          session.prompt(prompt),
+          session,
+          MAX_AGENT_EXECUTION_MS,
+        );
+      } finally {
+        progress?.stopHeartbeat();
+      }
+
+      if (submittedReview.value) {
+        progress?.update(
+          `✅ Reviewer finished with status ${submittedReview.value.status}.`,
+          {
+            phase: 'review-complete',
+            attempt,
+            maxAttempts,
+            reviewStatus: submittedReview.value.status,
+          },
+        );
+        return submittedReview.value;
+      }
+
+      if (attempt < maxAttempts) {
+        progress?.update(
+          `🔁 Reviewer returned invalid output. Retrying (${attempt + 1}/${maxAttempts})…`,
+          {
+            phase: 'review-retry',
+            attempt: attempt + 1,
+            maxAttempts,
+          },
+        );
+      }
     }
   } finally {
     session.dispose();
@@ -816,31 +995,76 @@ export default function polishSolution(pi: ExtensionAPI): void {
       _toolCallId,
       params: Static<typeof REVIEW_TOOL_PARAMS>,
       signal,
-      _onUpdate,
+      onUpdate,
       ctx,
     ) {
-      const currentCwd = ctx.cwd ?? process.cwd();
-      const scope = await buildReviewScope(currentCwd, params.baseRef, signal);
+      const progress = createProgressReporter(onUpdate, ctx);
 
-      const availableModels = ctx.modelRegistry.getAvailable();
-      const model = ctx.model ?? availableModels[0];
-      if (!model) {
-        throw new Error(
-          'polish_solution_review could not find an active model to run the reviewer.',
+      try {
+        progress.update(
+          '🚀 Starting adversarial review…',
+          {
+            phase: 'start',
+            timeoutMs: MAX_AGENT_EXECUTION_MS,
+          },
+          {notify: true},
         );
+
+        const currentCwd = ctx.cwd ?? process.cwd();
+        const scope = await buildReviewScope(
+          currentCwd,
+          params.baseRef,
+          signal,
+          progress,
+        );
+
+        const availableModels = ctx.modelRegistry.getAvailable();
+        const model = ctx.model ?? availableModels[0];
+        if (!model) {
+          throw new Error(
+            'polish_solution_review could not find an active model to run the reviewer.',
+          );
+        }
+
+        progress.update('🚀 Launching isolated adversarial reviewer…', {
+          phase: 'launch-reviewer',
+          branch: scope.branch,
+          baseRef: scope.baseRef,
+          mergeBase: scope.mergeBase,
+          changedFiles: scope.changedFiles.length,
+        });
+
+        const review = await runReviewerSession(
+          scope,
+          model,
+          ctx.modelRegistry,
+          pi.getThinkingLevel(),
+          progress,
+        );
+
+        progress.update(
+          `✅ polish_solution_review finished: ${review.status}.`,
+          {
+            phase: 'complete',
+            reviewStatus: review.status,
+            findings: review.findings.length,
+          },
+        );
+
+        return {
+          content: [{type: 'text', text: JSON.stringify(review)}],
+          details: review,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        progress.update(`❌ polish_solution_review failed: ${message}`, {
+          phase: 'error',
+          isError: true,
+        });
+        throw error;
+      } finally {
+        progress.clear();
       }
-
-      const review = await runReviewerSession(
-        scope,
-        model,
-        ctx.modelRegistry,
-        pi.getThinkingLevel(),
-      );
-
-      return {
-        content: [{type: 'text', text: JSON.stringify(review)}],
-        details: review,
-      };
     },
   });
 }
