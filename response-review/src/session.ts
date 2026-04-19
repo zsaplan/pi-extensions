@@ -36,6 +36,10 @@ function normalizeWhitespace(value: string): string {
   return value.replace(/\r\n?/g, '\n').replace(/\s+/g, ' ').trim();
 }
 
+function normalizeSingleQuotes(value: string): string {
+  return value.replace(/[\u2018\u2019\u02bc]/g, "'");
+}
+
 function expandHome(value: string): string {
   if (value === '~') return homedir();
   if (value.startsWith('~/')) {
@@ -59,7 +63,9 @@ function extractVisibleText(
   content: unknown,
   options?: {includeImages?: boolean},
 ): string {
-  if (typeof content === 'string') return content.trim();
+  if (typeof content === 'string') {
+    return normalizeSingleQuotes(content).trim();
+  }
   if (!Array.isArray(content)) return '';
 
   const blocks: string[] = [];
@@ -75,7 +81,7 @@ function extractVisibleText(
     }
   }
 
-  return blocks.join('\n\n').trim();
+  return normalizeSingleQuotes(blocks.join('\n\n')).trim();
 }
 
 function getAssistantResponseText(entry: SessionEntry): string {

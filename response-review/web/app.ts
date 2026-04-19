@@ -2146,6 +2146,10 @@ function activeMountedText() {
   return state.responseContents[response.id] || getPlaceholderText(response);
 }
 
+function activeMountedLanguage() {
+  return isActiveResponseReady() ? 'markdown' : 'plaintext';
+}
+
 function isActiveResponseReady() {
   const response = activeResponse();
   if (!response) return false;
@@ -2190,7 +2194,10 @@ function mountResponse(options: RenderResponseOptions = {}) {
   clearViewZones();
 
   if (model) model.dispose();
-  model = monacoApi.editor.createModel(activeMountedText(), 'plaintext');
+  model = monacoApi.editor.createModel(
+    activeMountedText(),
+    activeMountedLanguage(),
+  );
   editor.setModel(model);
   applyEditorOptions();
   syncViewZones();
