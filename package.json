@@ -23,6 +23,7 @@
     "prepare": "npm run build:response-review-web"
   },
   "files": [
+    "polish-solution",
     "rain-core",
     "raincatcher",
     "raindistiller",
@@ -33,10 +34,14 @@
   ],
   "pi": {
     "extensions": [
+      "./polish-solution/src/index.ts",
       "./raincatcher/src/index.ts",
       "./raindistiller/src/index.ts",
       "./rainman/src/index.ts",
       "./response-review/src/index.ts"
+    ],
+    "skills": [
+      "./polish-solution/skills"
     ]
   },
   "dependencies": {

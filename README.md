@@ -4,6 +4,7 @@ Personal repo-backed source for pi extensions.
 
 ## Packages
 
+- `polish-solution/` → `@zsaplan/pi-polish-solution`
 - `rain-core/` → shared KB/file utilities used by Rain extensions
 - `raincatcher/` → `@zsaplan/pi-raincatcher`
 - `raindistiller/` → `@zsaplan/pi-raindistiller`
@@ -16,6 +17,13 @@ Extension packages keep their own `package.json` and `pi` manifest. `rain-core/`
 
 ```text
 pi-extensions/
+├── polish-solution/
+│   ├── package.json
+│   ├── README.md
+│   ├── skills/
+│   │   └── polish-solution/
+│   │       └── SKILL.md
+│   └── src/
 ├── rain-core/
 │   ├── CODEBASE.md
 │   ├── package.json
@@ -48,6 +56,7 @@ pi -e .
 
 # or load individual source packages from this repo checkout
 # (these source paths work because the sibling rain-core package is present in the repo)
+pi -e ./polish-solution
 pi -e ./raincatcher
 pi -e ./raindistiller
 pi -e ./rainman
@@ -91,6 +100,7 @@ Initial package sources were copied from:
 
 Repo-native additions after the initial import:
 
+- `polish-solution/`
 - `rain-core/`
 - `raindistiller/`
 - `response-review/`
