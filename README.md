@@ -70,7 +70,7 @@ Note: `response-review/` has a runtime dependency on `glimpseui`, so direct sour
 
 ## Development workflow
 
-For now, the repo-root validation scripts are scoped to `response-review` only.
+The repo-root lint and typecheck scripts cover `polish-solution` and `response-review`. The repo-root `knip` and response-review browser-artifact checks remain scoped to `response-review`.
 
 Run these from the repository root:
 
@@ -86,9 +86,9 @@ Notes:
 
 - `response-review/web/app.ts` is the tracked source-of-truth browser file.
 - `response-review/web/app.js` is an untracked runtime artifact that is rebuilt on demand if missing or stale.
-- `npm run fix` applies `gts` formatting and regenerates the untracked `response-review/web/app.js` runtime artifact from `response-review/web/app.ts`.
-- `npm run typecheck` runs semantic TypeScript checks for both `response-review/src` and `response-review/web`.
-- `npm run verify` runs linting, semantic typechecking, `knip`, rebuilds the generated web script, and checks the generated `response-review/web/app.js` syntax.
+- `npm run fix` applies `gts` formatting across the repo-root lint surface and regenerates the untracked `response-review/web/app.js` runtime artifact from `response-review/web/app.ts`.
+- `npm run typecheck` runs semantic TypeScript checks for `polish-solution/src`, `response-review/src`, and `response-review/web`.
+- `npm run verify` runs linting and semantic typechecking for that onboarded surface, then runs `knip`, rebuilds the generated web script, and checks the generated `response-review/web/app.js` syntax.
 - The other extensions can be onboarded to the same tooling in a later pass.
 
 ## Source of truth for this initial import
