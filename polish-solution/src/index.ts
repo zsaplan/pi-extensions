@@ -683,6 +683,7 @@ async function runCommand(
     };
 
     const onAbort = (): void => {
+      if (aborted) return;
       aborted = true;
       try {
         child.kill('SIGTERM');
@@ -788,7 +789,8 @@ async function runCommandWithOutputBudget(
     };
 
     const requestStop = (error: Error): void => {
-      if (!abortError) abortError = error;
+      if (abortError) return;
+      abortError = error;
       try {
         child.kill('SIGTERM');
       } catch {
@@ -1131,32 +1133,28 @@ async function ensureNoDirtySubmodules(
   const submodulePaths = await getSubmodulePaths(repoRoot, signal);
   if (submodulePaths.length === 0) return;
 
+  const submodulePathSet = new Set(submodulePaths);
   const result = await runGit(
     repoRoot,
-    [
-      'status',
-      '--porcelain=v1',
-      '-z',
-      '--ignore-submodules=none',
-      '--',
-      ...submodulePaths,
-    ],
+    ['status', '--porcelain=v1', '-z', '--ignore-submodules=none'],
     signal,
   );
 
-  const dirtySubmodules = result.stdout
-    .split('\0')
-    .filter(Boolean)
-    .flatMap(record => {
-      const status = record.slice(0, 2);
-      const filePath = record.slice(3);
-      if (!filePath) return [];
-      return status.includes('m') || status.includes('?') ? [filePath] : [];
-    });
+  const dirtySubmodules = uniqueSorted(
+    result.stdout
+      .split('\0')
+      .filter(Boolean)
+      .flatMap(record => {
+        const status = record.slice(0, 2);
+        const filePath = record.slice(3);
+        if (!filePath || !submodulePathSet.has(filePath)) return [];
+        return status === '  ' ? [] : [filePath];
+      }),
+  );
 
   if (dirtySubmodules.length > 0) {
     throw new Error(
-      `polish_solution_review did not run because dirty submodule worktrees cannot be frozen safely: ${dirtySubmodules.join(', ')}. Commit or discard submodule worktree changes and retry.`,
+      `polish_solution_review did not run because submodule states cannot be frozen safely: ${dirtySubmodules.join(', ')}. Commit or discard submodule worktree changes, or commit/reset superproject gitlink updates, and retry.`,
     );
   }
 }
@@ -1228,13 +1226,31 @@ function appendScopedDiffPart(
   return currentDiff + textToAppend;
 }
 
-async function assertUntrackedFileFitsBudget(
+function describeUntrackedFileType(
+  fileStats: Awaited<ReturnType<typeof lstat>>,
+): string {
+  if (fileStats.isFile()) return 'regular file';
+  if (fileStats.isSymbolicLink()) return 'symlink';
+  if (fileStats.isDirectory()) return 'directory';
+  if (fileStats.isFIFO()) return 'FIFO';
+  if (fileStats.isSocket()) return 'socket';
+  if (fileStats.isCharacterDevice()) return 'character device';
+  if (fileStats.isBlockDevice()) return 'block device';
+  return 'special file';
+}
+
+async function assertUntrackedFileIsSafeToDiff(
   repoRoot: string,
   filePath: string,
-  budget: OutputBudget,
+  budget?: OutputBudget,
 ): Promise<void> {
   const fileStats = await lstat(path.resolve(repoRoot, filePath));
-  if (fileStats.size > budget.maxBytes) {
+  if (!fileStats.isFile() && !fileStats.isSymbolicLink()) {
+    throw new Error(
+      `polish_solution_review did not run because untracked ${describeUntrackedFileType(fileStats)} ${formatModelTextValue(filePath)} cannot be diffed safely. Remove it, ignore it, or replace it with a regular file or symlink and retry.`,
+    );
+  }
+  if (budget && fileStats.size > budget.maxBytes) {
     throw createUntrackedFileBudgetError(filePath, fileStats.size, budget);
   }
 }
@@ -1326,9 +1342,9 @@ async function buildScopedDiff(
           {exact: true},
         );
       }
-
-      await assertUntrackedFileFitsBudget(repoRoot, filePath, remainingBudget);
     }
+
+    await assertUntrackedFileIsSafeToDiff(repoRoot, filePath, remainingBudget);
 
     const untrackedDiff = await getUntrackedDiff(
       repoRoot,
