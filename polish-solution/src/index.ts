@@ -14,7 +14,9 @@ import {
   formatSize,
   getAgentDir,
   truncateHead,
+  type AgentToolUpdateCallback,
   type ExtensionAPI,
+  type ExtensionContext,
   type ToolDefinition,
 } from '@mariozechner/pi-coding-agent';
 import {Type, type Static} from '@sinclair/typebox';
@@ -216,11 +218,6 @@ function normalizeNewlines(value: string): string {
   return value.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
-function countLines(value: string): number {
-  if (value.length === 0) return 0;
-  return normalizeNewlines(value).split('\n').length;
-}
-
 function countNewlines(value: string): number {
   let total = 0;
   for (const char of value) {
@@ -391,7 +388,10 @@ function formatToolOutput(content: string, hint?: string): string {
   return text;
 }
 
-function createProgressReporter(onUpdate: any, ctx: any) {
+function createProgressReporter(
+  onUpdate: AgentToolUpdateCallback<unknown> | undefined,
+  ctx: ExtensionContext,
+) {
   let heartbeatId: NodeJS.Timeout | undefined;
   let spinnerIndex = 0;
 
@@ -555,11 +555,16 @@ function subscribeToReviewerSessionEvents(
     });
   };
 
-  const unsubscribe = session.subscribe((event: any) => {
-    switch (event?.type) {
+  const unsubscribe = session.subscribe((event: unknown) => {
+    if (!event || typeof event !== 'object') return;
+
+    const eventRecord = event as Record<string, unknown>;
+    switch (eventRecord.type) {
       case 'turn_start': {
         const turnIndex =
-          typeof event.turnIndex === 'number' ? event.turnIndex + 1 : undefined;
+          typeof eventRecord.turnIndex === 'number'
+            ? eventRecord.turnIndex + 1
+            : undefined;
         startActivity(
           `turn:${turnIndex ?? 'unknown'}`,
           turnIndex
@@ -571,12 +576,16 @@ function subscribeToReviewerSessionEvents(
       }
       case 'tool_execution_start': {
         const toolName =
-          typeof event.toolName === 'string' ? event.toolName : 'tool';
+          typeof eventRecord.toolName === 'string'
+            ? eventRecord.toolName
+            : 'tool';
         const toolCallId =
-          typeof event.toolCallId === 'string' ? event.toolCallId : toolName;
+          typeof eventRecord.toolCallId === 'string'
+            ? eventRecord.toolCallId
+            : toolName;
         startActivity(
           `tool:${toolCallId}`,
-          describeReviewerToolActivity(toolName, event.args),
+          describeReviewerToolActivity(toolName, eventRecord.args),
           {
             toolName,
             toolCallId,
@@ -585,18 +594,19 @@ function subscribeToReviewerSessionEvents(
         break;
       }
       case 'message_update': {
-        const assistantEvent = event.assistantMessageEvent;
+        const assistantEvent = eventRecord.assistantMessageEvent;
         if (!assistantEvent || typeof assistantEvent !== 'object') break;
 
-        if (assistantEvent.type === 'thinking_delta') {
+        const assistantEventRecord = assistantEvent as Record<string, unknown>;
+        if (assistantEventRecord.type === 'thinking_delta') {
           startActivity('thinking', 'Reviewer reasoning about the diff…');
           break;
         }
 
         if (
-          assistantEvent.type === 'text_delta' &&
-          typeof assistantEvent.delta === 'string' &&
-          assistantEvent.delta.trim()
+          assistantEventRecord.type === 'text_delta' &&
+          typeof assistantEventRecord.delta === 'string' &&
+          assistantEventRecord.delta.trim()
         ) {
           startActivity('drafting', 'Reviewer drafting the structured review…');
         }
@@ -604,8 +614,10 @@ function subscribeToReviewerSessionEvents(
       }
       case 'tool_execution_end': {
         const toolName =
-          typeof event.toolName === 'string' ? event.toolName : 'tool';
-        if (event.isError) {
+          typeof eventRecord.toolName === 'string'
+            ? eventRecord.toolName
+            : 'tool';
+        if (eventRecord.isError) {
           activeActivityKey = undefined;
           progress.update(`⚠️ Reviewer tool ${toolName} failed.`, {
             phase: 'reviewer-tool-error',
@@ -974,7 +986,7 @@ async function resolveBaseRef(
       signal,
     ).catch(() => {
       throw new Error(
-        `polish_solution_review did not run because the base ref \"${explicitBaseRef}\" could not be resolved to a commit.`,
+        `polish_solution_review did not run because the base ref "${explicitBaseRef}" could not be resolved to a commit.`,
       );
     });
     return explicitBaseRef;
@@ -1010,14 +1022,14 @@ async function resolveMergeBase(
     signal,
   ).catch(() => {
     throw new Error(
-      `polish_solution_review did not run because no merge-base could be found between HEAD and \"${baseRef}\".`,
+      `polish_solution_review did not run because no merge-base could be found between HEAD and "${baseRef}".`,
     );
   });
 
   const mergeBase = result.stdout.trim();
   if (!mergeBase) {
     throw new Error(
-      `polish_solution_review did not run because no merge-base could be found between HEAD and \"${baseRef}\".`,
+      `polish_solution_review did not run because no merge-base could be found between HEAD and "${baseRef}".`,
     );
   }
   return mergeBase;
@@ -1786,7 +1798,7 @@ async function buildReviewScope(
   );
   if (!liveScopedDiff.diff) {
     throw new Error(
-      `polish_solution_review did not run because there is no diff against merge-base ${mergeBase.slice(0, 12)} from \"${baseRef}\".`,
+      `polish_solution_review did not run because there is no diff against merge-base ${mergeBase.slice(0, 12)} from "${baseRef}".`,
     );
   }
 
@@ -1860,7 +1872,7 @@ async function buildReviewScope(
 
       if (!scopedDiff.diff) {
         throw new Error(
-          `polish_solution_review did not run because there is no diff against merge-base ${mergeBase.slice(0, 12)} from \"${baseRef}\".`,
+          `polish_solution_review did not run because there is no diff against merge-base ${mergeBase.slice(0, 12)} from "${baseRef}".`,
         );
       }
       if (
@@ -2394,8 +2406,8 @@ async function promptWithTimeout(
 
 async function runReviewerSession(
   scope: ReviewScope,
-  model: any,
-  modelRegistry: any,
+  model: NonNullable<ExtensionContext['model']>,
+  modelRegistry: ExtensionContext['modelRegistry'],
   thinkingLevel: ReturnType<ExtensionAPI['getThinkingLevel']>,
   signal?: AbortSignal,
   progress?: ReturnType<typeof createProgressReporter>,
