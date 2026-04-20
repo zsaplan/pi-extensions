@@ -151,7 +151,8 @@ const GREP_REPO_SCHEMA = Type.Object({
   }),
   path: Type.Optional(
     Type.String({
-      description: 'Optional repo-relative file or directory to narrow the search.',
+      description:
+        'Optional repo-relative file or directory to narrow the search.',
     }),
   ),
 });
@@ -343,7 +344,10 @@ async function getSelfReviewBlockConfig(repoRoot: string): Promise<{
 
   const config: {paths: Set<string>; prefixes: string[]} = hasMonorepoLayout
     ? {
-        paths: new Set<string>(['package.json', 'polish-solution/package.json']),
+        paths: new Set<string>([
+          'package.json',
+          'polish-solution/package.json',
+        ]),
         prefixes: ['polish-solution/src/', 'polish-solution/skills/'],
       }
     : hasPackageLayout
@@ -396,6 +400,11 @@ function createProgressReporter(onUpdate: any, ctx: any) {
     ctx.ui.setStatus(STATUS_KEY, message);
   };
 
+  const setWorkingMessage = (message?: string): void => {
+    if (!ctx?.hasUI) return;
+    ctx.ui.setWorkingMessage(message);
+  };
+
   const emit = (
     message: string,
     details?: Record<string, unknown>,
@@ -410,6 +419,7 @@ function createProgressReporter(onUpdate: any, ctx: any) {
       },
     });
     setFooterStatus(message);
+    setWorkingMessage(message);
     if (options?.notify && ctx?.hasUI) {
       ctx.ui.notify(message, 'info');
     }
@@ -459,8 +469,178 @@ function createProgressReporter(onUpdate: any, ctx: any) {
     clear(): void {
       stopHeartbeat();
       setFooterStatus(undefined);
+      setWorkingMessage();
     },
   };
+}
+
+function truncateStatusText(value: string, maxLength = 80): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function formatStatusPath(value: string, maxLength = 72): string {
+  const normalized = value.replace(/\\/g, '/').trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `…${normalized.slice(-(maxLength - 1))}`;
+}
+
+function getStringArgument(args: unknown, keys: string[]): string | undefined {
+  if (!args || typeof args !== 'object') return undefined;
+  const record = args as Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function describeReviewerToolActivity(toolName: string, args: unknown): string {
+  switch (toolName) {
+    case 'git_status':
+      return 'Reviewer checking review scope…';
+    case 'git_diff': {
+      const scopedPath = getStringArgument(args, ['path']);
+      return scopedPath
+        ? `Reviewer inspecting diff for ${formatStatusPath(scopedPath)}…`
+        : 'Reviewer inspecting the full diff…';
+    }
+    case 'read_file': {
+      const filePath = getStringArgument(args, ['path']);
+      return filePath
+        ? `Reviewer reading ${formatStatusPath(filePath)}…`
+        : 'Reviewer reading a repo file…';
+    }
+    case 'grep_repo': {
+      const pattern = getStringArgument(args, ['pattern']);
+      const scopedPath = getStringArgument(args, ['path']);
+      const renderedPattern = pattern
+        ? `"${truncateStatusText(pattern, 40)}"`
+        : 'a literal string';
+      return scopedPath
+        ? `Reviewer searching ${formatStatusPath(scopedPath)} for ${renderedPattern}…`
+        : `Reviewer searching the repo for ${renderedPattern}…`;
+    }
+    case 'submit_review':
+      return 'Reviewer submitting structured review…';
+    default:
+      return `Reviewer running ${toolName}…`;
+  }
+}
+
+function subscribeToReviewerSessionEvents(
+  session: Awaited<ReturnType<typeof createAgentSession>>['session'],
+  progress: ReturnType<typeof createProgressReporter>,
+  attempt: number,
+  maxAttempts: number,
+): () => void {
+  let activeActivityKey: string | undefined;
+
+  const startActivity = (
+    key: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): void => {
+    if (activeActivityKey === key) return;
+    activeActivityKey = key;
+    progress.startHeartbeat(message, {
+      phase: 'reviewer-activity',
+      attempt,
+      maxAttempts,
+      activityKey: key,
+      ...(details ?? {}),
+    });
+  };
+
+  const unsubscribe = session.subscribe((event: any) => {
+    switch (event?.type) {
+      case 'turn_start': {
+        const turnIndex =
+          typeof event.turnIndex === 'number' ? event.turnIndex + 1 : undefined;
+        startActivity(
+          `turn:${turnIndex ?? 'unknown'}`,
+          turnIndex
+            ? `Reviewer analyzing diff in turn ${turnIndex}…`
+            : 'Reviewer analyzing the diff…',
+          {turnIndex},
+        );
+        break;
+      }
+      case 'tool_execution_start': {
+        const toolName =
+          typeof event.toolName === 'string' ? event.toolName : 'tool';
+        const toolCallId =
+          typeof event.toolCallId === 'string' ? event.toolCallId : toolName;
+        startActivity(
+          `tool:${toolCallId}`,
+          describeReviewerToolActivity(toolName, event.args),
+          {
+            toolName,
+            toolCallId,
+          },
+        );
+        break;
+      }
+      case 'message_update': {
+        const assistantEvent = event.assistantMessageEvent;
+        if (!assistantEvent || typeof assistantEvent !== 'object') break;
+
+        if (assistantEvent.type === 'thinking_delta') {
+          startActivity('thinking', 'Reviewer reasoning about the diff…');
+          break;
+        }
+
+        if (
+          assistantEvent.type === 'text_delta' &&
+          typeof assistantEvent.delta === 'string' &&
+          assistantEvent.delta.trim()
+        ) {
+          startActivity('drafting', 'Reviewer drafting the structured review…');
+        }
+        break;
+      }
+      case 'tool_execution_end': {
+        const toolName =
+          typeof event.toolName === 'string' ? event.toolName : 'tool';
+        if (event.isError) {
+          activeActivityKey = undefined;
+          progress.update(`⚠️ Reviewer tool ${toolName} failed.`, {
+            phase: 'reviewer-tool-error',
+            attempt,
+            maxAttempts,
+            toolName,
+            isError: true,
+          });
+          break;
+        }
+
+        if (toolName === 'submit_review') {
+          activeActivityKey = undefined;
+          progress.update('✅ Reviewer submitted structured review.', {
+            phase: 'reviewer-submit',
+            attempt,
+            maxAttempts,
+            toolName,
+          });
+        }
+        break;
+      }
+      case 'auto_retry_start': {
+        activeActivityKey = undefined;
+        progress.update('🔁 Reviewer model request auto-retrying…', {
+          phase: 'reviewer-auto-retry',
+          attempt,
+          maxAttempts,
+        });
+        break;
+      }
+    }
+  });
+
+  return unsubscribe;
 }
 
 async function runCommand(
@@ -648,10 +828,8 @@ async function runCommandWithOutputBudget(
         stdoutLines > options.stdoutBudget.maxLines
       ) {
         requestStop(
-          options.budgetErrorFactory?.(
-            stdoutAccumulator.bytes,
-            stdoutLines,
-          ) ?? createDiffTooLargeError(stdoutAccumulator.bytes, stdoutLines),
+          options.budgetErrorFactory?.(stdoutAccumulator.bytes, stdoutLines) ??
+            createDiffTooLargeError(stdoutAccumulator.bytes, stdoutLines),
         );
       }
     });
@@ -869,7 +1047,6 @@ async function getHeadCommit(
   return headCommit;
 }
 
-
 async function getTrackedChangedFiles(
   repoRoot: string,
   mergeBase: string,
@@ -887,7 +1064,6 @@ async function getTrackedChangedFiles(
     : await runGit(repoRoot, args, signal);
   return result.stdout.split('\0').filter(Boolean);
 }
-
 
 async function getTrackedDiff(
   repoRoot: string,
@@ -1016,7 +1192,8 @@ function getRemainingBudget(
   options?: {reserveBytes?: number; reserveLines?: number},
 ): OutputBudget {
   return {
-    maxBytes: budget.maxBytes - accumulator.bytes - (options?.reserveBytes ?? 0),
+    maxBytes:
+      budget.maxBytes - accumulator.bytes - (options?.reserveBytes ?? 0),
     maxLines:
       budget.maxLines -
       getAccumulatedLineCount(accumulator) -
@@ -1123,7 +1300,12 @@ async function buildScopedDiff(
     pathSpec,
     budget,
   );
-  diff = appendScopedDiffPart(diff, trackedDiff.stdout, diffAccumulator, budget);
+  diff = appendScopedDiffPart(
+    diff,
+    trackedDiff.stdout,
+    diffAccumulator,
+    budget,
+  );
 
   const untrackedFiles = await getUntrackedFiles(repoRoot, signal, pathSpec);
   for (const filePath of untrackedFiles) {
@@ -1365,7 +1547,8 @@ function buildChangedFileDetails(
       } else {
         currentFile = headerPaths.oldPath;
         currentFileDeleted = true;
-        if (currentFile) ensureDetail(currentFile).enforceLineValidation = false;
+        if (currentFile)
+          ensureDetail(currentFile).enforceLineValidation = false;
       }
       continue;
     }
@@ -1432,12 +1615,7 @@ async function createSnapshotTree(
       signal,
     );
   }
-  await runGitWithEnv(
-    repoRoot,
-    ['add', '-A', '--', '.'],
-    snapshotEnv,
-    signal,
-  );
+  await runGitWithEnv(repoRoot, ['add', '-A', '--', '.'], snapshotEnv, signal);
   const writeTreeResult = await runGitWithEnv(
     repoRoot,
     ['write-tree'],
@@ -1637,18 +1815,20 @@ async function buildReviewScope(
 
     try {
       progress?.update('🔎 Reading branch and diff scope…', {
-      phase: 'scope',
-      step: 'branch-and-diff',
-      repoRoot,
-      baseRef,
-      mergeBase,
-      snapshotTree: snapshot.snapshotTree,
-    });
-      const [branch, untrackedFiles, headCommitAfterFreeze] = await Promise.all([
-        getCurrentBranch(repoRoot, signal),
-        getUntrackedFiles(repoRoot, signal),
-        getHeadCommit(repoRoot, signal),
-      ]);
+        phase: 'scope',
+        step: 'branch-and-diff',
+        repoRoot,
+        baseRef,
+        mergeBase,
+        snapshotTree: snapshot.snapshotTree,
+      });
+      const [branch, untrackedFiles, headCommitAfterFreeze] = await Promise.all(
+        [
+          getCurrentBranch(repoRoot, signal),
+          getUntrackedFiles(repoRoot, signal),
+          getHeadCommit(repoRoot, signal),
+        ],
+      );
       const scopedDiff = await buildScopedDiff(
         repoRoot,
         mergeBase,
@@ -1688,19 +1868,19 @@ async function buildReviewScope(
       await ensureNoDirtySubmodules(repoRoot, signal);
 
       progress?.update(
-      `🔎 Review scope ready: ${scopedDiff.changedFiles.length} file(s), ${scopedDiff.diffLines} diff line(s).`,
-      {
-        phase: 'scope-ready',
-        repoRoot,
-        branch,
-        baseRef,
-        mergeBase,
-        changedFiles: scopedDiff.changedFiles.length,
-        untrackedFiles: untrackedFiles.length,
-        diffLines: scopedDiff.diffLines,
-        diffBytes: scopedDiff.diffBytes,
-      },
-    );
+        `🔎 Review scope ready: ${scopedDiff.changedFiles.length} file(s), ${scopedDiff.diffLines} diff line(s).`,
+        {
+          phase: 'scope-ready',
+          repoRoot,
+          branch,
+          baseRef,
+          mergeBase,
+          changedFiles: scopedDiff.changedFiles.length,
+          untrackedFiles: untrackedFiles.length,
+          diffLines: scopedDiff.diffLines,
+          diffBytes: scopedDiff.diffBytes,
+        },
+      );
 
       return {
         repoRoot,
@@ -1832,10 +2012,7 @@ function createReviewerTools(
   reviewState: {
     value?: ReviewResult;
     fullDiffInspected: boolean;
-    diffCache: Record<
-      string,
-      Awaited<ReturnType<typeof buildScopedDiff>>
-    >;
+    diffCache: Record<string, Awaited<ReturnType<typeof buildScopedDiff>>>;
     fileCache: Record<string, string>;
   },
 ): ToolDefinition[] {
@@ -1918,7 +2095,9 @@ function createReviewerTools(
 
         const matchingUntrackedFiles = pathSpec
           ? scope.untrackedFiles.filter(filePath => {
-              return filePath === pathSpec || filePath.startsWith(`${pathSpec}/`);
+              return (
+                filePath === pathSpec || filePath.startsWith(`${pathSpec}/`)
+              );
             })
           : scope.untrackedFiles;
 
@@ -1992,7 +2171,8 @@ function createReviewerTools(
             ));
           reviewState.fileCache[filePath] = content;
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message =
+            error instanceof Error ? error.message : String(error);
           return {
             content: [
               {
@@ -2078,7 +2258,8 @@ function createReviewerTools(
             maxLines: MAX_GREP_LINES,
           },
           scope.snapshotEnv,
-          (bytes, lines) => createToolOutputTooLargeError('grep_repo', bytes, lines),
+          (bytes, lines) =>
+            createToolOutputTooLargeError('grep_repo', bytes, lines),
         );
         if (result.code === 1 || !result.stdout.trim()) {
           return {
@@ -2259,14 +2440,19 @@ async function runReviewerSession(
         attempt === 1
           ? buildInitialPrompt(scope)
           : buildRepairPrompt(attempt - 1);
-      progress?.startHeartbeat(
-        `Running isolated adversarial reviewer (attempt ${attempt}/${maxAttempts})`,
-        {
-          phase: 'reviewer-run',
-          attempt,
-          maxAttempts,
-        },
-      );
+      const unsubscribeReviewerEvents = progress
+        ? subscribeToReviewerSessionEvents(
+            session,
+            progress,
+            attempt,
+            maxAttempts,
+          )
+        : undefined;
+      progress?.startHeartbeat('Reviewer analyzing the diff…', {
+        phase: 'reviewer-run',
+        attempt,
+        maxAttempts,
+      });
       try {
         await promptWithTimeout(
           session.prompt(prompt),
@@ -2275,6 +2461,7 @@ async function runReviewerSession(
           signal,
         );
       } finally {
+        unsubscribeReviewerEvents?.();
         progress?.stopHeartbeat();
       }
 

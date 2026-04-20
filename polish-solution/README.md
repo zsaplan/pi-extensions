@@ -44,8 +44,9 @@ Use the skill when you want pi to keep control of a deliberate polishing loop:
 
 1. run adversarial review
 2. address material findings
-3. rerun review
-4. repeat until approval or a real ambiguity needs user direction
+3. run the relevant validation commands for the changed code
+4. rerun review only after validation is back to green or any pre-existing failures are understood
+5. repeat until approval or a real ambiguity needs user direction
 
 ## Usage
 
@@ -68,3 +69,4 @@ Then either:
 - The reviewer prompt is fixed and inline in the extension code.
 - No extra situational summary is passed to the reviewer by default.
 - Out-of-scope feedback such as tests and other external supports is intentionally excluded from review findings.
+- The skill workflow still expects the primary coding agent to run relevant lint/test/verify-style validation after each remediation pass before rerunning adversarial review.

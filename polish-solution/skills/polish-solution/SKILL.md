@@ -15,8 +15,9 @@ Keep the primary coding agent in control of the loop:
 1. run `polish_solution_review`
 2. study only material findings
 3. remediate while preserving the intended architecture
-4. rerun after each substantial remediation pass
-5. stop when the review approves or repeated findings require user direction
+4. run relevant validation commands for the changed code
+5. rerun adversarial review only after validation is back to green or any pre-existing failures are clearly understood
+6. stop when the review approves or repeated findings require user direction
 
 ## Workflow
 
@@ -28,12 +29,16 @@ Keep the primary coding agent in control of the loop:
    - add comments only when they genuinely preserve design intent
    - prefer replacing unclear code over layering more code onto it
    - keep the solution aligned with intended architecture instead of over-hardening irrelevant edges
-5. After every substantial remediation pass, rerun `polish_solution_review`.
-6. Continue with no fixed iteration cap.
-7. Ask the user for direction only when:
+5. After every substantial remediation pass, run the relevant validation commands before rerunning adversarial review:
+   - prefer the repo's canonical validation entrypoint when one exists, such as `verify`, `test`, or another documented umbrella command
+   - otherwise run the narrowest meaningful lint/typecheck/test commands that cover the changed surface area
+   - do not pile up known validation failures across passes; either fix them or call out clearly why they are pre-existing or currently out of scope
+6. Only after validation has been checked should you rerun `polish_solution_review`.
+7. Continue with no fixed iteration cap.
+8. Ask the user for direction only when:
    - the same underlying finding keeps recurring across passes
    - the right fix is ambiguous and you cannot reason through it confidently
-   - a tool failure or diff-scope issue blocks the workflow
+   - a tool failure, validation ambiguity, or diff-scope issue blocks the workflow
 
 ## Tool notes
 
