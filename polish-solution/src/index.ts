@@ -392,35 +392,74 @@ function createProgressReporter(
   onUpdate: AgentToolUpdateCallback<unknown> | undefined,
   ctx: ExtensionContext,
 ) {
+  const toolStartedAt = Date.now();
   let heartbeatId: NodeJS.Timeout | undefined;
   let spinnerIndex = 0;
 
   const setFooterStatus = (message: string | undefined): void => {
-    if (!ctx?.hasUI) return;
+    if (!ctx.hasUI) return;
     ctx.ui.setStatus(STATUS_KEY, message);
   };
 
   const setWorkingMessage = (message?: string): void => {
-    if (!ctx?.hasUI) return;
+    if (!ctx.hasUI) return;
     ctx.ui.setWorkingMessage(message);
+  };
+
+  const buildUiMessages = (
+    baseMessage: string,
+    options?: {
+      spinnerFrame?: string;
+      phaseElapsedMs?: number;
+      timeoutMs?: number;
+    },
+  ): {footerMessage: string; workingMessage: string} => {
+    const toolElapsedMs = Date.now() - toolStartedAt;
+    const timingParts: string[] = [];
+
+    if (options?.phaseElapsedMs !== undefined) {
+      timingParts.push(
+        options.timeoutMs !== undefined
+          ? `attempt ${formatElapsed(options.phaseElapsedMs)}/${formatElapsed(options.timeoutMs)}`
+          : `phase ${formatElapsed(options.phaseElapsedMs)}`,
+      );
+    }
+    timingParts.push(`tool ${formatElapsed(toolElapsedMs)}`);
+
+    return {
+      footerMessage: `${options?.spinnerFrame ? `${options.spinnerFrame} ` : ''}${baseMessage} (${timingParts.join(' · ')})`,
+      workingMessage: `${baseMessage} (${formatElapsed(toolElapsedMs)} total)`,
+    };
   };
 
   const emit = (
     message: string,
     details?: Record<string, unknown>,
-    options?: {notify?: boolean},
+    options?: {
+      notify?: boolean;
+      includeContent?: boolean;
+      spinnerFrame?: string;
+      phaseElapsedMs?: number;
+      timeoutMs?: number;
+    },
   ): void => {
-    onUpdate?.({
-      content: [{type: 'text', text: message}],
-      details: {
-        phase: 'progress',
-        progressMessage: message,
-        ...(details ?? {}),
-      },
-    });
-    setFooterStatus(message);
-    setWorkingMessage(message);
-    if (options?.notify && ctx?.hasUI) {
+    const toolElapsedMs = Date.now() - toolStartedAt;
+    if (options?.includeContent ?? true) {
+      onUpdate?.({
+        content: [{type: 'text', text: message}],
+        details: {
+          phase: 'progress',
+          progressMessage: message,
+          toolElapsedMs,
+          ...(details ?? {}),
+        },
+      });
+    }
+
+    const {footerMessage, workingMessage} = buildUiMessages(message, options);
+    setFooterStatus(footerMessage);
+    setWorkingMessage(workingMessage);
+    if (options?.notify && ctx.hasUI) {
       ctx.ui.notify(message, 'info');
     }
   };
@@ -438,17 +477,28 @@ function createProgressReporter(
   ): void => {
     stopHeartbeat();
     const startedAt = Date.now();
+    const timeoutMs =
+      typeof details?.timeoutMs === 'number' ? details.timeoutMs : undefined;
 
     const tick = (): void => {
       const elapsedMs = Date.now() - startedAt;
       const frame = SPINNER_FRAMES[spinnerIndex % SPINNER_FRAMES.length];
       spinnerIndex += 1;
-      emit(`${frame} ${baseMessage} (${formatElapsed(elapsedMs)})`, {
-        ...(details ?? {}),
-        phase: 'heartbeat',
+      emit(
         baseMessage,
-        elapsedMs,
-      });
+        {
+          ...(details ?? {}),
+          phase: 'heartbeat',
+          baseMessage,
+          elapsedMs,
+        },
+        {
+          includeContent: false,
+          spinnerFrame: frame,
+          phaseElapsedMs: elapsedMs,
+          timeoutMs,
+        },
+      );
     };
 
     tick();
@@ -551,6 +601,7 @@ function subscribeToReviewerSessionEvents(
       attempt,
       maxAttempts,
       activityKey: key,
+      timeoutMs: MAX_AGENT_EXECUTION_MS,
       ...(details ?? {}),
     });
   };
@@ -2480,6 +2531,7 @@ async function runReviewerSession(
         phase: 'reviewer-run',
         attempt,
         maxAttempts,
+        timeoutMs: MAX_AGENT_EXECUTION_MS,
       });
       try {
         await promptWithTimeout(
