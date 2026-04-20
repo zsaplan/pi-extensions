@@ -14,6 +14,7 @@ import {
   formatSize,
   getAgentDir,
   truncateHead,
+  truncateTail,
   type AgentToolUpdateCallback,
   type ExtensionAPI,
   type ExtensionContext,
@@ -161,13 +162,15 @@ const GREP_REPO_SCHEMA = Type.Object({
 
 const DEFAULT_THINKING_LEVEL = 'low' as const;
 const MAX_REPAIR_ATTEMPTS = 3;
-const MAX_AGENT_EXECUTION_MS = 600_000;
+const MAX_AGENT_EXECUTION_MS = 900_000;
 const MAX_DIFF_BYTES = DEFAULT_MAX_BYTES;
 const MAX_DIFF_LINES = DEFAULT_MAX_LINES;
 const MAX_READ_FILE_BYTES = DEFAULT_MAX_BYTES * 4;
 const MAX_READ_FILE_LINES = DEFAULT_MAX_LINES * 10;
 const MAX_GREP_BYTES = DEFAULT_MAX_BYTES;
 const MAX_GREP_LINES = DEFAULT_MAX_LINES;
+const REVIEWER_ACTION_OUTPUT_MAX_BYTES = 8 * 1024;
+const REVIEWER_ACTION_OUTPUT_MAX_LINES = 12;
 const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null';
 const STATUS_KEY = 'polish-solution-review';
 const HEARTBEAT_INTERVAL_MS = 2_000;
@@ -388,6 +391,63 @@ function formatToolOutput(content: string, hint?: string): string {
   return text;
 }
 
+function getTextContentOutput(content: unknown): string | undefined {
+  if (!Array.isArray(content)) return undefined;
+
+  const text = content
+    .flatMap(block => {
+      if (!block || typeof block !== 'object') return [];
+      const blockRecord = block as Record<string, unknown>;
+      return blockRecord.type === 'text' && typeof blockRecord.text === 'string'
+        ? [blockRecord.text]
+        : [];
+    })
+    .join('\n\n')
+    .trim();
+
+  return text ? normalizeNewlines(text) : undefined;
+}
+
+function formatActionOutputTail(content: string): string {
+  const truncation = truncateTail(content, {
+    maxBytes: REVIEWER_ACTION_OUTPUT_MAX_BYTES,
+    maxLines: REVIEWER_ACTION_OUTPUT_MAX_LINES,
+  });
+  let text = truncation.content || '(empty)';
+  if (!truncation.truncated) return text;
+
+  if (truncation.lastLinePartial) {
+    text += `\n\n[showing the last ${formatSize(truncation.outputBytes)} of line ${truncation.totalLines}]`;
+    return text;
+  }
+
+  const startLine = truncation.totalLines - truncation.outputLines + 1;
+  text += `\n\n[showing lines ${startLine}-${truncation.totalLines} of ${truncation.totalLines}]`;
+  return text;
+}
+
+function indentTextBlock(content: string): string {
+  return content
+    .split('\n')
+    .map(line => `    ${line}`)
+    .join('\n');
+}
+
+function buildReviewerActionOutput(
+  toolName: string,
+  result: unknown,
+): string | undefined {
+  if (!result || typeof result !== 'object') return undefined;
+  const output = getTextContentOutput((result as {content?: unknown}).content);
+  if (!output) return undefined;
+
+  return [
+    `Current action output (${toolName}):`,
+    '',
+    indentTextBlock(formatActionOutputTail(output)),
+  ].join('\n');
+}
+
 function createProgressReporter(
   onUpdate: AgentToolUpdateCallback<unknown> | undefined,
   ctx: ExtensionContext,
@@ -418,17 +478,14 @@ function createProgressReporter(
     const timingParts: string[] = [];
 
     if (options?.phaseElapsedMs !== undefined) {
-      timingParts.push(
-        options.timeoutMs !== undefined
-          ? `attempt ${formatElapsed(options.phaseElapsedMs)}/${formatElapsed(options.timeoutMs)}`
-          : `phase ${formatElapsed(options.phaseElapsedMs)}`,
-      );
+      timingParts.push(`action ${formatElapsed(options.phaseElapsedMs)}`);
     }
-    timingParts.push(`tool ${formatElapsed(toolElapsedMs)}`);
+    timingParts.push(`total ${formatElapsed(toolElapsedMs)}`);
 
+    const timingSuffix = `(${timingParts.join(' · ')})`;
     return {
-      footerMessage: `${options?.spinnerFrame ? `${options.spinnerFrame} ` : ''}${baseMessage} (${timingParts.join(' · ')})`,
-      workingMessage: `${baseMessage} (${formatElapsed(toolElapsedMs)} total)`,
+      footerMessage: `${options?.spinnerFrame ? `${options.spinnerFrame} ` : ''}${baseMessage} ${timingSuffix}`,
+      workingMessage: `${baseMessage} ${timingSuffix}`,
     };
   };
 
@@ -509,10 +566,21 @@ function createProgressReporter(
     update(
       message: string,
       details?: Record<string, unknown>,
-      options?: {notify?: boolean},
+      options?: {notify?: boolean; includeContent?: boolean},
     ): void {
       stopHeartbeat();
       emit(message, details, options);
+    },
+    updateContent(content: string, details?: Record<string, unknown>): void {
+      const toolElapsedMs = Date.now() - toolStartedAt;
+      onUpdate?.({
+        content: [{type: 'text', text: content}],
+        details: {
+          phase: 'progress-content',
+          toolElapsedMs,
+          ...(details ?? {}),
+        },
+      });
     },
     startHeartbeat,
     stopHeartbeat,
@@ -644,6 +712,26 @@ function subscribeToReviewerSessionEvents(
         );
         break;
       }
+      case 'tool_execution_update': {
+        const toolName =
+          typeof eventRecord.toolName === 'string'
+            ? eventRecord.toolName
+            : 'tool';
+        const actionOutput = buildReviewerActionOutput(
+          toolName,
+          eventRecord.partialResult,
+        );
+        if (actionOutput) {
+          progress.updateContent(actionOutput, {
+            phase: 'reviewer-tool-output',
+            attempt,
+            maxAttempts,
+            toolName,
+            isPartial: true,
+          });
+        }
+        break;
+      }
       case 'message_update': {
         const assistantEvent = eventRecord.assistantMessageEvent;
         if (!assistantEvent || typeof assistantEvent !== 'object') break;
@@ -668,26 +756,50 @@ function subscribeToReviewerSessionEvents(
           typeof eventRecord.toolName === 'string'
             ? eventRecord.toolName
             : 'tool';
-        if (eventRecord.isError) {
-          activeActivityKey = undefined;
-          progress.update(`⚠️ Reviewer tool ${toolName} failed.`, {
-            phase: 'reviewer-tool-error',
+        const actionOutput =
+          toolName === 'submit_review'
+            ? undefined
+            : buildReviewerActionOutput(toolName, eventRecord.result);
+
+        progress.stopHeartbeat();
+        activeActivityKey = undefined;
+
+        if (actionOutput) {
+          progress.updateContent(actionOutput, {
+            phase: 'reviewer-tool-output',
             attempt,
             maxAttempts,
             toolName,
-            isError: true,
+            isError: Boolean(eventRecord.isError),
           });
+        }
+
+        if (eventRecord.isError) {
+          progress.update(
+            `⚠️ Reviewer tool ${toolName} failed.`,
+            {
+              phase: 'reviewer-tool-error',
+              attempt,
+              maxAttempts,
+              toolName,
+              isError: true,
+            },
+            {includeContent: false},
+          );
           break;
         }
 
         if (toolName === 'submit_review') {
-          activeActivityKey = undefined;
-          progress.update('✅ Reviewer submitted structured review.', {
-            phase: 'reviewer-submit',
-            attempt,
-            maxAttempts,
-            toolName,
-          });
+          progress.update(
+            '✅ Reviewer submitted structured review.',
+            {
+              phase: 'reviewer-submit',
+              attempt,
+              maxAttempts,
+              toolName,
+            },
+            {includeContent: false},
+          );
         }
         break;
       }
