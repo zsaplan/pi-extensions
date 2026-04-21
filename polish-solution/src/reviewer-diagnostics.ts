@@ -127,10 +127,14 @@ function extractAvailableToolsSection(
   const start = systemPrompt.indexOf('Available tools:');
   if (start === -1) return undefined;
 
-  const endMarker = '\n\nIn addition to the tools above,';
   const tail = systemPrompt.slice(start);
-  const end = tail.indexOf(endMarker);
-  return (end === -1 ? tail : tail.slice(0, end)).trim();
+  const endMarkers = ['\n\nIn addition to the tools above,', '\n\nGuidelines:'];
+  const end = endMarkers
+    .map(marker => tail.indexOf(marker))
+    .filter(index => index !== -1)
+    .sort((left, right) => left - right)[0];
+
+  return (end === undefined ? tail : tail.slice(0, end)).trim();
 }
 
 function getAssistantTextParts(messages: unknown[]): string[] {
