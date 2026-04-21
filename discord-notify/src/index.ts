@@ -1,7 +1,9 @@
 import {basename} from 'node:path';
 import type {
+  AgentEndEvent,
   ExtensionAPI,
   ExtensionContext,
+  TurnEndEvent,
 } from '@mariozechner/pi-coding-agent';
 
 const PRIMARY_WEBHOOK_ENV_VAR = 'PI_DISCORD_NOTIFY_WEBHOOK_URL';
@@ -75,11 +77,11 @@ function readConfig(): DiscordConfig {
 
   try {
     const parsed = new URL(webhookUrl);
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    if (parsed.protocol !== 'https:') {
       return {
         enabled,
         settings: null,
-        problem: `${PRIMARY_WEBHOOK_ENV_VAR} must use http or https.`,
+        problem: `${PRIMARY_WEBHOOK_ENV_VAR} must use https.`,
       };
     }
 
@@ -262,40 +264,43 @@ async function sendAutomaticNotification(
 }
 
 export default function (pi: ExtensionAPI) {
-  let agentStartedAt: number | null = null;
-  let turnStartedAt: number | null = null;
+  const agentStartedAtBySession = new Map<string, number>();
+  const turnStartedAtBySession = new Map<string, number>();
 
-  pi.on('agent_start', async () => {
-    agentStartedAt = Date.now();
+  pi.on('agent_start', (_event, ctx) => {
+    agentStartedAtBySession.set(ctx.sessionManager.getSessionId(), Date.now());
   });
 
-  pi.on('turn_start', async () => {
-    turnStartedAt = Date.now();
+  pi.on('turn_start', (_event, ctx) => {
+    turnStartedAtBySession.set(ctx.sessionManager.getSessionId(), Date.now());
   });
 
-  pi.on('turn_end', async (_event, ctx) => {
-    const durationMs =
-      turnStartedAt === null ? null : Date.now() - turnStartedAt;
-    turnStartedAt = null;
-    await sendAutomaticNotification(ctx, 'turn_end', durationMs);
+  pi.on('turn_end', (_event: TurnEndEvent, ctx: ExtensionContext) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    const startedAt = turnStartedAtBySession.get(sessionId);
+    const durationMs = startedAt === undefined ? null : Date.now() - startedAt;
+    turnStartedAtBySession.delete(sessionId);
+    void sendAutomaticNotification(ctx, 'turn_end', durationMs);
   });
 
-  pi.on('agent_end', async (_event, ctx) => {
-    const durationMs =
-      agentStartedAt === null ? null : Date.now() - agentStartedAt;
-    agentStartedAt = null;
-    await sendAutomaticNotification(ctx, 'agent_end', durationMs);
+  pi.on('agent_end', (_event: AgentEndEvent, ctx: ExtensionContext) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    const startedAt = agentStartedAtBySession.get(sessionId);
+    const durationMs = startedAt === undefined ? null : Date.now() - startedAt;
+    agentStartedAtBySession.delete(sessionId);
+    void sendAutomaticNotification(ctx, 'agent_end', durationMs);
   });
 
-  pi.on('session_shutdown', async () => {
-    agentStartedAt = null;
-    turnStartedAt = null;
+  pi.on('session_shutdown', (_event, ctx) => {
+    const sessionId = ctx.sessionManager.getSessionId();
+    agentStartedAtBySession.delete(sessionId);
+    turnStartedAtBySession.delete(sessionId);
   });
 
   pi.registerCommand('discord-notify', {
     description: 'Show Discord notification status or send a test webhook',
     handler: async (args, ctx) => {
-      const action = args.trim().toLowerCase();
+      const action = (args ?? '').trim().toLowerCase();
       const config = readConfig();
 
       if (!action) {
