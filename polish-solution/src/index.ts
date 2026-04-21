@@ -320,14 +320,17 @@ const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null';
 const STATUS_KEY = 'polish-solution-review';
 const HEARTBEAT_INTERVAL_MS = 2_000;
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const ALLOW_DIRTY_EXTERNAL_REVIEWER_ENV_VAR =
+  'POLISH_SOLUTION_ALLOW_DIRTY_EXTERNAL_REVIEWER';
 const LOADED_POLISH_SOLUTION_PACKAGE_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '..',
 );
-const SELF_REVIEW_BLOCK_CACHE = new Map<
-  string,
-  {paths: Set<string>; prefixes: string[]}
->();
+type SelfReviewBlockConfig = {
+  paths: Set<string>;
+  prefixes: string[];
+  dirtyExternalReviewerBlocked?: boolean;
+};
 
 const REVIEWER_SYSTEM_PROMPT = `You are an adversarial code reviewer.
 
@@ -832,10 +835,9 @@ function buildPackageSelfReviewBlockConfig(options: {
   };
 }
 
-async function getRepoLayoutSelfReviewBlockConfig(repoRoot: string): Promise<{
-  paths: Set<string>;
-  prefixes: string[];
-}> {
+async function getRepoLayoutSelfReviewBlockConfig(
+  repoRoot: string,
+): Promise<SelfReviewBlockConfig> {
   const hasMonorepoLayout = await Promise.all([
     pathExists(path.resolve(repoRoot, 'polish-solution/src/index.ts')),
     pathExists(
@@ -868,7 +870,7 @@ async function getRepoLayoutSelfReviewBlockConfig(repoRoot: string): Promise<{
 
 async function isGitWorktreeCleanForSelfReviewConfig(options: {
   repoRoot: string;
-  config: {paths: Set<string>; prefixes: string[]};
+  config: SelfReviewBlockConfig;
 }): Promise<boolean> {
   const pathspecs = [
     ...options.config.paths,
@@ -890,16 +892,11 @@ async function isGitWorktreeCleanForSelfReviewConfig(options: {
   }
 }
 
-async function getSelfReviewBlockConfig(repoRoot: string): Promise<{
-  paths: Set<string>;
-  prefixes: string[];
-}> {
-  const cached = SELF_REVIEW_BLOCK_CACHE.get(repoRoot);
-  if (cached) return cached;
-
+async function getSelfReviewBlockConfig(
+  repoRoot: string,
+): Promise<SelfReviewBlockConfig> {
   const layoutConfig = await getRepoLayoutSelfReviewBlockConfig(repoRoot);
   if (layoutConfig.paths.size === 0 && layoutConfig.prefixes.length === 0) {
-    SELF_REVIEW_BLOCK_CACHE.set(repoRoot, layoutConfig);
     return layoutConfig;
   }
 
@@ -918,25 +915,57 @@ async function getSelfReviewBlockConfig(repoRoot: string): Promise<{
         })
       : undefined;
 
-  // A separate clean checkout/worktree is treated as an external reviewer
-  // because the reviewed diff cannot mutate the running reviewer code.
-  const shouldAllowExternalReviewer =
+  const isExternalReviewerCheckout =
     !!resolvedRepoRoot &&
     !!resolvedLoadedPackageRoot &&
     !isSameOrNestedPath(resolvedRepoRoot, resolvedLoadedPackageRoot) &&
     !!loadedPackageGitRoot &&
-    !!loadedPackageConfig &&
-    (await isGitWorktreeCleanForSelfReviewConfig({
-      repoRoot: loadedPackageGitRoot,
-      config: loadedPackageConfig,
-    }));
+    !!loadedPackageConfig;
+  const allowDirtyExternalReviewer =
+    process.env[ALLOW_DIRTY_EXTERNAL_REVIEWER_ENV_VAR] === '1';
+  const isLoadedReviewerClean =
+    isExternalReviewerCheckout && loadedPackageGitRoot && loadedPackageConfig
+      ? await isGitWorktreeCleanForSelfReviewConfig({
+          repoRoot: loadedPackageGitRoot,
+          config: loadedPackageConfig,
+        })
+      : false;
+
+  // A separate clean checkout/worktree is treated as an external reviewer
+  // because the reviewed diff cannot mutate the running reviewer code.
+  const shouldAllowExternalReviewer =
+    isExternalReviewerCheckout &&
+    (isLoadedReviewerClean || allowDirtyExternalReviewer);
 
   const config = shouldAllowExternalReviewer
     ? {paths: new Set<string>(), prefixes: []}
-    : layoutConfig;
+    : {
+        ...layoutConfig,
+        dirtyExternalReviewerBlocked:
+          isExternalReviewerCheckout &&
+          !isLoadedReviewerClean &&
+          !allowDirtyExternalReviewer,
+      };
 
-  SELF_REVIEW_BLOCK_CACHE.set(repoRoot, config);
   return config;
+}
+
+function buildSelfReviewBlockErrorMessage(
+  blockedFiles: string[],
+  config: SelfReviewBlockConfig,
+): string {
+  const baseMessage =
+    'polish_solution_review refused to run because the diff changes reviewer-control files: ' +
+    `${blockedFiles.join(', ')}. Review these changes with an external reviewer or move the reviewer policy outside the reviewed worktree.`;
+
+  if (!config.dirtyExternalReviewerBlocked) {
+    return baseMessage;
+  }
+
+  return (
+    `${baseMessage} ` +
+    `If you intentionally want to use a dirty external reviewer checkout/worktree, rerun with ${ALLOW_DIRTY_EXTERNAL_REVIEWER_ENV_VAR}=1.`
+  );
 }
 
 async function getSelfReviewBlockedFiles(
@@ -2632,13 +2661,17 @@ async function buildReviewScope(
     );
   }
 
+  const selfReviewBlockConfig = await getSelfReviewBlockConfig(repoRoot);
   const selfReviewBlockedFiles = await getSelfReviewBlockedFiles(
     repoRoot,
     liveScopedDiff.changedFiles,
   );
   if (selfReviewBlockedFiles.length > 0) {
     throw new Error(
-      `polish_solution_review refused to run because the diff changes reviewer-control files: ${selfReviewBlockedFiles.join(', ')}. Review these changes with an external reviewer or move the reviewer policy outside the reviewed worktree.`,
+      buildSelfReviewBlockErrorMessage(
+        selfReviewBlockedFiles,
+        selfReviewBlockConfig,
+      ),
     );
   }
 
@@ -2714,13 +2747,18 @@ async function buildReviewScope(
         );
       }
 
+      const frozenSelfReviewBlockConfig =
+        await getSelfReviewBlockConfig(repoRoot);
       const frozenSelfReviewBlockedFiles = await getSelfReviewBlockedFiles(
         repoRoot,
         scopedDiff.changedFiles,
       );
       if (frozenSelfReviewBlockedFiles.length > 0) {
         throw new Error(
-          `polish_solution_review refused to run because the diff changes reviewer-control files: ${frozenSelfReviewBlockedFiles.join(', ')}. Review these changes with an external reviewer or move the reviewer policy outside the reviewed worktree.`,
+          buildSelfReviewBlockErrorMessage(
+            frozenSelfReviewBlockedFiles,
+            frozenSelfReviewBlockConfig,
+          ),
         );
       }
       await ensureNoDirtySubmodules(repoRoot, signal);
