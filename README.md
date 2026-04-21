@@ -4,6 +4,7 @@ Personal repo-backed source for pi extensions.
 
 ## Packages
 
+- `discord-notify/` → `@zsaplan/pi-discord-notify`
 - `polish-solution/` → `@zsaplan/pi-polish-solution`
 - `rain-core/` → shared KB/file utilities used by Rain extensions
 - `raincatcher/` → `@zsaplan/pi-raincatcher`
@@ -17,6 +18,10 @@ Extension packages keep their own `package.json` and `pi` manifest. `rain-core/`
 
 ```text
 pi-extensions/
+├── discord-notify/
+│   ├── package.json
+│   ├── README.md
+│   └── src/
 ├── polish-solution/
 │   ├── package.json
 │   ├── README.md
@@ -56,6 +61,7 @@ pi -e .
 
 # or load individual source packages from this repo checkout
 # (these source paths work because the sibling rain-core package is present in the repo)
+pi -e ./discord-notify
 pi -e ./polish-solution
 pi -e ./raincatcher
 pi -e ./raindistiller
@@ -70,7 +76,7 @@ Note: `response-review/` has a runtime dependency on `glimpseui`, so direct sour
 
 ## Development workflow
 
-The repo-root lint and typecheck scripts cover `polish-solution` and `response-review`. The repo-root `knip` and response-review browser-artifact checks remain scoped to `response-review`.
+The repo-root lint and typecheck scripts cover `discord-notify`, `polish-solution`, and `response-review`. The repo-root `knip` and response-review browser-artifact checks remain scoped to `response-review`.
 
 Run these from the repository root:
 
@@ -87,7 +93,7 @@ Notes:
 - `response-review/web/app.ts` is the tracked source-of-truth browser file.
 - `response-review/web/app.js` is an untracked runtime artifact that is rebuilt on demand if missing or stale.
 - `npm run fix` applies `gts` formatting across the repo-root lint surface and regenerates the untracked `response-review/web/app.js` runtime artifact from `response-review/web/app.ts`.
-- `npm run typecheck` runs semantic TypeScript checks for `polish-solution/src`, `response-review/src`, and `response-review/web`.
+- `npm run typecheck` runs semantic TypeScript checks for `discord-notify/src`, `polish-solution/src`, `response-review/src`, and `response-review/web`.
 - `npm run verify` runs linting and semantic typechecking for that onboarded surface, then runs `knip`, rebuilds the generated web script, and checks the generated `response-review/web/app.js` syntax.
 - The other extensions can be onboarded to the same tooling in a later pass.
 
@@ -100,6 +106,7 @@ Initial package sources were copied from:
 
 Repo-native additions after the initial import:
 
+- `discord-notify/`
 - `polish-solution/`
 - `rain-core/`
 - `raindistiller/`

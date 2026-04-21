@@ -1,7 +1,7 @@
 {
   "name": "@zsaplan/pi-extensions",
   "version": "0.1.0",
-  "description": "Personal repo-backed source for Rain pi extensions.",
+  "description": "Personal repo-backed source for pi extensions.",
   "type": "module",
   "license": "UNLICENSED",
   "repository": {
@@ -16,13 +16,14 @@
   "scripts": {
     "lint": "gts lint",
     "fix": "gts fix && npm run build:response-review-web",
-    "typecheck": "tsc -p polish-solution/tsconfig.json --noEmit && tsc -p response-review/tsconfig.src.json --noEmit && tsc -p response-review/tsconfig.web.json --noEmit",
+    "typecheck": "tsc -p discord-notify/tsconfig.json --noEmit && tsc -p polish-solution/tsconfig.json --noEmit && tsc -p response-review/tsconfig.src.json --noEmit && tsc -p response-review/tsconfig.web.json --noEmit",
     "build:response-review-web": "node response-review/scripts/build-web.mjs",
     "knip": "knip -c knip.config.ts --include files,dependencies,unlisted,unresolved",
     "verify": "npm run lint && npm run typecheck && npm run knip && npm run build:response-review-web && node --check response-review/web/app.js",
     "prepare": "npm run build:response-review-web"
   },
   "files": [
+    "discord-notify",
     "polish-solution",
     "rain-core",
     "raincatcher",
@@ -34,6 +35,7 @@
   ],
   "pi": {
     "extensions": [
+      "./discord-notify/src/index.ts",
       "./polish-solution/src/index.ts",
       "./raincatcher/src/index.ts",
       "./raindistiller/src/index.ts",
