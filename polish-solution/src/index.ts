@@ -32,8 +32,11 @@ import {
 } from '@mariozechner/pi-coding-agent';
 import {Type, type Static} from '@sinclair/typebox';
 import {
+  buildReviewerToolAccessRecord,
   createReviewerPseudoToolCallError,
   getReviewerPseudoToolCallDiagnostics,
+  getReviewerSessionDiagnostics,
+  type ReviewerToolAccessRecord,
 } from './reviewer-diagnostics.js';
 
 type ReviewStatus = 'needs-attention' | 'approve';
@@ -99,14 +102,6 @@ type ReviewErrorRecord = {
   name: string;
   message: string;
   stack?: string;
-};
-
-type ReviewerToolAccessRecord = {
-  activeToolNames: string[];
-  configuredToolNames: string[];
-  systemPromptHasAvailableTools: boolean;
-  systemPromptHasSubmitReview: boolean;
-  availableToolsSection?: string;
 };
 
 type ReviewRunRecord = {
@@ -560,6 +555,37 @@ function buildReviewerUsage(
   return usage;
 }
 
+function normalizeReviewerUsage(
+  usage: unknown,
+  fallbackModel?: string,
+): ReviewUsage {
+  const normalizedUsage = createEmptyReviewUsage(fallbackModel);
+  if (!usage || typeof usage !== 'object') return normalizedUsage;
+
+  const usageRecord = usage as Record<string, unknown>;
+  normalizedUsage.model =
+    typeof usageRecord.model === 'string'
+      ? usageRecord.model
+      : normalizedUsage.model;
+  normalizedUsage.turns = getFiniteNumber(usageRecord.turns);
+  normalizedUsage.input = getFiniteNumber(usageRecord.input);
+  normalizedUsage.output = getFiniteNumber(usageRecord.output);
+  normalizedUsage.cacheRead = getFiniteNumber(usageRecord.cacheRead);
+  normalizedUsage.cacheWrite = getFiniteNumber(usageRecord.cacheWrite);
+  normalizedUsage.totalTokens = getFiniteNumber(usageRecord.totalTokens);
+  normalizedUsage.cost = getFiniteNumber(usageRecord.cost);
+
+  if (!normalizedUsage.totalTokens) {
+    normalizedUsage.totalTokens =
+      normalizedUsage.input +
+      normalizedUsage.output +
+      normalizedUsage.cacheRead +
+      normalizedUsage.cacheWrite;
+  }
+
+  return normalizedUsage;
+}
+
 function buildReviewMeta(
   startedAtMs: number,
   completedAtMs: number,
@@ -605,65 +631,6 @@ function buildErrorRecord(error: unknown): ReviewErrorRecord {
     name: normalizedError.name,
     message: normalizedError.message,
     stack: normalizedError.stack,
-  };
-}
-
-function getReviewerSessionDiagnostics(error: unknown):
-  | {
-      usage: ReviewUsage;
-      reviewerMessages: unknown[];
-      reviewerToolAccess?: ReviewerToolAccessRecord;
-    }
-  | undefined {
-  if (!error || typeof error !== 'object') return undefined;
-
-  const reviewerError = error as ReviewerSessionError;
-  if (
-    !reviewerError.reviewerUsage &&
-    !reviewerError.reviewerMessages &&
-    !reviewerError.reviewerToolAccess
-  ) {
-    return undefined;
-  }
-
-  return {
-    usage: reviewerError.reviewerUsage ?? createEmptyReviewUsage(),
-    reviewerMessages: reviewerError.reviewerMessages ?? [],
-    reviewerToolAccess: reviewerError.reviewerToolAccess,
-  };
-}
-
-function extractAvailableToolsSection(
-  systemPrompt: string,
-): string | undefined {
-  const start = systemPrompt.indexOf('Available tools:');
-  if (start === -1) return undefined;
-
-  const endMarker = '\n\nIn addition to the tools above,';
-  const tail = systemPrompt.slice(start);
-  const end = tail.indexOf(endMarker);
-  return (end === -1 ? tail : tail.slice(0, end)).trim();
-}
-
-function buildReviewerToolAccessRecord(
-  session: Awaited<ReturnType<typeof createAgentSession>>['session'],
-): ReviewerToolAccessRecord {
-  const activeToolNames = [
-    ...new Set(session.state.tools.map(tool => tool.name)),
-  ];
-  const configuredToolNames = [
-    ...new Set(session.getAllTools().map(tool => tool.name)),
-  ];
-  const availableToolsSection = extractAvailableToolsSection(
-    session.systemPrompt,
-  );
-
-  return {
-    activeToolNames,
-    configuredToolNames,
-    systemPromptHasAvailableTools: availableToolsSection !== undefined,
-    systemPromptHasSubmitReview: session.systemPrompt.includes('submit_review'),
-    availableToolsSection,
   };
 }
 
@@ -3496,10 +3463,10 @@ export default function polishSolution(pi: ExtensionAPI): void {
         reviewMeta = buildReviewMeta(
           startedAtMs,
           Date.now(),
-          diagnostics?.usage ??
-            createEmptyReviewUsage(
-              describeModel(selectedModel) ?? describeModel(ctx.model),
-            ),
+          normalizeReviewerUsage(
+            diagnostics?.reviewerUsage,
+            describeModel(selectedModel) ?? describeModel(ctx.model),
+          ),
         );
         const message = error instanceof Error ? error.message : String(error);
         progress.update(`❌ polish_solution_review failed: ${message}`, {

@@ -1,6 +1,75 @@
+export type ReviewerToolAccessRecord = {
+  activeToolNames: string[];
+  configuredToolNames: string[];
+  systemPromptHasAvailableTools: boolean;
+  systemPromptHasSubmitReview: boolean;
+  availableToolsSection?: string;
+};
+
+export type ReviewerSessionDiagnostics = {
+  reviewerUsage?: unknown;
+  reviewerMessages?: unknown[];
+  reviewerToolAccess?: ReviewerToolAccessRecord;
+};
+
 export type ReviewerPseudoToolCallDiagnostics = {
   toolNames: string[];
 };
+
+export function getReviewerSessionDiagnostics(
+  error: unknown,
+): ReviewerSessionDiagnostics | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+
+  const errorRecord = error as Record<string, unknown>;
+  const reviewerUsage = errorRecord.reviewerUsage;
+  const reviewerMessages = Array.isArray(errorRecord.reviewerMessages)
+    ? errorRecord.reviewerMessages
+    : undefined;
+  const reviewerToolAccess = isReviewerToolAccessRecord(
+    errorRecord.reviewerToolAccess,
+  )
+    ? errorRecord.reviewerToolAccess
+    : undefined;
+
+  if (
+    reviewerUsage === undefined &&
+    reviewerMessages === undefined &&
+    reviewerToolAccess === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    reviewerUsage,
+    reviewerMessages,
+    reviewerToolAccess,
+  };
+}
+
+export function buildReviewerToolAccessRecord(session: {
+  state: {tools: Array<{name: string}>};
+  getAllTools(): Array<{name: string}>;
+  systemPrompt: string;
+}): ReviewerToolAccessRecord {
+  const activeToolNames = [
+    ...new Set(session.state.tools.map(tool => tool.name)),
+  ];
+  const configuredToolNames = [
+    ...new Set(session.getAllTools().map(tool => tool.name)),
+  ];
+  const availableToolsSection = extractAvailableToolsSection(
+    session.systemPrompt,
+  );
+
+  return {
+    activeToolNames,
+    configuredToolNames,
+    systemPromptHasAvailableTools: availableToolsSection !== undefined,
+    systemPromptHasSubmitReview: session.systemPrompt.includes('submit_review'),
+    availableToolsSection,
+  };
+}
 
 export function getReviewerPseudoToolCallDiagnostics(
   messages: unknown[],
@@ -32,6 +101,36 @@ export function createReviewerPseudoToolCallError(
       `(${diagnostics.toolNames.join(', ')}) instead of invoking tools. ` +
       'This usually means the isolated reviewer lost its tool scaffolding.',
   );
+}
+
+function isReviewerToolAccessRecord(
+  value: unknown,
+): value is ReviewerToolAccessRecord {
+  if (!value || typeof value !== 'object') return false;
+
+  const record = value as Record<string, unknown>;
+  return (
+    Array.isArray(record.activeToolNames) &&
+    record.activeToolNames.every(tool => typeof tool === 'string') &&
+    Array.isArray(record.configuredToolNames) &&
+    record.configuredToolNames.every(tool => typeof tool === 'string') &&
+    typeof record.systemPromptHasAvailableTools === 'boolean' &&
+    typeof record.systemPromptHasSubmitReview === 'boolean' &&
+    (record.availableToolsSection === undefined ||
+      typeof record.availableToolsSection === 'string')
+  );
+}
+
+function extractAvailableToolsSection(
+  systemPrompt: string,
+): string | undefined {
+  const start = systemPrompt.indexOf('Available tools:');
+  if (start === -1) return undefined;
+
+  const endMarker = '\n\nIn addition to the tools above,';
+  const tail = systemPrompt.slice(start);
+  const end = tail.indexOf(endMarker);
+  return (end === -1 ? tail : tail.slice(0, end)).trim();
 }
 
 function getAssistantTextParts(messages: unknown[]): string[] {
