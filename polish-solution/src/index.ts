@@ -100,6 +100,14 @@ type ReviewErrorRecord = {
   stack?: string;
 };
 
+type ReviewerToolAccessRecord = {
+  activeToolNames: string[];
+  configuredToolNames: string[];
+  systemPromptHasAvailableTools: boolean;
+  systemPromptHasSubmitReview: boolean;
+  availableToolsSection?: string;
+};
+
 type ReviewRunRecord = {
   version: 1;
   toolName: 'polish_solution_review';
@@ -116,6 +124,7 @@ type ReviewRunRecord = {
   error?: ReviewErrorRecord;
   scope?: ReviewScopeRecord;
   reviewerMessages?: unknown[];
+  reviewerToolAccess?: ReviewerToolAccessRecord;
 };
 
 type ReviewArtifactEntryBase = {
@@ -171,11 +180,13 @@ type ReviewerSessionResult = {
   review: ReviewResult;
   usage: ReviewUsage;
   reviewerMessages: unknown[];
+  reviewerToolAccess: ReviewerToolAccessRecord;
 };
 
 type ReviewerSessionError = Error & {
   reviewerUsage?: ReviewUsage;
   reviewerMessages?: unknown[];
+  reviewerToolAccess?: ReviewerToolAccessRecord;
 };
 
 type LineRange = {
@@ -593,19 +604,62 @@ function buildErrorRecord(error: unknown): ReviewErrorRecord {
   };
 }
 
-function getReviewerSessionDiagnostics(
-  error: unknown,
-): {usage: ReviewUsage; reviewerMessages: unknown[]} | undefined {
+function getReviewerSessionDiagnostics(error: unknown):
+  | {
+      usage: ReviewUsage;
+      reviewerMessages: unknown[];
+      reviewerToolAccess?: ReviewerToolAccessRecord;
+    }
+  | undefined {
   if (!error || typeof error !== 'object') return undefined;
 
   const reviewerError = error as ReviewerSessionError;
-  if (!reviewerError.reviewerUsage && !reviewerError.reviewerMessages) {
+  if (
+    !reviewerError.reviewerUsage &&
+    !reviewerError.reviewerMessages &&
+    !reviewerError.reviewerToolAccess
+  ) {
     return undefined;
   }
 
   return {
     usage: reviewerError.reviewerUsage ?? createEmptyReviewUsage(),
     reviewerMessages: reviewerError.reviewerMessages ?? [],
+    reviewerToolAccess: reviewerError.reviewerToolAccess,
+  };
+}
+
+function extractAvailableToolsSection(
+  systemPrompt: string,
+): string | undefined {
+  const start = systemPrompt.indexOf('Available tools:');
+  if (start === -1) return undefined;
+
+  const endMarker = '\n\nIn addition to the tools above,';
+  const tail = systemPrompt.slice(start);
+  const end = tail.indexOf(endMarker);
+  return (end === -1 ? tail : tail.slice(0, end)).trim();
+}
+
+function buildReviewerToolAccessRecord(
+  session: Awaited<ReturnType<typeof createAgentSession>>['session'],
+): ReviewerToolAccessRecord {
+  const activeToolNames = [
+    ...new Set(session.state.tools.map(tool => tool.name)),
+  ];
+  const configuredToolNames = [
+    ...new Set(session.getAllTools().map(tool => tool.name)),
+  ];
+  const availableToolsSection = extractAvailableToolsSection(
+    session.systemPrompt,
+  );
+
+  return {
+    activeToolNames,
+    configuredToolNames,
+    systemPromptHasAvailableTools: availableToolsSection !== undefined,
+    systemPromptHasSubmitReview: session.systemPrompt.includes('submit_review'),
+    availableToolsSection,
   };
 }
 
@@ -3167,6 +3221,15 @@ async function runReviewerSession(
     }),
   });
 
+  const reviewerToolAccess = buildReviewerToolAccessRecord(session);
+  progress?.update(
+    `🧰 Reviewer active tools: ${reviewerToolAccess.activeToolNames.join(', ') || '(none)'}.`,
+    {
+      phase: 'reviewer-tool-access',
+      reviewerToolAccess,
+    },
+  );
+
   const fallbackModel = describeModel(model);
   let reviewerMessages: unknown[] = [];
   let reviewerUsage = createEmptyReviewUsage(fallbackModel);
@@ -3280,6 +3343,7 @@ async function runReviewerSession(
       review: completedReview,
       usage: reviewerUsage,
       reviewerMessages,
+      reviewerToolAccess,
     };
   }
 
@@ -3287,6 +3351,8 @@ async function runReviewerSession(
     thrownError instanceof Error ? thrownError : new Error(String(thrownError));
   (reviewerError as ReviewerSessionError).reviewerUsage = reviewerUsage;
   (reviewerError as ReviewerSessionError).reviewerMessages = reviewerMessages;
+  (reviewerError as ReviewerSessionError).reviewerToolAccess =
+    reviewerToolAccess;
   throw reviewerError;
 }
 
@@ -3333,6 +3399,7 @@ export default function polishSolution(pi: ExtensionAPI): void {
       let selectedModel: NonNullable<ExtensionContext['model']> | undefined;
       let review: ReviewResult | undefined;
       let reviewerMessages: unknown[] = [];
+      let reviewerToolAccess: ReviewerToolAccessRecord | undefined;
       let toolResult: ReviewToolResult | undefined;
       let artifactRef = artifactWriter.ref;
       let finalError: unknown;
@@ -3406,6 +3473,7 @@ export default function polishSolution(pi: ExtensionAPI): void {
         );
         review = reviewerSession.review;
         reviewerMessages = reviewerSession.reviewerMessages;
+        reviewerToolAccess = reviewerSession.reviewerToolAccess;
         reviewMeta = buildReviewMeta(
           startedAtMs,
           Date.now(),
@@ -3427,6 +3495,8 @@ export default function polishSolution(pi: ExtensionAPI): void {
         finalError = error;
         const diagnostics = getReviewerSessionDiagnostics(error);
         reviewerMessages = diagnostics?.reviewerMessages ?? reviewerMessages;
+        reviewerToolAccess =
+          diagnostics?.reviewerToolAccess ?? reviewerToolAccess;
         reviewMeta = buildReviewMeta(
           startedAtMs,
           Date.now(),
@@ -3464,6 +3534,7 @@ export default function polishSolution(pi: ExtensionAPI): void {
         scope: scope ? buildReviewScopeRecord(scope) : undefined,
         reviewerMessages:
           reviewerMessages.length > 0 ? reviewerMessages : undefined,
+        reviewerToolAccess,
       };
 
       await artifactWriter.append({
