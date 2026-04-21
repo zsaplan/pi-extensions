@@ -764,11 +764,33 @@ function formatBulletList(items: string[]): string {
   return items.map(item => `- ${formatModelTextValue(item)}`).join('\n');
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await lstat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function resolveRealPathIfExists(
   filePath: string,
 ): Promise<string | undefined> {
   try {
     return await realpath(filePath);
+  } catch {
+    return undefined;
+  }
+}
+
+async function getGitRepoRootRealPath(
+  cwd: string,
+): Promise<string | undefined> {
+  try {
+    const result = await runCommand('git', ['rev-parse', '--show-toplevel'], {
+      cwd,
+    });
+    return await resolveRealPathIfExists(result.stdout.trim());
   } catch {
     return undefined;
   }
@@ -789,6 +811,85 @@ function toRepoRelativePath(filePath: string): string {
   return filePath.split(path.sep).join('/');
 }
 
+function buildPackageSelfReviewBlockConfig(options: {
+  repoRoot: string;
+  packageRoot: string;
+}): {paths: Set<string>; prefixes: string[]} | undefined {
+  if (!isSameOrNestedPath(options.repoRoot, options.packageRoot)) {
+    return undefined;
+  }
+
+  const relativePackageRoot = toRepoRelativePath(
+    path.relative(options.repoRoot, options.packageRoot),
+  );
+  const packageRootPrefix = relativePackageRoot
+    ? `${relativePackageRoot}/`
+    : '';
+
+  return {
+    paths: new Set<string>([`${packageRootPrefix}package.json`]),
+    prefixes: [`${packageRootPrefix}src/`, `${packageRootPrefix}skills/`],
+  };
+}
+
+async function getRepoLayoutSelfReviewBlockConfig(repoRoot: string): Promise<{
+  paths: Set<string>;
+  prefixes: string[];
+}> {
+  const hasMonorepoLayout = await Promise.all([
+    pathExists(path.resolve(repoRoot, 'polish-solution/src/index.ts')),
+    pathExists(
+      path.resolve(repoRoot, 'polish-solution/skills/polish-solution/SKILL.md'),
+    ),
+    pathExists(path.resolve(repoRoot, 'polish-solution/package.json')),
+    pathExists(path.resolve(repoRoot, 'package.json')),
+  ]).then(results => results.every(Boolean));
+
+  if (hasMonorepoLayout) {
+    return {
+      paths: new Set<string>(['package.json', 'polish-solution/package.json']),
+      prefixes: ['polish-solution/src/', 'polish-solution/skills/'],
+    };
+  }
+
+  const hasPackageLayout = await Promise.all([
+    pathExists(path.resolve(repoRoot, 'src/index.ts')),
+    pathExists(path.resolve(repoRoot, 'skills/polish-solution/SKILL.md')),
+    pathExists(path.resolve(repoRoot, 'package.json')),
+  ]).then(results => results.every(Boolean));
+
+  return hasPackageLayout
+    ? {
+        paths: new Set<string>(['package.json']),
+        prefixes: ['src/', 'skills/'],
+      }
+    : {paths: new Set<string>(), prefixes: []};
+}
+
+async function isGitWorktreeCleanForSelfReviewConfig(options: {
+  repoRoot: string;
+  config: {paths: Set<string>; prefixes: string[]};
+}): Promise<boolean> {
+  const pathspecs = [
+    ...options.config.paths,
+    ...options.config.prefixes.map(prefix => prefix.replace(/\/$/, '')),
+  ].filter(Boolean);
+  if (pathspecs.length === 0) return true;
+
+  try {
+    const result = await runCommand(
+      'git',
+      ['status', '--porcelain', '--untracked-files=all', '--', ...pathspecs],
+      {
+        cwd: options.repoRoot,
+      },
+    );
+    return result.stdout.trim() === '';
+  } catch {
+    return false;
+  }
+}
+
 async function getSelfReviewBlockConfig(repoRoot: string): Promise<{
   paths: Set<string>;
   prefixes: string[];
@@ -796,31 +897,43 @@ async function getSelfReviewBlockConfig(repoRoot: string): Promise<{
   const cached = SELF_REVIEW_BLOCK_CACHE.get(repoRoot);
   if (cached) return cached;
 
-  const [resolvedRepoRoot, resolvedLoadedPackageRoot] = await Promise.all([
-    resolveRealPathIfExists(repoRoot),
-    resolveRealPathIfExists(LOADED_POLISH_SOLUTION_PACKAGE_ROOT),
-  ]);
-
-  const emptyConfig = {paths: new Set<string>(), prefixes: []};
-  if (
-    !resolvedRepoRoot ||
-    !resolvedLoadedPackageRoot ||
-    !isSameOrNestedPath(resolvedRepoRoot, resolvedLoadedPackageRoot)
-  ) {
-    SELF_REVIEW_BLOCK_CACHE.set(repoRoot, emptyConfig);
-    return emptyConfig;
+  const layoutConfig = await getRepoLayoutSelfReviewBlockConfig(repoRoot);
+  if (layoutConfig.paths.size === 0 && layoutConfig.prefixes.length === 0) {
+    SELF_REVIEW_BLOCK_CACHE.set(repoRoot, layoutConfig);
+    return layoutConfig;
   }
 
-  const relativeLoadedPackageRoot = toRepoRelativePath(
-    path.relative(resolvedRepoRoot, resolvedLoadedPackageRoot),
-  );
-  const packageRootPrefix = relativeLoadedPackageRoot
-    ? `${relativeLoadedPackageRoot}/`
-    : '';
-  const config = {
-    paths: new Set<string>([`${packageRootPrefix}package.json`]),
-    prefixes: [`${packageRootPrefix}src/`, `${packageRootPrefix}skills/`],
-  };
+  const [resolvedRepoRoot, resolvedLoadedPackageRoot, loadedPackageGitRoot] =
+    await Promise.all([
+      resolveRealPathIfExists(repoRoot),
+      resolveRealPathIfExists(LOADED_POLISH_SOLUTION_PACKAGE_ROOT),
+      getGitRepoRootRealPath(LOADED_POLISH_SOLUTION_PACKAGE_ROOT),
+    ]);
+
+  const loadedPackageConfig =
+    resolvedLoadedPackageRoot && loadedPackageGitRoot
+      ? buildPackageSelfReviewBlockConfig({
+          repoRoot: loadedPackageGitRoot,
+          packageRoot: resolvedLoadedPackageRoot,
+        })
+      : undefined;
+
+  // A separate clean checkout/worktree is treated as an external reviewer
+  // because the reviewed diff cannot mutate the running reviewer code.
+  const shouldAllowExternalReviewer =
+    !!resolvedRepoRoot &&
+    !!resolvedLoadedPackageRoot &&
+    !isSameOrNestedPath(resolvedRepoRoot, resolvedLoadedPackageRoot) &&
+    !!loadedPackageGitRoot &&
+    !!loadedPackageConfig &&
+    (await isGitWorktreeCleanForSelfReviewConfig({
+      repoRoot: loadedPackageGitRoot,
+      config: loadedPackageConfig,
+    }));
+
+  const config = shouldAllowExternalReviewer
+    ? {paths: new Set<string>(), prefixes: []}
+    : layoutConfig;
 
   SELF_REVIEW_BLOCK_CACHE.set(repoRoot, config);
   return config;
@@ -3172,37 +3285,60 @@ async function runReviewerSession(
   });
   const reviewerTools = createReviewerTools(scope, reviewState);
   const reviewerToolNames = reviewerTools.map(tool => tool.name);
-  // createAgentSession's runtime interprets `tools` as a tool-name allowlist,
-  // even though the published type surface is still lagging behind that API.
+  const getMissingReviewerToolNames = (
+    availableToolNames: string[],
+  ): string[] => {
+    return reviewerToolNames.filter(toolName => {
+      return !availableToolNames.includes(toolName);
+    });
+  };
+  const createReviewerSessionWithTools = async (
+    tools: NonNullable<Parameters<typeof createAgentSession>[0]>['tools'],
+  ) => {
+    const {session} = await createAgentSession({
+      cwd: scope.repoRoot,
+      agentDir: getAgentDir(),
+      model,
+      modelRegistry,
+      // Keep the isolated reviewer at low reasoning effort; higher settings
+      // make it more likely to roleplay tool syntax instead of invoking tools.
+      thinkingLevel: DEFAULT_THINKING_LEVEL,
+      tools,
+      customTools: reviewerTools,
+      resourceLoader,
+      sessionManager: SessionManager.inMemory(),
+      settingsManager: SettingsManager.inMemory({
+        compaction: {enabled: false},
+        retry: {enabled: true, maxRetries: MAX_REPAIR_ATTEMPTS},
+      }),
+    });
+
+    return {
+      session,
+      reviewerToolAccess: buildReviewerToolAccessRecord(session),
+    };
+  };
+  const reportReviewerToolAccess = (
+    reviewerToolAccess: ReviewerToolAccessRecord,
+  ): void => {
+    progress?.update(
+      `Reviewer active tools: ${reviewerToolAccess.activeToolNames.join(', ') || '(none)'}.`,
+      {
+        phase: 'reviewer-tool-access',
+        reviewerToolAccess,
+      },
+    );
+  };
+
+  // Try the runtime allowlist path first, but fall back to the older
+  // customTools-only shape when the expected tools do not register.
   const reviewerToolAllowlist = reviewerToolNames as unknown as NonNullable<
     Parameters<typeof createAgentSession>[0]
   >['tools'];
-  const {session} = await createAgentSession({
-    cwd: scope.repoRoot,
-    agentDir: getAgentDir(),
-    model,
-    modelRegistry,
-    // Keep the isolated reviewer at low reasoning effort; higher settings
-    // make it more likely to roleplay tool syntax instead of invoking tools.
-    thinkingLevel: DEFAULT_THINKING_LEVEL,
-    tools: reviewerToolAllowlist,
-    customTools: reviewerTools,
-    resourceLoader,
-    sessionManager: SessionManager.inMemory(),
-    settingsManager: SettingsManager.inMemory({
-      compaction: {enabled: false},
-      retry: {enabled: true, maxRetries: MAX_REPAIR_ATTEMPTS},
-    }),
-  });
-
-  let reviewerToolAccess = buildReviewerToolAccessRecord(session);
-  progress?.update(
-    `Reviewer active tools: ${reviewerToolAccess.activeToolNames.join(', ') || '(none)'}.`,
-    {
-      phase: 'reviewer-tool-access',
-      reviewerToolAccess,
-    },
+  let {session, reviewerToolAccess} = await createReviewerSessionWithTools(
+    reviewerToolAllowlist,
   );
+  reportReviewerToolAccess(reviewerToolAccess);
 
   const fallbackModel = describeModel(model);
   let reviewerMessages: unknown[] = [];
@@ -3211,22 +3347,37 @@ async function runReviewerSession(
   let thrownError: unknown;
 
   try {
-    const getMissingReviewerToolNames = (
-      availableToolNames: string[],
-    ): string[] => {
-      return reviewerToolNames.filter(toolName => {
-        return !availableToolNames.includes(toolName);
-      });
-    };
-
-    const missingConfiguredToolNames = getMissingReviewerToolNames(
+    let missingConfiguredToolNames = getMissingReviewerToolNames(
       reviewerToolAccess.configuredToolNames,
     );
     if (missingConfiguredToolNames.length > 0) {
-      throw new Error(
-        'Reviewer session did not register the expected tools. ' +
-          `Missing configured tools: ${missingConfiguredToolNames.join(', ')}. ` +
-          `Configured tools: ${reviewerToolAccess.configuredToolNames.join(', ') || '(none)'}.`,
+      progress?.update(
+        'Reviewer allowlist session did not register the expected tools. Retrying with customTools-only setup…',
+        {
+          phase: 'reviewer-tool-access-retry',
+          missingConfiguredToolNames,
+          reviewerToolAccess,
+        },
+      );
+      session.dispose();
+
+      ({session, reviewerToolAccess} = await createReviewerSessionWithTools(
+        [],
+      ));
+      reportReviewerToolAccess(reviewerToolAccess);
+      missingConfiguredToolNames = getMissingReviewerToolNames(
+        reviewerToolAccess.configuredToolNames,
+      );
+    }
+
+    if (missingConfiguredToolNames.length > 0) {
+      progress?.update(
+        'Reviewer session tool introspection is incomplete after setup fallback. Proceeding and waiting for concrete tool-use evidence…',
+        {
+          phase: 'reviewer-tool-access-warning',
+          missingConfiguredToolNames,
+          reviewerToolAccess,
+        },
       );
     }
 
