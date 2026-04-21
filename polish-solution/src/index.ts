@@ -29,6 +29,10 @@ import {
   type ToolDefinition,
 } from '@mariozechner/pi-coding-agent';
 import {Type, type Static} from '@sinclair/typebox';
+import {
+  createReviewerPseudoToolCallError,
+  getReviewerPseudoToolCallDiagnostics,
+} from './reviewer-diagnostics.js';
 
 type ReviewStatus = 'needs-attention' | 'approve';
 type ReviewConfidence = 'low' | 'medium' | 'high';
@@ -171,10 +175,6 @@ type ReviewerSessionResult = {
 type ReviewerSessionError = Error & {
   reviewerUsage?: ReviewUsage;
   reviewerMessages?: unknown[];
-};
-
-type ReviewerPseudoToolCallDiagnostics = {
-  toolNames: string[];
 };
 
 type LineRange = {
@@ -602,65 +602,6 @@ function getReviewerSessionDiagnostics(
     usage: reviewerError.reviewerUsage ?? createEmptyReviewUsage(),
     reviewerMessages: reviewerError.reviewerMessages ?? [],
   };
-}
-
-function getAssistantTextParts(messages: unknown[]): string[] {
-  const texts: string[] = [];
-
-  for (const message of messages) {
-    if (!message || typeof message !== 'object') continue;
-
-    const messageRecord = message as Record<string, unknown>;
-    if (messageRecord.role !== 'assistant') continue;
-
-    const content = messageRecord.content;
-    if (!Array.isArray(content)) continue;
-
-    for (const part of content) {
-      if (!part || typeof part !== 'object') continue;
-
-      const partRecord = part as Record<string, unknown>;
-      if (partRecord.type !== 'text' || typeof partRecord.text !== 'string') {
-        continue;
-      }
-
-      texts.push(partRecord.text);
-    }
-  }
-
-  return texts;
-}
-
-function getReviewerPseudoToolCallDiagnostics(
-  messages: unknown[],
-): ReviewerPseudoToolCallDiagnostics | undefined {
-  const toolNames = new Set<string>();
-
-  for (const text of getAssistantTextParts(messages)) {
-    for (const line of normalizeNewlines(text).split('\n')) {
-      const match = /^to=([A-Za-z0-9_]+)/.exec(line.trim());
-      if (!match) continue;
-      toolNames.add(match[1]);
-    }
-  }
-
-  if (toolNames.size === 0) {
-    return undefined;
-  }
-
-  return {
-    toolNames: [...toolNames].sort(),
-  };
-}
-
-function createReviewerPseudoToolCallError(
-  diagnostics: ReviewerPseudoToolCallDiagnostics,
-): Error {
-  return new Error(
-    'polish_solution_review reviewer emitted pseudo tool-call text ' +
-      `(${diagnostics.toolNames.join(', ')}) instead of invoking tools. ` +
-      'This usually means the isolated reviewer lost its tool scaffolding.',
-  );
 }
 
 function sanitizeArtifactPathSegment(value: string, fallback: string): string {
