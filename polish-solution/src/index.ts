@@ -1,6 +1,13 @@
 import {spawn} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
-import {copyFile, lstat, mkdir, mkdtemp, rm, writeFile} from 'node:fs/promises';
+import {
+  appendFile,
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  rm,
+} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {StringDecoder} from 'node:string_decoder';
@@ -70,6 +77,24 @@ type ReviewArtifactRef = {
   path: string;
 };
 
+type ReviewScopeRecord = {
+  repoRoot: string;
+  branch: string;
+  baseRef: string;
+  mergeBase: string;
+  diffBytes: number;
+  diffLines: number;
+  changedFiles: string[];
+  untrackedFiles: string[];
+  diff: string;
+};
+
+type ReviewErrorRecord = {
+  name: string;
+  message: string;
+  stack?: string;
+};
+
 type ReviewRunRecord = {
   version: 1;
   toolName: 'polish_solution_review';
@@ -83,23 +108,58 @@ type ReviewRunRecord = {
   status: 'success' | 'error';
   meta: ReviewMeta;
   review?: ReviewResult;
-  error?: {
-    name: string;
-    message: string;
-    stack?: string;
-  };
-  scope?: {
-    repoRoot: string;
-    branch: string;
-    baseRef: string;
-    mergeBase: string;
-    diffBytes: number;
-    diffLines: number;
-    changedFiles: string[];
-    untrackedFiles: string[];
-    diff: string;
-  };
+  error?: ReviewErrorRecord;
+  scope?: ReviewScopeRecord;
   reviewerMessages?: unknown[];
+};
+
+type ReviewArtifactEntryBase = {
+  version: 1;
+  toolName: 'polish_solution_review';
+  toolCallId: string;
+  runId: string;
+  timestamp: string;
+};
+
+type ReviewArtifactEntry =
+  | (ReviewArtifactEntryBase & {
+      entryType: 'run-started';
+      cwd: string;
+      requestedBaseRef?: string;
+      thinkingLevel: ReturnType<ExtensionAPI['getThinkingLevel']>;
+      model?: string;
+      status: 'running';
+    })
+  | (ReviewArtifactEntryBase & {
+      entryType: 'progress';
+      message: string;
+      details?: unknown;
+    })
+  | (ReviewArtifactEntryBase & {
+      entryType: 'progress-content';
+      content: string;
+      details?: unknown;
+    })
+  | (ReviewArtifactEntryBase & {
+      entryType: 'scope';
+      scope: ReviewScopeRecord;
+    })
+  | (ReviewArtifactEntryBase & {
+      entryType: 'reviewer-event';
+      event: unknown;
+    })
+  | (ReviewArtifactEntryBase & {
+      entryType: 'run-finished';
+      status: ReviewRunRecord['status'];
+      record: ReviewRunRecord;
+    });
+
+type ReviewArtifactWriter = {
+  ref?: ReviewArtifactRef;
+  append(entry: ReviewArtifactEntry): Promise<void>;
+  appendBestEffort(entry: ReviewArtifactEntry): void;
+  flush(): Promise<void>;
+  getWarning(): string | undefined;
 };
 
 type ReviewerSessionResult = {
@@ -500,9 +560,7 @@ function buildReviewToolResult(
   };
 }
 
-function buildReviewScopeRecord(
-  scope: ReviewScope,
-): NonNullable<ReviewRunRecord['scope']> {
+function buildReviewScopeRecord(scope: ReviewScope): ReviewScopeRecord {
   return {
     repoRoot: scope.repoRoot,
     branch: scope.branch,
@@ -516,9 +574,7 @@ function buildReviewScopeRecord(
   };
 }
 
-function buildErrorRecord(
-  error: unknown,
-): NonNullable<ReviewRunRecord['error']> {
+function buildErrorRecord(error: unknown): ReviewErrorRecord {
   const normalizedError =
     error instanceof Error ? error : new Error(String(error));
   return {
@@ -557,34 +613,104 @@ function getReviewRunArtifactDirectory(): string {
   return path.join(getAgentDir(), 'data', 'polish-solution-review');
 }
 
-async function persistReviewRunRecord(
-  record: ReviewRunRecord,
-): Promise<ReviewArtifactRef> {
-  const artifactDirectory = getReviewRunArtifactDirectory();
-  await mkdir(artifactDirectory, {recursive: true});
+function buildReviewArtifactEntryBase(
+  toolCallId: string,
+  runId: string,
+): ReviewArtifactEntryBase {
+  return {
+    version: 1,
+    toolName: 'polish_solution_review',
+    toolCallId,
+    runId,
+    timestamp: new Date().toISOString(),
+  };
+}
 
-  const repoName = sanitizeArtifactPathSegment(
-    path.basename(record.scope?.repoRoot ?? record.cwd),
-    'repo',
-  );
-  const branchName = sanitizeArtifactPathSegment(
-    record.scope?.branch ?? 'head',
-    'head',
-  );
-  const timestamp = record.createdAt.replace(/[:.]/g, '-');
-  const filePath = path.join(
-    artifactDirectory,
-    `${timestamp}_${repoName}_${branchName}_${record.runId}.json`,
-  );
+async function createReviewArtifactWriter(options: {
+  toolCallId: string;
+  runId: string;
+  cwd: string;
+  requestedBaseRef?: string;
+  thinkingLevel: ReturnType<ExtensionAPI['getThinkingLevel']>;
+  model?: string;
+}): Promise<ReviewArtifactWriter> {
+  let ref: ReviewArtifactRef | undefined;
+  let warning: string | undefined;
+  let writeQueue = Promise.resolve();
 
-  await writeFile(filePath, `${JSON.stringify(record, null, 2)}\n`, {
-    encoding: 'utf8',
-    mode: 0o600,
-  });
+  const setWarning = (error: unknown): void => {
+    if (warning) return;
+    warning = error instanceof Error ? error.message : String(error);
+  };
+
+  const enqueueAppend = (entry: ReviewArtifactEntry): Promise<void> => {
+    if (!ref) return Promise.resolve();
+
+    const serializedEntry = `${JSON.stringify(cloneJsonValue(entry))}\n`;
+    const nextWrite = writeQueue
+      .then(() =>
+        appendFile(ref!.path, serializedEntry, {
+          encoding: 'utf8',
+          mode: 0o600,
+        }),
+      )
+      .catch(error => {
+        setWarning(error);
+      });
+    writeQueue = nextWrite;
+    return nextWrite;
+  };
+
+  try {
+    const artifactDirectory = getReviewRunArtifactDirectory();
+    await mkdir(artifactDirectory, {recursive: true});
+
+    const repoName = sanitizeArtifactPathSegment(
+      path.basename(options.cwd),
+      'repo',
+    );
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const candidateRef = {
+      id: options.runId,
+      path: path.join(
+        artifactDirectory,
+        `${timestamp}_${repoName}_${options.runId}.jsonl`,
+      ),
+    };
+
+    const startEntry: ReviewArtifactEntry = {
+      ...buildReviewArtifactEntryBase(options.toolCallId, options.runId),
+      entryType: 'run-started',
+      cwd: options.cwd,
+      requestedBaseRef: options.requestedBaseRef,
+      thinkingLevel: options.thinkingLevel,
+      model: options.model,
+      status: 'running',
+    };
+
+    await appendFile(candidateRef.path, `${JSON.stringify(startEntry)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    ref = candidateRef;
+  } catch (error) {
+    setWarning(error);
+  }
 
   return {
-    id: record.runId,
-    path: filePath,
+    ref,
+    append(entry: ReviewArtifactEntry): Promise<void> {
+      return enqueueAppend(entry);
+    },
+    appendBestEffort(entry: ReviewArtifactEntry): void {
+      void enqueueAppend(entry);
+    },
+    flush(): Promise<void> {
+      return writeQueue;
+    },
+    getWarning(): string | undefined {
+      return warning;
+    },
   };
 }
 
@@ -741,6 +867,11 @@ function buildReviewerActionOutput(
 function createProgressReporter(
   onUpdate: AgentToolUpdateCallback<unknown> | undefined,
   ctx: ExtensionContext,
+  artifactContext?: {
+    writer: ReviewArtifactWriter;
+    toolCallId: string;
+    runId: string;
+  },
 ) {
   const toolStartedAt = Date.now();
   let heartbeatId: NodeJS.Timeout | undefined;
@@ -797,6 +928,25 @@ function createProgressReporter(
         details: {
           phase: 'progress',
           progressMessage: message,
+          toolElapsedMs,
+          ...(details ?? {}),
+        },
+      });
+    }
+
+    if (
+      details?.phase !== 'heartbeat' &&
+      details?.phase !== 'artifact-error' &&
+      artifactContext
+    ) {
+      artifactContext.writer.appendBestEffort({
+        ...buildReviewArtifactEntryBase(
+          artifactContext.toolCallId,
+          artifactContext.runId,
+        ),
+        entryType: 'progress',
+        message,
+        details: {
           toolElapsedMs,
           ...(details ?? {}),
         },
@@ -871,6 +1021,20 @@ function createProgressReporter(
           ...(details ?? {}),
         },
       });
+      if (artifactContext) {
+        artifactContext.writer.appendBestEffort({
+          ...buildReviewArtifactEntryBase(
+            artifactContext.toolCallId,
+            artifactContext.runId,
+          ),
+          entryType: 'progress-content',
+          content,
+          details: {
+            toolElapsedMs,
+            ...(details ?? {}),
+          },
+        });
+      }
     },
     startHeartbeat,
     stopHeartbeat,
@@ -939,11 +1103,42 @@ function describeReviewerToolActivity(toolName: string, args: unknown): string {
   }
 }
 
+function buildReviewerArtifactEvent(
+  eventRecord: Record<string, unknown>,
+  attempt: number,
+  maxAttempts: number,
+): unknown | undefined {
+  switch (eventRecord.type) {
+    case 'turn_start':
+    case 'turn_end':
+    case 'tool_execution_start':
+    case 'tool_execution_update':
+    case 'tool_execution_end':
+    case 'auto_retry_start':
+    case 'auto_retry_end':
+      return cloneJsonValue({attempt, maxAttempts, ...eventRecord});
+    case 'message_end': {
+      const message = eventRecord.message;
+      if (!message || typeof message !== 'object') return undefined;
+      const role = (message as Record<string, unknown>).role;
+      if (role !== 'assistant' && role !== 'toolResult') return undefined;
+      return cloneJsonValue({attempt, maxAttempts, ...eventRecord});
+    }
+    default:
+      return undefined;
+  }
+}
+
 function subscribeToReviewerSessionEvents(
   session: Awaited<ReturnType<typeof createAgentSession>>['session'],
   progress: ReturnType<typeof createProgressReporter>,
   attempt: number,
   maxAttempts: number,
+  artifactContext?: {
+    writer: ReviewArtifactWriter;
+    toolCallId: string;
+    runId: string;
+  },
 ): () => void {
   let activeActivityKey: string | undefined;
 
@@ -968,6 +1163,22 @@ function subscribeToReviewerSessionEvents(
     if (!event || typeof event !== 'object') return;
 
     const eventRecord = event as Record<string, unknown>;
+    const artifactEvent = buildReviewerArtifactEvent(
+      eventRecord,
+      attempt,
+      maxAttempts,
+    );
+    if (artifactEvent && artifactContext) {
+      artifactContext.writer.appendBestEffort({
+        ...buildReviewArtifactEntryBase(
+          artifactContext.toolCallId,
+          artifactContext.runId,
+        ),
+        entryType: 'reviewer-event',
+        event: artifactEvent,
+      });
+    }
+
     switch (eventRecord.type) {
       case 'turn_start': {
         const turnIndex =
@@ -2868,6 +3079,11 @@ async function runReviewerSession(
   thinkingLevel: ReturnType<ExtensionAPI['getThinkingLevel']>,
   signal?: AbortSignal,
   progress?: ReturnType<typeof createProgressReporter>,
+  artifactContext?: {
+    writer: ReviewArtifactWriter;
+    toolCallId: string;
+    runId: string;
+  },
 ): Promise<ReviewerSessionResult> {
   const reviewState: {
     value?: ReviewResult;
@@ -2937,6 +3153,7 @@ async function runReviewerSession(
             progress,
             attempt,
             maxAttempts,
+            artifactContext,
           )
         : undefined;
       progress?.startHeartbeat('Reviewer analyzing the diff…', {
@@ -3032,24 +3249,48 @@ export default function polishSolution(pi: ExtensionAPI): void {
       onUpdate,
       ctx,
     ) {
-      const progress = createProgressReporter(onUpdate, ctx);
       const startedAtMs = Date.now();
       const currentCwd = ctx.cwd ?? process.cwd();
       const thinkingLevel = pi.getThinkingLevel();
       const runId = randomUUID();
+      const requestedBaseRef = normalizeBaseRef(params.baseRef);
+      const artifactWriter = await createReviewArtifactWriter({
+        toolCallId,
+        runId,
+        cwd: currentCwd,
+        requestedBaseRef,
+        thinkingLevel,
+        model: describeModel(ctx.model),
+      });
+      const progress = createProgressReporter(onUpdate, ctx, {
+        writer: artifactWriter,
+        toolCallId,
+        runId,
+      });
       let scope: ReviewScope | undefined;
       let selectedModel: NonNullable<ExtensionContext['model']> | undefined;
       let review: ReviewResult | undefined;
       let reviewerMessages: unknown[] = [];
       let toolResult: ReviewToolResult | undefined;
-      let artifactRef: ReviewArtifactRef | undefined;
+      let artifactRef = artifactWriter.ref;
       let finalError: unknown;
-      let artifactWarning: string | undefined;
+      let artifactWarning = artifactWriter.getWarning();
       let reviewMeta = buildReviewMeta(
         startedAtMs,
         startedAtMs,
         createEmptyReviewUsage(describeModel(ctx.model)),
       );
+
+      if (artifactRef) {
+        onUpdate?.({
+          content: [],
+          details: {
+            phase: 'artifact-created',
+            toolCallId,
+            artifact: artifactRef,
+          },
+        });
+      }
 
       try {
         progress.update(
@@ -3067,6 +3308,11 @@ export default function polishSolution(pi: ExtensionAPI): void {
           signal,
           progress,
         );
+        artifactWriter.appendBestEffort({
+          ...buildReviewArtifactEntryBase(toolCallId, runId),
+          entryType: 'scope',
+          scope: buildReviewScopeRecord(scope),
+        });
 
         const availableModels = ctx.modelRegistry.getAvailable();
         selectedModel = ctx.model ?? availableModels[0];
@@ -3091,6 +3337,11 @@ export default function polishSolution(pi: ExtensionAPI): void {
           thinkingLevel,
           signal,
           progress,
+          {
+            writer: artifactWriter,
+            toolCallId,
+            runId,
+          },
         );
         review = reviewerSession.review;
         reviewerMessages = reviewerSession.reviewerMessages;
@@ -3139,7 +3390,7 @@ export default function polishSolution(pi: ExtensionAPI): void {
         runId,
         createdAt: reviewMeta.completedAt,
         cwd: currentCwd,
-        requestedBaseRef: normalizeBaseRef(params.baseRef),
+        requestedBaseRef,
         model:
           reviewMeta.usage.model ??
           describeModel(selectedModel) ??
@@ -3154,35 +3405,46 @@ export default function polishSolution(pi: ExtensionAPI): void {
           reviewerMessages.length > 0 ? reviewerMessages : undefined,
       };
 
-      try {
-        artifactRef = await persistReviewRunRecord(artifactRecord);
+      await artifactWriter.append({
+        ...buildReviewArtifactEntryBase(toolCallId, runId),
+        entryType: 'run-finished',
+        status: artifactRecord.status,
+        record: artifactRecord,
+      });
+      await artifactWriter.flush();
+      artifactRef = artifactWriter.ref;
+      artifactWarning = artifactWriter.getWarning();
+
+      if (artifactRef) {
         pi.appendEntry('polish-solution-review-run', {
           toolCallId,
           runId,
           artifactId: artifactRef.id,
           artifactPath: artifactRef.path,
+          artifactFormat: 'jsonl',
           createdAt: artifactRecord.createdAt,
           status: artifactRecord.status,
           reviewStatus: review?.status,
           repoRoot: scope?.repoRoot ?? currentCwd,
           branch: scope?.branch,
-          baseRef: scope?.baseRef ?? normalizeBaseRef(params.baseRef),
+          baseRef: scope?.baseRef ?? requestedBaseRef,
           elapsedMs: reviewMeta.elapsedMs,
           totalTokens: reviewMeta.usage.totalTokens,
         });
         onUpdate?.({
           content: [],
           details: {
-            phase: 'artifact-saved',
+            phase: 'artifact-finalized',
             toolCallId,
             artifact: artifactRef,
+            status: artifactRecord.status,
           },
         });
-      } catch (error) {
-        artifactWarning =
-          error instanceof Error ? error.message : String(error);
+      }
+
+      if (artifactWarning) {
         progress.update(
-          `⚠️ Could not save polish_solution_review artifact: ${artifactWarning}`,
+          `⚠️ polish_solution_review artifact warning: ${artifactWarning}`,
           {
             phase: 'artifact-error',
             isError: true,
@@ -3214,6 +3476,7 @@ export default function polishSolution(pi: ExtensionAPI): void {
           ...toolResult,
           toolCallId,
           artifact: artifactRef,
+          artifactFormat: artifactRef ? 'jsonl' : undefined,
           artifactWarning,
           scope: scope
             ? {

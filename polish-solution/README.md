@@ -12,7 +12,7 @@ A pi extension and skill for iterative adversarial review of the current git wor
   - `needs-attention`
   - `approve`
 - includes elapsed time and reviewer token usage in the visible JSON result metadata
-- writes a per-run debug artifact under `~/.pi/agent/data/polish-solution-review/`
+- writes a per-run JSONL debug artifact under `~/.pi/agent/data/polish-solution-review/`
 
 ## Tool
 
@@ -27,7 +27,7 @@ The tool:
 - uses the currently active model
 - retries invalid or schema-invalid reviewer output up to 3 times
 - returns compact JSON in visible content and the parsed review object plus hidden artifact metadata in `details`
-- emits a hidden artifact reference update in the tool session stream so external consumers can capture the saved run file without polluting the visible JSON content
+- emits hidden artifact reference updates in the tool session stream so external consumers can capture the run file without polluting the visible JSON content
 
 ### Failure cases
 
@@ -72,6 +72,8 @@ Then either:
 - The reviewer prompt is fixed and inline in the extension code.
 - No extra situational summary is passed to the reviewer by default.
 - Out-of-scope feedback such as tests and other external supports is intentionally excluded from review findings.
-- Each saved debug artifact captures the fixed review scope, final review/error metadata, reviewer usage, and the isolated reviewer session messages for later debugging.
+- Each saved debug artifact is a progressive JSONL trail: it is created at run start, appended during scope/reviewer progress, and finished with a final success/error snapshot when the run ends cleanly.
+- Interrupted runs keep the partial artifact trail that was flushed before interruption, so later debugging still has a checkpointed history even if there is no final snapshot line.
+- The final artifact snapshot captures the fixed review scope, final review/error metadata, reviewer usage, and the isolated reviewer session messages for later debugging.
 - The artifact path is kept out of the visible tool JSON content; it is stored in hidden tool details and a non-LLM custom session entry.
 - The skill workflow still expects the primary coding agent to run relevant lint/test/verify-style validation after each remediation pass before rerunning adversarial review.
