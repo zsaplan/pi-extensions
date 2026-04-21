@@ -235,8 +235,9 @@ const GREP_REPO_SCHEMA = Type.Object({
 const DEFAULT_THINKING_LEVEL = 'low' as const;
 const MAX_REPAIR_ATTEMPTS = 3;
 const MAX_AGENT_EXECUTION_MS = 900_000;
-const MAX_DIFF_BYTES = DEFAULT_MAX_BYTES;
-const MAX_DIFF_LINES = DEFAULT_MAX_LINES;
+const REVIEW_DIFF_BUDGET_MULTIPLIER = 3;
+const MAX_DIFF_BYTES = DEFAULT_MAX_BYTES * REVIEW_DIFF_BUDGET_MULTIPLIER;
+const MAX_DIFF_LINES = DEFAULT_MAX_LINES * REVIEW_DIFF_BUDGET_MULTIPLIER;
 const MAX_READ_FILE_BYTES = DEFAULT_MAX_BYTES * 4;
 const MAX_READ_FILE_LINES = DEFAULT_MAX_LINES * 10;
 const MAX_GREP_BYTES = DEFAULT_MAX_BYTES;
@@ -659,10 +660,14 @@ async function getSelfReviewBlockedFiles(
   });
 }
 
-function formatToolOutput(content: string, hint?: string): string {
+function formatToolOutput(
+  content: string,
+  hint?: string,
+  options?: {maxBytes?: number; maxLines?: number},
+): string {
   const truncation = truncateHead(content, {
-    maxBytes: DEFAULT_MAX_BYTES,
-    maxLines: DEFAULT_MAX_LINES,
+    maxBytes: options?.maxBytes ?? DEFAULT_MAX_BYTES,
+    maxLines: options?.maxLines ?? DEFAULT_MAX_LINES,
   });
   let text = truncation.content || '(empty)';
   if (truncation.truncated) {
@@ -2589,6 +2594,10 @@ function createReviewerTools(
                 pathSpec
                   ? 'narrow further or inspect files directly with read_file'
                   : 'call git_diff with path to narrow the diff',
+                {
+                  maxBytes: MAX_DIFF_BYTES,
+                  maxLines: MAX_DIFF_LINES,
+                },
               ),
             },
           ],
