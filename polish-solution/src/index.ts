@@ -6,11 +6,13 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  realpath,
   rm,
 } from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {StringDecoder} from 'node:string_decoder';
+import {fileURLToPath} from 'node:url';
 import {StringEnum} from '@mariozechner/pi-ai';
 import {
   DEFAULT_MAX_BYTES,
@@ -323,10 +325,17 @@ const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null';
 const STATUS_KEY = 'polish-solution-review';
 const HEARTBEAT_INTERVAL_MS = 2_000;
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const INSTALLED_POLISH_SOLUTION_PACKAGE_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+);
 const SELF_REVIEW_BLOCK_CACHE = new Map<
   string,
   {paths: Set<string>; prefixes: string[]}
 >();
+let installedToolPackageRootRealPathPromise:
+  | Promise<string | undefined>
+  | undefined;
 
 const REVIEWER_SYSTEM_PROMPT = `You are an adversarial code reviewer.
 Default to skepticism. Try to disprove the change rather than validate it.
@@ -781,13 +790,38 @@ function formatBulletList(items: string[]): string {
   return items.map(item => `- ${formatModelTextValue(item)}`).join('\n');
 }
 
-async function pathExists(filePath: string): Promise<boolean> {
+async function resolveRealPathIfExists(
+  filePath: string,
+): Promise<string | undefined> {
   try {
-    await lstat(filePath);
-    return true;
+    return await realpath(filePath);
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+async function getInstalledToolPackageRootRealPath(): Promise<
+  string | undefined
+> {
+  installedToolPackageRootRealPathPromise ??= resolveRealPathIfExists(
+    INSTALLED_POLISH_SOLUTION_PACKAGE_ROOT,
+  );
+  return installedToolPackageRootRealPathPromise;
+}
+
+function isSameOrNestedPath(
+  parentPath: string,
+  candidatePath: string,
+): boolean {
+  const relativePath = path.relative(parentPath, candidatePath);
+  return (
+    relativePath === '' ||
+    (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))
+  );
+}
+
+function toRepoRelativePath(filePath: string): string {
+  return filePath.split(path.sep).join('/');
 }
 
 async function getSelfReviewBlockConfig(repoRoot: string): Promise<{
@@ -797,35 +831,32 @@ async function getSelfReviewBlockConfig(repoRoot: string): Promise<{
   const cached = SELF_REVIEW_BLOCK_CACHE.get(repoRoot);
   if (cached) return cached;
 
-  const hasMonorepoLayout = await Promise.all([
-    pathExists(path.resolve(repoRoot, 'polish-solution/src/index.ts')),
-    pathExists(
-      path.resolve(repoRoot, 'polish-solution/skills/polish-solution/SKILL.md'),
-    ),
-    pathExists(path.resolve(repoRoot, 'polish-solution/package.json')),
-    pathExists(path.resolve(repoRoot, 'package.json')),
-  ]).then(results => results.every(Boolean));
+  const [resolvedRepoRoot, resolvedInstalledToolPackageRoot] =
+    await Promise.all([
+      resolveRealPathIfExists(repoRoot),
+      getInstalledToolPackageRootRealPath(),
+    ]);
 
-  const hasPackageLayout = await Promise.all([
-    pathExists(path.resolve(repoRoot, 'src/index.ts')),
-    pathExists(path.resolve(repoRoot, 'skills/polish-solution/SKILL.md')),
-    pathExists(path.resolve(repoRoot, 'package.json')),
-  ]).then(results => results.every(Boolean));
+  const emptyConfig = {paths: new Set<string>(), prefixes: []};
+  if (
+    !resolvedRepoRoot ||
+    !resolvedInstalledToolPackageRoot ||
+    !isSameOrNestedPath(resolvedRepoRoot, resolvedInstalledToolPackageRoot)
+  ) {
+    SELF_REVIEW_BLOCK_CACHE.set(repoRoot, emptyConfig);
+    return emptyConfig;
+  }
 
-  const config: {paths: Set<string>; prefixes: string[]} = hasMonorepoLayout
-    ? {
-        paths: new Set<string>([
-          'package.json',
-          'polish-solution/package.json',
-        ]),
-        prefixes: ['polish-solution/src/', 'polish-solution/skills/'],
-      }
-    : hasPackageLayout
-      ? {
-          paths: new Set<string>(['package.json']),
-          prefixes: ['src/', 'skills/'],
-        }
-      : {paths: new Set<string>(), prefixes: []};
+  const relativeToolPackageRoot = toRepoRelativePath(
+    path.relative(resolvedRepoRoot, resolvedInstalledToolPackageRoot),
+  );
+  const packageRootPrefix = relativeToolPackageRoot
+    ? `${relativeToolPackageRoot}/`
+    : '';
+  const config = {
+    paths: new Set<string>([`${packageRootPrefix}package.json`]),
+    prefixes: [`${packageRootPrefix}src/`, `${packageRootPrefix}skills/`],
+  };
 
   SELF_REVIEW_BLOCK_CACHE.set(repoRoot, config);
   return config;
