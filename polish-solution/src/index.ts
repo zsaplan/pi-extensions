@@ -3213,7 +3213,7 @@ async function runReviewerSession(
       }
     }
 
-    if (!completedReview) {
+    if (!completedReview && !thrownError) {
       thrownError = new Error(
         `polish_solution_review did not receive a valid structured review after ${MAX_REPAIR_ATTEMPTS + 1} attempts.`,
       );
