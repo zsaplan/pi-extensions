@@ -1,5 +1,13 @@
 import {spawn} from 'node:child_process';
-import {copyFile, lstat, mkdir, mkdtemp, rm} from 'node:fs/promises';
+import {randomUUID} from 'node:crypto';
+import {
+  appendFile,
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  rm,
+} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {StringDecoder} from 'node:string_decoder';
@@ -39,6 +47,130 @@ type ReviewResult = {
   status: ReviewStatus;
   summary: string;
   findings: ReviewFinding[];
+};
+
+type ReviewUsage = {
+  model?: string;
+  turns: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  cost: number;
+};
+
+type ReviewMeta = {
+  startedAt: string;
+  completedAt: string;
+  elapsedMs: number;
+  elapsed: string;
+  usage: ReviewUsage;
+};
+
+type ReviewToolResult = ReviewResult & {
+  meta: ReviewMeta;
+};
+
+type ReviewArtifactRef = {
+  id: string;
+  path: string;
+};
+
+type ReviewScopeRecord = {
+  repoRoot: string;
+  branch: string;
+  baseRef: string;
+  mergeBase: string;
+  diffBytes: number;
+  diffLines: number;
+  changedFiles: string[];
+  untrackedFiles: string[];
+  diff: string;
+};
+
+type ReviewErrorRecord = {
+  name: string;
+  message: string;
+  stack?: string;
+};
+
+type ReviewRunRecord = {
+  version: 1;
+  toolName: 'polish_solution_review';
+  toolCallId: string;
+  runId: string;
+  createdAt: string;
+  cwd: string;
+  requestedBaseRef?: string;
+  model?: string;
+  thinkingLevel: ReturnType<ExtensionAPI['getThinkingLevel']>;
+  status: 'success' | 'error';
+  meta: ReviewMeta;
+  review?: ReviewResult;
+  error?: ReviewErrorRecord;
+  scope?: ReviewScopeRecord;
+  reviewerMessages?: unknown[];
+};
+
+type ReviewArtifactEntryBase = {
+  version: 1;
+  toolName: 'polish_solution_review';
+  toolCallId: string;
+  runId: string;
+  timestamp: string;
+};
+
+type ReviewArtifactEntry =
+  | (ReviewArtifactEntryBase & {
+      entryType: 'run-started';
+      cwd: string;
+      requestedBaseRef?: string;
+      thinkingLevel: ReturnType<ExtensionAPI['getThinkingLevel']>;
+      model?: string;
+      status: 'running';
+    })
+  | (ReviewArtifactEntryBase & {
+      entryType: 'progress';
+      message: string;
+      details?: unknown;
+    })
+  | (ReviewArtifactEntryBase & {
+      entryType: 'progress-content';
+      content: string;
+      details?: unknown;
+    })
+  | (ReviewArtifactEntryBase & {
+      entryType: 'scope';
+      scope: ReviewScopeRecord;
+    })
+  | (ReviewArtifactEntryBase & {
+      entryType: 'reviewer-event';
+      event: unknown;
+    })
+  | (ReviewArtifactEntryBase & {
+      entryType: 'run-finished';
+      status: ReviewRunRecord['status'];
+      record: ReviewRunRecord;
+    });
+
+type ReviewArtifactWriter = {
+  ref?: ReviewArtifactRef;
+  append(entry: ReviewArtifactEntry): Promise<void>;
+  appendBestEffort(entry: ReviewArtifactEntry): void;
+  flush(): Promise<void>;
+  getWarning(): string | undefined;
+};
+
+type ReviewerSessionResult = {
+  review: ReviewResult;
+  usage: ReviewUsage;
+  reviewerMessages: unknown[];
+};
+
+type ReviewerSessionError = Error & {
+  reviewerUsage?: ReviewUsage;
+  reviewerMessages?: unknown[];
 };
 
 type LineRange = {
@@ -163,8 +295,9 @@ const GREP_REPO_SCHEMA = Type.Object({
 const DEFAULT_THINKING_LEVEL = 'low' as const;
 const MAX_REPAIR_ATTEMPTS = 3;
 const MAX_AGENT_EXECUTION_MS = 900_000;
-const MAX_DIFF_BYTES = DEFAULT_MAX_BYTES;
-const MAX_DIFF_LINES = DEFAULT_MAX_LINES;
+const REVIEW_DIFF_BUDGET_MULTIPLIER = 3;
+const MAX_DIFF_BYTES = DEFAULT_MAX_BYTES * REVIEW_DIFF_BUDGET_MULTIPLIER;
+const MAX_DIFF_LINES = DEFAULT_MAX_LINES * REVIEW_DIFF_BUDGET_MULTIPLIER;
 const MAX_READ_FILE_BYTES = DEFAULT_MAX_BYTES * 4;
 const MAX_READ_FILE_LINES = DEFAULT_MAX_LINES * 10;
 const MAX_GREP_BYTES = DEFAULT_MAX_BYTES;
@@ -302,6 +435,285 @@ function formatElapsed(ms: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
+function formatTokenCount(count: number): string {
+  if (count < 1_000) return String(count);
+  if (count < 10_000) return `${(count / 1_000).toFixed(1)}k`;
+  if (count < 1_000_000) return `${Math.round(count / 1_000)}k`;
+  return `${(count / 1_000_000).toFixed(1)}M`;
+}
+
+function formatUsageSummary(usage: ReviewUsage): string {
+  const parts = [
+    `${formatTokenCount(usage.totalTokens)} tokens`,
+    `${usage.turns} turn${usage.turns === 1 ? '' : 's'}`,
+  ];
+  if (usage.input) parts.push(`↑${formatTokenCount(usage.input)}`);
+  if (usage.output) parts.push(`↓${formatTokenCount(usage.output)}`);
+  if (usage.cacheRead) parts.push(`R${formatTokenCount(usage.cacheRead)}`);
+  if (usage.cacheWrite) parts.push(`W${formatTokenCount(usage.cacheWrite)}`);
+  return parts.join(' · ');
+}
+
+function getFiniteNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function createEmptyReviewUsage(model?: string): ReviewUsage {
+  return {
+    model,
+    turns: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: 0,
+  };
+}
+
+function cloneJsonValue<T>(value: T): T {
+  if (value === undefined) return value;
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function describeModel(
+  model: NonNullable<ExtensionContext['model']> | undefined,
+): string | undefined {
+  if (!model) return undefined;
+  return `${model.provider}/${model.id}`;
+}
+
+function buildReviewerUsage(
+  messages: unknown[],
+  fallbackModel?: string,
+): ReviewUsage {
+  const usage = createEmptyReviewUsage(fallbackModel);
+
+  for (const message of messages) {
+    if (!message || typeof message !== 'object') continue;
+
+    const messageRecord = message as Record<string, unknown>;
+    if (messageRecord.role !== 'assistant') continue;
+
+    usage.turns += 1;
+
+    if (!usage.model && typeof messageRecord.model === 'string') {
+      const provider =
+        typeof messageRecord.provider === 'string'
+          ? messageRecord.provider
+          : undefined;
+      usage.model = provider
+        ? `${provider}/${messageRecord.model}`
+        : messageRecord.model;
+    }
+
+    const messageUsage = messageRecord.usage;
+    if (!messageUsage || typeof messageUsage !== 'object') continue;
+
+    const usageRecord = messageUsage as Record<string, unknown>;
+    const input = getFiniteNumber(usageRecord.input);
+    const output = getFiniteNumber(usageRecord.output);
+    const cacheRead = getFiniteNumber(usageRecord.cacheRead);
+    const cacheWrite = getFiniteNumber(usageRecord.cacheWrite);
+    const totalTokens = getFiniteNumber(usageRecord.totalTokens);
+    usage.input += input;
+    usage.output += output;
+    usage.cacheRead += cacheRead;
+    usage.cacheWrite += cacheWrite;
+    usage.totalTokens += totalTokens || input + output + cacheRead + cacheWrite;
+
+    const cost = usageRecord.cost;
+    if (cost && typeof cost === 'object') {
+      usage.cost += getFiniteNumber((cost as Record<string, unknown>).total);
+    }
+  }
+
+  if (!usage.totalTokens) {
+    usage.totalTokens =
+      usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+  }
+
+  return usage;
+}
+
+function buildReviewMeta(
+  startedAtMs: number,
+  completedAtMs: number,
+  usage: ReviewUsage,
+): ReviewMeta {
+  return {
+    startedAt: new Date(startedAtMs).toISOString(),
+    completedAt: new Date(completedAtMs).toISOString(),
+    elapsedMs: Math.max(0, completedAtMs - startedAtMs),
+    elapsed: formatElapsed(completedAtMs - startedAtMs),
+    usage,
+  };
+}
+
+function buildReviewToolResult(
+  review: ReviewResult,
+  meta: ReviewMeta,
+): ReviewToolResult {
+  return {
+    ...review,
+    meta,
+  };
+}
+
+function buildReviewScopeRecord(scope: ReviewScope): ReviewScopeRecord {
+  return {
+    repoRoot: scope.repoRoot,
+    branch: scope.branch,
+    baseRef: scope.baseRef,
+    mergeBase: scope.mergeBase,
+    diffBytes: scope.diffBytes,
+    diffLines: scope.diffLines,
+    changedFiles: [...scope.changedFiles],
+    untrackedFiles: [...scope.untrackedFiles],
+    diff: scope.diff,
+  };
+}
+
+function buildErrorRecord(error: unknown): ReviewErrorRecord {
+  const normalizedError =
+    error instanceof Error ? error : new Error(String(error));
+  return {
+    name: normalizedError.name,
+    message: normalizedError.message,
+    stack: normalizedError.stack,
+  };
+}
+
+function getReviewerSessionDiagnostics(
+  error: unknown,
+): {usage: ReviewUsage; reviewerMessages: unknown[]} | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+
+  const reviewerError = error as ReviewerSessionError;
+  if (!reviewerError.reviewerUsage && !reviewerError.reviewerMessages) {
+    return undefined;
+  }
+
+  return {
+    usage: reviewerError.reviewerUsage ?? createEmptyReviewUsage(),
+    reviewerMessages: reviewerError.reviewerMessages ?? [],
+  };
+}
+
+function sanitizeArtifactPathSegment(value: string, fallback: string): string {
+  const sanitized = value
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+  return sanitized || fallback;
+}
+
+function getReviewRunArtifactDirectory(): string {
+  return path.join(getAgentDir(), 'data', 'polish-solution-review');
+}
+
+function buildReviewArtifactEntryBase(
+  toolCallId: string,
+  runId: string,
+): ReviewArtifactEntryBase {
+  return {
+    version: 1,
+    toolName: 'polish_solution_review',
+    toolCallId,
+    runId,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+async function createReviewArtifactWriter(options: {
+  toolCallId: string;
+  runId: string;
+  cwd: string;
+  requestedBaseRef?: string;
+  thinkingLevel: ReturnType<ExtensionAPI['getThinkingLevel']>;
+  model?: string;
+}): Promise<ReviewArtifactWriter> {
+  let ref: ReviewArtifactRef | undefined;
+  let warning: string | undefined;
+  let writeQueue = Promise.resolve();
+
+  const setWarning = (error: unknown): void => {
+    if (warning) return;
+    warning = error instanceof Error ? error.message : String(error);
+  };
+
+  const enqueueAppend = (entry: ReviewArtifactEntry): Promise<void> => {
+    if (!ref) return Promise.resolve();
+
+    const serializedEntry = `${JSON.stringify(cloneJsonValue(entry))}\n`;
+    const nextWrite = writeQueue
+      .then(() =>
+        appendFile(ref!.path, serializedEntry, {
+          encoding: 'utf8',
+          mode: 0o600,
+        }),
+      )
+      .catch(error => {
+        setWarning(error);
+      });
+    writeQueue = nextWrite;
+    return nextWrite;
+  };
+
+  try {
+    const artifactDirectory = getReviewRunArtifactDirectory();
+    await mkdir(artifactDirectory, {recursive: true});
+
+    const repoName = sanitizeArtifactPathSegment(
+      path.basename(options.cwd),
+      'repo',
+    );
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const candidateRef = {
+      id: options.runId,
+      path: path.join(
+        artifactDirectory,
+        `${timestamp}_${repoName}_${options.runId}.jsonl`,
+      ),
+    };
+
+    const startEntry: ReviewArtifactEntry = {
+      ...buildReviewArtifactEntryBase(options.toolCallId, options.runId),
+      entryType: 'run-started',
+      cwd: options.cwd,
+      requestedBaseRef: options.requestedBaseRef,
+      thinkingLevel: options.thinkingLevel,
+      model: options.model,
+      status: 'running',
+    };
+
+    await appendFile(candidateRef.path, `${JSON.stringify(startEntry)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    ref = candidateRef;
+  } catch (error) {
+    setWarning(error);
+  }
+
+  return {
+    ref,
+    append(entry: ReviewArtifactEntry): Promise<void> {
+      return enqueueAppend(entry);
+    },
+    appendBestEffort(entry: ReviewArtifactEntry): void {
+      void enqueueAppend(entry);
+    },
+    flush(): Promise<void> {
+      return writeQueue;
+    },
+    getWarning(): string | undefined {
+      return warning;
+    },
+  };
+}
+
 function formatModelTextValue(value: string): string {
   return JSON.stringify(value);
 }
@@ -374,10 +786,14 @@ async function getSelfReviewBlockedFiles(
   });
 }
 
-function formatToolOutput(content: string, hint?: string): string {
+function formatToolOutput(
+  content: string,
+  hint?: string,
+  options?: {maxBytes?: number; maxLines?: number},
+): string {
   const truncation = truncateHead(content, {
-    maxBytes: DEFAULT_MAX_BYTES,
-    maxLines: DEFAULT_MAX_LINES,
+    maxBytes: options?.maxBytes ?? DEFAULT_MAX_BYTES,
+    maxLines: options?.maxLines ?? DEFAULT_MAX_LINES,
   });
   let text = truncation.content || '(empty)';
   if (truncation.truncated) {
@@ -451,6 +867,11 @@ function buildReviewerActionOutput(
 function createProgressReporter(
   onUpdate: AgentToolUpdateCallback<unknown> | undefined,
   ctx: ExtensionContext,
+  artifactContext?: {
+    writer: ReviewArtifactWriter;
+    toolCallId: string;
+    runId: string;
+  },
 ) {
   const toolStartedAt = Date.now();
   let heartbeatId: NodeJS.Timeout | undefined;
@@ -507,6 +928,25 @@ function createProgressReporter(
         details: {
           phase: 'progress',
           progressMessage: message,
+          toolElapsedMs,
+          ...(details ?? {}),
+        },
+      });
+    }
+
+    if (
+      details?.phase !== 'heartbeat' &&
+      details?.phase !== 'artifact-error' &&
+      artifactContext
+    ) {
+      artifactContext.writer.appendBestEffort({
+        ...buildReviewArtifactEntryBase(
+          artifactContext.toolCallId,
+          artifactContext.runId,
+        ),
+        entryType: 'progress',
+        message,
+        details: {
           toolElapsedMs,
           ...(details ?? {}),
         },
@@ -581,6 +1021,20 @@ function createProgressReporter(
           ...(details ?? {}),
         },
       });
+      if (artifactContext) {
+        artifactContext.writer.appendBestEffort({
+          ...buildReviewArtifactEntryBase(
+            artifactContext.toolCallId,
+            artifactContext.runId,
+          ),
+          entryType: 'progress-content',
+          content,
+          details: {
+            toolElapsedMs,
+            ...(details ?? {}),
+          },
+        });
+      }
     },
     startHeartbeat,
     stopHeartbeat,
@@ -649,11 +1103,42 @@ function describeReviewerToolActivity(toolName: string, args: unknown): string {
   }
 }
 
+function buildReviewerArtifactEvent(
+  eventRecord: Record<string, unknown>,
+  attempt: number,
+  maxAttempts: number,
+): unknown | undefined {
+  switch (eventRecord.type) {
+    case 'turn_start':
+    case 'turn_end':
+    case 'tool_execution_start':
+    case 'tool_execution_update':
+    case 'tool_execution_end':
+    case 'auto_retry_start':
+    case 'auto_retry_end':
+      return cloneJsonValue({attempt, maxAttempts, ...eventRecord});
+    case 'message_end': {
+      const message = eventRecord.message;
+      if (!message || typeof message !== 'object') return undefined;
+      const role = (message as Record<string, unknown>).role;
+      if (role !== 'assistant' && role !== 'toolResult') return undefined;
+      return cloneJsonValue({attempt, maxAttempts, ...eventRecord});
+    }
+    default:
+      return undefined;
+  }
+}
+
 function subscribeToReviewerSessionEvents(
   session: Awaited<ReturnType<typeof createAgentSession>>['session'],
   progress: ReturnType<typeof createProgressReporter>,
   attempt: number,
   maxAttempts: number,
+  artifactContext?: {
+    writer: ReviewArtifactWriter;
+    toolCallId: string;
+    runId: string;
+  },
 ): () => void {
   let activeActivityKey: string | undefined;
 
@@ -678,6 +1163,22 @@ function subscribeToReviewerSessionEvents(
     if (!event || typeof event !== 'object') return;
 
     const eventRecord = event as Record<string, unknown>;
+    const artifactEvent = buildReviewerArtifactEvent(
+      eventRecord,
+      attempt,
+      maxAttempts,
+    );
+    if (artifactEvent && artifactContext) {
+      artifactContext.writer.appendBestEffort({
+        ...buildReviewArtifactEntryBase(
+          artifactContext.toolCallId,
+          artifactContext.runId,
+        ),
+        entryType: 'reviewer-event',
+        event: artifactEvent,
+      });
+    }
+
     switch (eventRecord.type) {
       case 'turn_start': {
         const turnIndex =
@@ -2304,6 +2805,10 @@ function createReviewerTools(
                 pathSpec
                   ? 'narrow further or inspect files directly with read_file'
                   : 'call git_diff with path to narrow the diff',
+                {
+                  maxBytes: MAX_DIFF_BYTES,
+                  maxLines: MAX_DIFF_LINES,
+                },
               ),
             },
           ],
@@ -2574,7 +3079,12 @@ async function runReviewerSession(
   thinkingLevel: ReturnType<ExtensionAPI['getThinkingLevel']>,
   signal?: AbortSignal,
   progress?: ReturnType<typeof createProgressReporter>,
-): Promise<ReviewResult> {
+  artifactContext?: {
+    writer: ReviewArtifactWriter;
+    toolCallId: string;
+    runId: string;
+  },
+): Promise<ReviewerSessionResult> {
   const reviewState: {
     value?: ReviewResult;
     fullDiffInspected: boolean;
@@ -2624,6 +3134,12 @@ async function runReviewerSession(
     }),
   });
 
+  const fallbackModel = describeModel(model);
+  let reviewerMessages: unknown[] = [];
+  let reviewerUsage = createEmptyReviewUsage(fallbackModel);
+  let completedReview: ReviewResult | undefined;
+  let thrownError: unknown;
+
   try {
     const maxAttempts = MAX_REPAIR_ATTEMPTS + 1;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -2637,6 +3153,7 @@ async function runReviewerSession(
             progress,
             attempt,
             maxAttempts,
+            artifactContext,
           )
         : undefined;
       progress?.startHeartbeat('Reviewer analyzing the diff…', {
@@ -2667,7 +3184,8 @@ async function runReviewerSession(
             reviewStatus: reviewState.value.status,
           },
         );
-        return reviewState.value;
+        completedReview = reviewState.value;
+        break;
       }
 
       if (attempt < maxAttempts) {
@@ -2681,13 +3199,33 @@ async function runReviewerSession(
         );
       }
     }
+
+    if (!completedReview) {
+      thrownError = new Error(
+        `polish_solution_review did not receive a valid structured review after ${MAX_REPAIR_ATTEMPTS + 1} attempts.`,
+      );
+    }
+  } catch (error) {
+    thrownError = error;
   } finally {
+    reviewerMessages = cloneJsonValue(session.messages);
+    reviewerUsage = buildReviewerUsage(reviewerMessages, fallbackModel);
     session.dispose();
   }
 
-  throw new Error(
-    `polish_solution_review did not receive a valid structured review after ${MAX_REPAIR_ATTEMPTS + 1} attempts.`,
-  );
+  if (completedReview) {
+    return {
+      review: completedReview,
+      usage: reviewerUsage,
+      reviewerMessages,
+    };
+  }
+
+  const reviewerError =
+    thrownError instanceof Error ? thrownError : new Error(String(thrownError));
+  (reviewerError as ReviewerSessionError).reviewerUsage = reviewerUsage;
+  (reviewerError as ReviewerSessionError).reviewerMessages = reviewerMessages;
+  throw reviewerError;
 }
 
 export default function polishSolution(pi: ExtensionAPI): void {
@@ -2705,14 +3243,54 @@ export default function polishSolution(pi: ExtensionAPI): void {
     ],
     parameters: REVIEW_TOOL_PARAMS,
     async execute(
-      _toolCallId,
+      toolCallId,
       params: Static<typeof REVIEW_TOOL_PARAMS>,
       signal,
       onUpdate,
       ctx,
     ) {
-      const progress = createProgressReporter(onUpdate, ctx);
+      const startedAtMs = Date.now();
+      const currentCwd = ctx.cwd ?? process.cwd();
+      const thinkingLevel = pi.getThinkingLevel();
+      const runId = randomUUID();
+      const requestedBaseRef = normalizeBaseRef(params.baseRef);
+      const artifactWriter = await createReviewArtifactWriter({
+        toolCallId,
+        runId,
+        cwd: currentCwd,
+        requestedBaseRef,
+        thinkingLevel,
+        model: describeModel(ctx.model),
+      });
+      const progress = createProgressReporter(onUpdate, ctx, {
+        writer: artifactWriter,
+        toolCallId,
+        runId,
+      });
       let scope: ReviewScope | undefined;
+      let selectedModel: NonNullable<ExtensionContext['model']> | undefined;
+      let review: ReviewResult | undefined;
+      let reviewerMessages: unknown[] = [];
+      let toolResult: ReviewToolResult | undefined;
+      let artifactRef = artifactWriter.ref;
+      let finalError: unknown;
+      let artifactWarning = artifactWriter.getWarning();
+      let reviewMeta = buildReviewMeta(
+        startedAtMs,
+        startedAtMs,
+        createEmptyReviewUsage(describeModel(ctx.model)),
+      );
+
+      if (artifactRef) {
+        onUpdate?.({
+          content: [],
+          details: {
+            phase: 'artifact-created',
+            toolCallId,
+            artifact: artifactRef,
+          },
+        });
+      }
 
       try {
         progress.update(
@@ -2724,17 +3302,21 @@ export default function polishSolution(pi: ExtensionAPI): void {
           {notify: true},
         );
 
-        const currentCwd = ctx.cwd ?? process.cwd();
         scope = await buildReviewScope(
           currentCwd,
           params.baseRef,
           signal,
           progress,
         );
+        artifactWriter.appendBestEffort({
+          ...buildReviewArtifactEntryBase(toolCallId, runId),
+          entryType: 'scope',
+          scope: buildReviewScopeRecord(scope),
+        });
 
         const availableModels = ctx.modelRegistry.getAvailable();
-        const model = ctx.model ?? availableModels[0];
-        if (!model) {
+        selectedModel = ctx.model ?? availableModels[0];
+        if (!selectedModel) {
           throw new Error(
             'polish_solution_review could not find an active model to run the reviewer.',
           );
@@ -2748,43 +3330,168 @@ export default function polishSolution(pi: ExtensionAPI): void {
           changedFiles: scope.changedFiles.length,
         });
 
-        const review = await runReviewerSession(
+        const reviewerSession = await runReviewerSession(
           scope,
-          model,
+          selectedModel,
           ctx.modelRegistry,
-          pi.getThinkingLevel(),
+          thinkingLevel,
           signal,
           progress,
+          {
+            writer: artifactWriter,
+            toolCallId,
+            runId,
+          },
         );
+        review = reviewerSession.review;
+        reviewerMessages = reviewerSession.reviewerMessages;
+        reviewMeta = buildReviewMeta(
+          startedAtMs,
+          Date.now(),
+          reviewerSession.usage,
+        );
+        toolResult = buildReviewToolResult(review, reviewMeta);
 
         progress.update(
-          `✅ polish_solution_review finished: ${review.status}.`,
+          `✅ polish_solution_review finished: ${review.status} (${reviewMeta.elapsed} · ${formatUsageSummary(reviewMeta.usage)}).`,
           {
             phase: 'complete',
             reviewStatus: review.status,
             findings: review.findings.length,
+            elapsedMs: reviewMeta.elapsedMs,
+            usage: reviewMeta.usage,
           },
         );
-
-        return {
-          content: [{type: 'text', text: JSON.stringify(review)}],
-          details: review,
-        };
       } catch (error) {
+        finalError = error;
+        const diagnostics = getReviewerSessionDiagnostics(error);
+        reviewerMessages = diagnostics?.reviewerMessages ?? reviewerMessages;
+        reviewMeta = buildReviewMeta(
+          startedAtMs,
+          Date.now(),
+          diagnostics?.usage ??
+            createEmptyReviewUsage(
+              describeModel(selectedModel) ?? describeModel(ctx.model),
+            ),
+        );
         const message = error instanceof Error ? error.message : String(error);
         progress.update(`❌ polish_solution_review failed: ${message}`, {
           phase: 'error',
           isError: true,
+          elapsedMs: reviewMeta.elapsedMs,
+          usage: reviewMeta.usage,
         });
-        throw error;
-      } finally {
-        if (scope?.snapshotTempDir) {
-          await rm(scope.snapshotTempDir, {recursive: true, force: true}).catch(
-            () => {},
-          );
-        }
-        progress.clear();
       }
+
+      const artifactRecord: ReviewRunRecord = {
+        version: 1,
+        toolName: 'polish_solution_review',
+        toolCallId,
+        runId,
+        createdAt: reviewMeta.completedAt,
+        cwd: currentCwd,
+        requestedBaseRef,
+        model:
+          reviewMeta.usage.model ??
+          describeModel(selectedModel) ??
+          describeModel(ctx.model),
+        thinkingLevel,
+        status: finalError ? 'error' : 'success',
+        meta: reviewMeta,
+        review,
+        error: finalError ? buildErrorRecord(finalError) : undefined,
+        scope: scope ? buildReviewScopeRecord(scope) : undefined,
+        reviewerMessages:
+          reviewerMessages.length > 0 ? reviewerMessages : undefined,
+      };
+
+      await artifactWriter.append({
+        ...buildReviewArtifactEntryBase(toolCallId, runId),
+        entryType: 'run-finished',
+        status: artifactRecord.status,
+        record: artifactRecord,
+      });
+      await artifactWriter.flush();
+      artifactRef = artifactWriter.ref;
+      artifactWarning = artifactWriter.getWarning();
+
+      if (artifactRef) {
+        pi.appendEntry('polish-solution-review-run', {
+          toolCallId,
+          runId,
+          artifactId: artifactRef.id,
+          artifactPath: artifactRef.path,
+          artifactFormat: 'jsonl',
+          createdAt: artifactRecord.createdAt,
+          status: artifactRecord.status,
+          reviewStatus: review?.status,
+          repoRoot: scope?.repoRoot ?? currentCwd,
+          branch: scope?.branch,
+          baseRef: scope?.baseRef ?? requestedBaseRef,
+          elapsedMs: reviewMeta.elapsedMs,
+          totalTokens: reviewMeta.usage.totalTokens,
+        });
+        onUpdate?.({
+          content: [],
+          details: {
+            phase: 'artifact-finalized',
+            toolCallId,
+            artifact: artifactRef,
+            status: artifactRecord.status,
+          },
+        });
+      }
+
+      if (artifactWarning) {
+        progress.update(
+          `⚠️ polish_solution_review artifact warning: ${artifactWarning}`,
+          {
+            phase: 'artifact-error',
+            isError: true,
+          },
+          {includeContent: false},
+        );
+      }
+
+      if (scope?.snapshotTempDir) {
+        await rm(scope.snapshotTempDir, {recursive: true, force: true}).catch(
+          () => {},
+        );
+      }
+      progress.clear();
+
+      if (finalError) {
+        throw finalError;
+      }
+
+      if (!toolResult) {
+        throw new Error(
+          'polish_solution_review completed without producing a structured review result.',
+        );
+      }
+
+      return {
+        content: [{type: 'text', text: JSON.stringify(toolResult)}],
+        details: {
+          ...toolResult,
+          toolCallId,
+          artifact: artifactRef,
+          artifactFormat: artifactRef ? 'jsonl' : undefined,
+          artifactWarning,
+          scope: scope
+            ? {
+                repoRoot: scope.repoRoot,
+                branch: scope.branch,
+                baseRef: scope.baseRef,
+                mergeBase: scope.mergeBase,
+                diffBytes: scope.diffBytes,
+                diffLines: scope.diffLines,
+                changedFiles: scope.changedFiles,
+                untrackedFiles: scope.untrackedFiles,
+              }
+            : undefined,
+        },
+      };
     },
   });
 }
