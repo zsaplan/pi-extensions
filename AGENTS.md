@@ -1,7 +1,7 @@
 # AGENTS.md
 
 - Run repo-wide validation commands from the repository root: `/Users/zach/zsaplan/pi-extensions`.
-- The root `npm run lint` and `npm run typecheck` scripts are onboarded for `polish-solution` and `response-review`.
+- The root `npm run lint` and `npm run typecheck` scripts are onboarded for `discord-notify`, `polish-solution`, and `response-review`.
 - The root `npm run knip` script and the response-review browser-artifact checks inside `npm run verify` remain scoped to `response-review`.
 - `response-review/web/app.ts` is the tracked source of truth; `response-review/web/app.js` is a generated runtime artifact and should not be edited by hand.
 - The extension runtime rebuilds `response-review/web/app.js` on demand if it is missing or stale.

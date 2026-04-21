@@ -1,0 +1,32 @@
+{
+  "name": "@zsaplan/pi-discord-notify",
+  "version": "0.1.0",
+  "description": "Pi extension that sends one-way Discord webhook notifications when pi finishes a turn or prompt.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zsaplan/pi-extensions.git",
+    "directory": "discord-notify"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "discord",
+    "webhook",
+    "notification"
+  ],
+  "files": [
+    "src",
+    "README.md",
+    "package.json"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*"
+  }
+}
