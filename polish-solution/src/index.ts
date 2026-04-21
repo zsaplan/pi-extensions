@@ -3203,6 +3203,13 @@ async function runReviewerSession(
     step: 'session-create',
     repoRoot: scope.repoRoot,
   });
+  const reviewerTools = createReviewerTools(scope, reviewState);
+  const reviewerToolNames = reviewerTools.map(tool => tool.name);
+  // createAgentSession's runtime interprets `tools` as a tool-name allowlist,
+  // even though the published type surface is still lagging behind that API.
+  const reviewerToolAllowlist = reviewerToolNames as unknown as NonNullable<
+    Parameters<typeof createAgentSession>[0]
+  >['tools'];
   const {session} = await createAgentSession({
     cwd: scope.repoRoot,
     agentDir: getAgentDir(),
@@ -3211,8 +3218,8 @@ async function runReviewerSession(
     // Keep the isolated reviewer at low reasoning effort; higher settings
     // make it more likely to roleplay tool syntax instead of invoking tools.
     thinkingLevel: DEFAULT_THINKING_LEVEL,
-    tools: [],
-    customTools: createReviewerTools(scope, reviewState),
+    tools: reviewerToolAllowlist,
+    customTools: reviewerTools,
     resourceLoader,
     sessionManager: SessionManager.inMemory(),
     settingsManager: SettingsManager.inMemory({
@@ -3240,6 +3247,12 @@ async function runReviewerSession(
     | undefined;
 
   try {
+    if (reviewerToolAccess.configuredToolNames.length === 0) {
+      throw new Error(
+        `Reviewer session has no configured tools. Expected reviewer tools: ${reviewerToolNames.join(', ')}.`,
+      );
+    }
+
     const maxAttempts = MAX_REPAIR_ATTEMPTS + 1;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       const prompt =
