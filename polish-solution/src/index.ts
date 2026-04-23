@@ -13,7 +13,6 @@ import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {StringDecoder} from 'node:string_decoder';
 import {fileURLToPath} from 'node:url';
-import {StringEnum} from '@mariozechner/pi-ai';
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
@@ -243,12 +242,18 @@ const REVIEW_TOOL_PARAMS = Type.Object({
   ),
 });
 
-const REVIEW_STATUS_ENUM = StringEnum(['needs-attention', 'approve'] as const, {
-  description: 'Review status.',
-});
-const REVIEW_CONFIDENCE_ENUM = StringEnum(['low', 'medium', 'high'] as const, {
-  description: 'Finding confidence.',
-});
+const REVIEW_STATUS_ENUM = Type.Union(
+  [Type.Literal('needs-attention'), Type.Literal('approve')],
+  {
+    description: 'Review status.',
+  },
+);
+const REVIEW_CONFIDENCE_ENUM = Type.Union(
+  [Type.Literal('low'), Type.Literal('medium'), Type.Literal('high')],
+  {
+    description: 'Finding confidence.',
+  },
+);
 
 const REVIEW_FINDING_SCHEMA = Type.Object({
   title: Type.String({description: 'Short finding title.'}),
