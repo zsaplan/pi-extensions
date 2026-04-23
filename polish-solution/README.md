@@ -62,6 +62,15 @@ pi -e .
 pi install .
 ```
 
+## Local validation
+
+```bash
+npm run verify --workspace polish-solution
+cd polish-solution && npm run verify
+```
+
+Package-local `verify` runs GTS lint, TypeScript, and deterministic unit tests for review-scope/path safety helpers.
+
 Then either:
 
 - ask pi to use the `polish-solution` skill, or
