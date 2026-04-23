@@ -42,6 +42,7 @@ The tool returns a concise text summary plus structured details containing:
 ## Command
 
 - `/rainman` — show KB root and session status
+- `/rainman test` — run a Rainman lookup smoke test against a synthetic question
 
 ## TUI
 

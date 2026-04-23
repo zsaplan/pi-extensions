@@ -100,6 +100,22 @@ type RuntimeState = {
   lastStatus: string | null;
 };
 
+type SubmittedResultState = {
+  value?: VerificationResult;
+  wait: Promise<VerificationResult>;
+  resolve: (value: VerificationResult) => void;
+};
+
+type PromptAttemptResult =
+  | { kind: "prompt-complete" }
+  | { kind: "prompt-error"; error: unknown }
+  | { kind: "submitted" };
+
+type LookupToolAccessRecord = {
+  activeToolNames: string[];
+  configuredToolNames: string[];
+};
+
 type ToolErrorDetails = Record<string, unknown> | undefined;
 
 type ToolCallError = Error & {
@@ -162,7 +178,9 @@ const DEFAULT_FIND_LIMIT = 20;
 const DEFAULT_GREP_LIMIT = 20;
 const RAINMAN_THINKING_LEVEL = "low" as const;
 const MAX_REPAIR_ATTEMPTS = 1;
-const MAX_AGENT_EXECUTION_MS = 20_000;
+const MAX_AGENT_EXECUTION_MS = 45_000;
+const RAINMAN_SELF_TEST_QUESTION =
+  "__rainman_self_test__ Return insufficient_evidence unless a lint-clean knowledge file literally answers this exact string.";
 const LOOKUP_DIRECTIVE_PATTERNS = [
   /\brainman\b/,
   /\braincatcher\b/,
@@ -222,19 +240,30 @@ const LOOKUP_POLICY_APPEND = `Rainman lookup policy:
 - Skip rainman-first lookup for live-state, very recent change, or current-incident questions.`;
 
 const SYSTEM_PROMPT = `You are a correctness-first knowledge lookup agent.
-Rainman is a knowledge cache of stable, previously-derived project understanding captured in Raincatcher markdown files.
-Knowledge files use the strict canonical Rain fact format.
+
+Available tools:
+- find: Find markdown files under the knowledge root by filename or path fragment. Navigation only, not evidence.
+- grep: Search markdown files under the knowledge root for matching text. Navigation only, not evidence.
+- read: Read a lint-clean structured fact file under the knowledge root and return line-numbered content plus parsed fact summaries.
+- submit_result: Submit the final structured response. This is the only valid completion path.
+
+Guidelines:
+- Rainman is a knowledge cache of stable, previously-derived project understanding captured in Raincatcher markdown files.
+- Answer only from lint-clean markdown files inside the configured knowledge root.
+- Use find and grep only for navigation.
+- Only read output counts as evidence.
+- The read tool returns raw line-numbered content plus parsed structured fact summaries for the requested range.
+- Every populated field in data must have one or more exact citations.
+- If the knowledge base cannot safely answer, return status insufficient_evidence so the caller can continue with normal investigation.
+- If relevant knowledge files conflict, return status conflict so the caller can investigate further.
+- Use only the tools listed above.
+- The only valid completion path is submit_result.
+- If submit_result succeeds, stop immediately and do not add extra text.
+- Prefer the smallest valid payload.
+
+Canonical Rain fact syntax reference:
 ${STRUCTURED_FACT_SYNTAX_GUIDANCE}
-You answer only from lint-clean markdown files inside the configured knowledge root.
-Use find and grep only for navigation.
-Only read output counts as evidence.
-The read tool returns raw line-numbered content plus parsed structured fact summaries for the requested range.
-Every populated field in data must have one or more exact citations.
-If the knowledge base cannot safely answer, return status insufficient_evidence so the caller can continue with normal investigation.
-If relevant knowledge files conflict, return status conflict so the caller can investigate further.
-The only valid completion path is submit_result.
-If submit_result succeeds, stop immediately and do not add extra text.
-Prefer the smallest valid payload.
+
 Use these response shapes:
 - answered: data = {"answer":"..."}, citations = [{"path":"/data/answer", ...}], missingInformation = [], warnings = []
 - insufficient_evidence: data = {}, citations = [], missingInformation = ["..."] if helpful, warnings = []
@@ -655,6 +684,97 @@ function toToolErrorMessage(error: unknown): string {
   });
 }
 
+function createSubmittedResultState(): SubmittedResultState {
+  let resolveWait = (_value: VerificationResult) => {};
+  const wait = new Promise<VerificationResult>((resolve) => {
+    resolveWait = resolve;
+  });
+
+  const state: SubmittedResultState = {
+    wait,
+    resolve(value) {
+      if (state.value) return;
+      state.value = value;
+      resolveWait(value);
+    },
+  };
+
+  return state;
+}
+
+function getRegisteredToolNames(tools: unknown): string[] {
+  if (!Array.isArray(tools)) return [];
+
+  return [...new Set(tools.flatMap((tool) => {
+    return tool && typeof tool === "object" && typeof (tool as { name?: unknown }).name === "string"
+      ? [(tool as { name: string }).name]
+      : [];
+  }))].sort((left, right) => left.localeCompare(right));
+}
+
+function buildLookupToolAccessRecord(session: any): LookupToolAccessRecord {
+  return {
+    activeToolNames: getRegisteredToolNames(session?.state?.tools),
+    configuredToolNames: typeof session?.getAllTools === "function"
+      ? getRegisteredToolNames(session.getAllTools())
+      : [],
+  };
+}
+
+function getSessionMessages(session: any): unknown[] {
+  return Array.isArray(session?.messages) ? session.messages : [];
+}
+
+function getMissingToolNames(expectedToolNames: string[], availableToolNames: string[]): string[] {
+  return expectedToolNames.filter((toolName) => !availableToolNames.includes(toolName));
+}
+
+function getAssistantTextParts(messages: unknown[]): string[] {
+  const texts: string[] = [];
+
+  for (const message of messages) {
+    if (!message || typeof message !== "object") continue;
+
+    const messageRecord = message as Record<string, unknown>;
+    if (messageRecord.role !== "assistant") continue;
+
+    const content = messageRecord.content;
+    if (!Array.isArray(content)) continue;
+
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue;
+
+      const partRecord = part as Record<string, unknown>;
+      if (partRecord.type !== "text" || typeof partRecord.text !== "string") continue;
+      texts.push(partRecord.text);
+    }
+  }
+
+  return texts;
+}
+
+function getLookupPseudoToolCallToolNames(messages: unknown[]): string[] | undefined {
+  const toolNames = new Set<string>();
+
+  for (const text of getAssistantTextParts(messages)) {
+    for (const line of normalizeNewlines(text).split("\n")) {
+      const match = /^to=([A-Za-z0-9_]+)/.exec(line.trim());
+      if (!match) continue;
+      toolNames.add(match[1]);
+    }
+  }
+
+  return toolNames.size > 0 ? [...toolNames].sort((left, right) => left.localeCompare(right)) : undefined;
+}
+
+function createLookupPseudoToolCallError(toolNames: string[]): Error {
+  return new Error(
+    "Rainman lookup emitted pseudo tool-call text " +
+      `(${toolNames.join(", ")}) instead of invoking tools. ` +
+      "This usually means the isolated lookup agent lost its tool scaffolding.",
+  );
+}
+
 function formatReadResult(result: ReadOutput): string {
   const linesSection = result.content || "(no content in requested range)";
   const structuredFactsSection = result.structuredFacts.length > 0
@@ -769,7 +889,7 @@ function formatVerificationResult(result: VerificationResult): string {
 function createCustomTools(
   kbRoot: string,
   modelName: string,
-  submittedResult: { value?: VerificationResult },
+  submittedResultState: SubmittedResultState,
   fileIndex: FactFileIndex,
 ): ToolDefinition[] {
   return [
@@ -849,13 +969,13 @@ function createCustomTools(
       execute: async (_toolCallId, params: Static<typeof submitResultSchema>) => {
         try {
           const validated = validateResult(params as SubmitResultInput, { kbRoot, model: modelName, fileIndex });
-          submittedResult.value = {
+          submittedResultState.resolve({
             ...validated,
             warnings: [...new Set([...validated.warnings, ...fileIndex.warnings])],
-          };
+          });
           return {
             content: [{ type: "text", text: "submit_result accepted. Stop now." }],
-            details: submittedResult.value,
+            details: submittedResultState.value,
           };
         } catch (error) {
           throw new Error(toToolErrorMessage(error));
@@ -865,12 +985,22 @@ function createCustomTools(
   ];
 }
 
-async function promptWithTimeout(
-  operation: Promise<void>,
+function isRainmanSelfTestPass(result: VerificationResult): boolean {
+  return (
+    result.status === "insufficient_evidence" &&
+    Object.keys(result.data).length === 0 &&
+    result.citations.length === 0
+  );
+}
+
+async function promptWithTimeout<T>(
+  operation: Promise<T>,
   session: Awaited<ReturnType<typeof createAgentSession>>["session"],
   timeoutMs: number,
-): Promise<void> {
+  signal?: AbortSignal,
+): Promise<T> {
   let timeoutId: NodeJS.Timeout | undefined;
+  let abortListener: (() => void) | undefined;
 
   const timeoutPromise = new Promise<never>((_resolve, reject) => {
     timeoutId = setTimeout(async () => {
@@ -883,17 +1013,49 @@ async function promptWithTimeout(
     }, timeoutMs);
   });
 
+  const abortPromise = signal
+    ? new Promise<never>((_resolve, reject) => {
+      abortListener = () => {
+        void session.abort().catch(() => {
+          // ignore abort failure
+        });
+        reject(new Error("Operation aborted"));
+      };
+
+      if (signal.aborted) {
+        abortListener();
+        return;
+      }
+
+      signal.addEventListener("abort", abortListener, { once: true });
+    })
+    : undefined;
+
   try {
-    await Promise.race([operation, timeoutPromise]);
+    return await Promise.race(
+      [operation, timeoutPromise].concat(abortPromise ? [abortPromise] : []),
+    );
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
+    if (signal && abortListener) {
+      signal.removeEventListener("abort", abortListener);
+    }
   }
 }
 
-async function runVerification(question: string, kbRoot: string, model: any, modelRegistry: any, thinkingLevel: any) {
-  const submittedResult: { value?: VerificationResult } = {};
+async function runVerification(
+  question: string,
+  kbRoot: string,
+  model: any,
+  modelRegistry: any,
+  thinkingLevel: any,
+  signal?: AbortSignal,
+) {
+  const submittedResultState = createSubmittedResultState();
   const modelName = `${model.provider}/${model.id}`;
   const fileIndex = buildFactFileIndex(kbRoot);
+  const lookupTools = createCustomTools(kbRoot, modelName, submittedResultState, fileIndex);
+  const lookupToolNames = lookupTools.map((tool) => tool.name);
   const resourceLoader = new DefaultResourceLoader({
     cwd: kbRoot,
     agentDir: getAgentDir(),
@@ -907,28 +1069,119 @@ async function runVerification(question: string, kbRoot: string, model: any, mod
   });
   await resourceLoader.reload();
 
-  const { session } = await createAgentSession({
-    cwd: kbRoot,
-    agentDir: getAgentDir(),
-    model,
-    thinkingLevel,
-    modelRegistry,
-    tools: [],
-    customTools: createCustomTools(kbRoot, modelName, submittedResult, fileIndex),
-    resourceLoader,
-    sessionManager: SessionManager.inMemory(),
-    settingsManager: SettingsManager.inMemory({
-      compaction: { enabled: false },
-      retry: { enabled: true, maxRetries: MAX_REPAIR_ATTEMPTS },
-    }),
-  });
+  const createLookupSessionWithTools = async (
+    tools: NonNullable<Parameters<typeof createAgentSession>[0]>["tools"],
+  ) => {
+    const { session } = await createAgentSession({
+      cwd: kbRoot,
+      agentDir: getAgentDir(),
+      model,
+      // Keep the isolated lookup agent at low reasoning effort; higher
+      // settings make it more likely to roleplay tool syntax.
+      thinkingLevel,
+      modelRegistry,
+      tools,
+      customTools: lookupTools,
+      resourceLoader,
+      sessionManager: SessionManager.inMemory(),
+      settingsManager: SettingsManager.inMemory({
+        compaction: { enabled: false },
+        retry: { enabled: true, maxRetries: MAX_REPAIR_ATTEMPTS },
+      }),
+    });
+
+    return {
+      session,
+      lookupToolAccess: buildLookupToolAccessRecord(session),
+    };
+  };
+
+  // Prefer the runtime allowlist shape, but fall back to the older
+  // customTools-only path when the expected tools do not register.
+  const lookupToolAllowlist = lookupToolNames as unknown as NonNullable<
+    Parameters<typeof createAgentSession>[0]
+  >["tools"];
+  let { session, lookupToolAccess } = await createLookupSessionWithTools(
+    lookupToolAllowlist,
+  );
+  let toolActivationSource: "active" | "configured" = "active";
 
   try {
+    const missingConfiguredToolNames = getMissingToolNames(
+      lookupToolNames,
+      lookupToolAccess.configuredToolNames,
+    );
+    if (missingConfiguredToolNames.length > 0) {
+      session.dispose();
+      ({ session, lookupToolAccess } = await createLookupSessionWithTools([]));
+      toolActivationSource = "configured";
+    }
+
     const maxAttempts = MAX_REPAIR_ATTEMPTS + 1;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       const prompt = attempt === 1 ? buildPrompt(question, fileIndex) : buildRepairPrompt(question, attempt - 1);
-      await promptWithTimeout(session.prompt(prompt), session, MAX_AGENT_EXECUTION_MS);
-      if (submittedResult.value) return submittedResult.value;
+      const messageCountBeforePrompt = getSessionMessages(session).length;
+      // Return as soon as submit_result validates instead of waiting for a trailing assistant turn.
+      const promptOutcome = session.prompt(prompt)
+        .then<PromptAttemptResult>(() => ({ kind: "prompt-complete" }))
+        .catch<PromptAttemptResult>((error: unknown) => ({ kind: "prompt-error", error }));
+      const submittedOutcome = submittedResultState.wait.then<PromptAttemptResult>(() => ({ kind: "submitted" }));
+
+      let outcome: PromptAttemptResult;
+      try {
+        outcome = await promptWithTimeout(
+          Promise.race([promptOutcome, submittedOutcome]),
+          session,
+          MAX_AGENT_EXECUTION_MS,
+          signal,
+        );
+      } catch (error) {
+        if (submittedResultState.value) return submittedResultState.value;
+        throw error;
+      }
+
+      if (outcome.kind === "submitted") {
+        await session.abort().catch(() => {
+          // ignore abort failure after accepted result
+        });
+        return submittedResultState.value!;
+      }
+
+      if (outcome.kind === "prompt-error") {
+        if (submittedResultState.value) return submittedResultState.value;
+        throw outcome.error;
+      }
+
+      if (submittedResultState.value) return submittedResultState.value;
+
+      lookupToolAccess = buildLookupToolAccessRecord(session);
+      const activatedToolNames = toolActivationSource === "active"
+        ? lookupToolAccess.activeToolNames
+        : lookupToolAccess.configuredToolNames;
+      const missingActiveToolNames = getMissingToolNames(
+        lookupToolNames,
+        activatedToolNames,
+      );
+      const sessionMessages = getSessionMessages(session);
+      const pseudoToolCallToolNames = getLookupPseudoToolCallToolNames(
+        sessionMessages.slice(messageCountBeforePrompt),
+      );
+
+      if (
+        missingActiveToolNames.length > 0 &&
+        (pseudoToolCallToolNames || attempt === maxAttempts)
+      ) {
+        throw new Error(
+          "Rainman lookup session did not activate the expected tools after prompting. " +
+            `Missing ${toolActivationSource} tools: ${missingActiveToolNames.join(", ")}. ` +
+            `Active tools: ${lookupToolAccess.activeToolNames.join(", ") || "(none)"}. ` +
+            `Configured tools: ${lookupToolAccess.configuredToolNames.join(", ") || "(none)"}.`,
+        );
+      }
+
+      if (pseudoToolCallToolNames) {
+        throw createLookupPseudoToolCallError(pseudoToolCallToolNames);
+      }
     }
   } finally {
     session.dispose();
@@ -945,6 +1198,35 @@ async function runVerification(question: string, kbRoot: string, model: any, mod
       kbRoot,
     },
   } satisfies VerificationResult;
+}
+
+async function executeLookupQuestion(
+  question: string,
+  signal: AbortSignal | undefined,
+  ctx: any,
+): Promise<VerificationResult> {
+  const trimmedQuestion = question.trim();
+  if (!trimmedQuestion) {
+    throw new Error("question must not be empty");
+  }
+
+  const kbRoot = getKbRoot();
+  ensureKbReady(kbRoot);
+
+  const availableModels = ctx.modelRegistry.getAvailable();
+  const model = ctx.model ?? availableModels[0];
+  if (!model) {
+    throw new Error("No configured model is available for rainman_lookup.");
+  }
+
+  return await runVerification(
+    trimmedQuestion,
+    kbRoot,
+    model,
+    ctx.modelRegistry,
+    RAINMAN_THINKING_LEVEL,
+    signal,
+  );
 }
 
 export default function rainman(pi: ExtensionAPI): void {
@@ -1043,26 +1325,12 @@ export default function rainman(pi: ExtensionAPI): void {
       "Do not use this tool first for live state, very recent changes, or current incidents.",
     ],
     parameters: LOOKUP_TOOL_PARAMS,
-    async execute(_toolCallId, params: Static<typeof LOOKUP_TOOL_PARAMS>, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params: Static<typeof LOOKUP_TOOL_PARAMS>, signal, _onUpdate, ctx) {
       state.activeRuns += 1;
       syncStatus(ctx);
 
       try {
-        const question = params.question.trim();
-        if (!question) {
-          throw new Error("question must not be empty");
-        }
-
-        const kbRoot = getKbRoot();
-        ensureKbReady(kbRoot);
-
-        const availableModels = ctx.modelRegistry.getAvailable();
-        const model = ctx.model ?? availableModels[0];
-        if (!model) {
-          throw new Error("No configured model is available for rainman_lookup.");
-        }
-
-        const result = await runVerification(question, kbRoot, model, ctx.modelRegistry, RAINMAN_THINKING_LEVEL);
+        const result = await executeLookupQuestion(params.question, signal, ctx);
         recordQuery({
           ranAt: Date.now(),
           status: result.status,
@@ -1091,8 +1359,61 @@ export default function rainman(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("rainman", {
-    description: "Show Rainman lookup status",
-    handler: async (_args, ctx) => {
+    description: "Show Rainman lookup status or run a smoke test",
+    handler: async (args, ctx) => {
+      const input = (args || "").trim();
+      const [subcommandRaw] = input.split(/\s+/).filter(Boolean);
+      const subcommand = (subcommandRaw ?? "").toLowerCase();
+
+      if (!ctx.hasUI) return;
+
+      if (subcommand === "test") {
+        state.activeRuns += 1;
+        syncStatus(ctx);
+        ctx.ui.notify("Rainman self-test started.", "info");
+
+        try {
+          const result = await executeLookupQuestion(
+            RAINMAN_SELF_TEST_QUESTION,
+            ctx.signal,
+            ctx,
+          );
+
+          if (!isRainmanSelfTestPass(result)) {
+            ctx.ui.notify(
+              [
+                "Rainman self-test failed: unexpected lookup result.",
+                formatVerificationResult(result),
+                ...result.warnings.map((warning) => `Warning: ${warning}`),
+              ].join("\n"),
+              "warning",
+            );
+            return;
+          }
+
+          ctx.ui.notify(
+            [
+              "Rainman self-test passed.",
+              `Lookup status: ${result.status}`,
+              ...result.warnings.map((warning) => `Warning: ${warning}`),
+            ].join("\n"),
+            "info",
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          ctx.ui.notify(`Rainman self-test failed: ${message}`, "warning");
+        } finally {
+          state.activeRuns = Math.max(0, state.activeRuns - 1);
+          syncStatus(ctx);
+        }
+        return;
+      }
+
+      if (subcommand) {
+        ctx.ui.notify(`Unknown rainman subcommand: ${subcommand}. Supported: test`, "warning");
+        return;
+      }
+
       const kbRoot = getKbRoot();
       const exists = fs.existsSync(kbRoot);
       const fileIndex = exists ? buildFactFileIndex(kbRoot) : null;
@@ -1100,7 +1421,6 @@ export default function rainman(pi: ExtensionAPI): void {
       const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(uses first available model)";
       const lastRun = state.lastRunAt ? new Date(state.lastRunAt).toLocaleString() : "never";
 
-      if (!ctx.hasUI) return;
       ctx.ui.notify(
         [
           `KB root: ${kbRoot}`,
