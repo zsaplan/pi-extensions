@@ -32,7 +32,7 @@ type RaincatcherFilesWrittenEvent = {
   filesWritten?: string[];
 };
 
-type SemanticCleanupMode = "off" | "manual_only" | "all";
+export type SemanticCleanupMode = "off" | "manual_only" | "all";
 
 type DistillRunEntry = {
   ranAt: number;
@@ -131,7 +131,7 @@ function ensureKbReady(kbRoot: string): void {
   }
 }
 
-function tokenizeArgs(input: string): string[] {
+export function tokenizeArgs(input: string): string[] {
   const tokens: string[] = [];
   const regex = /"([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|(\S+)/g;
 
@@ -143,7 +143,19 @@ function tokenizeArgs(input: string): string[] {
   return tokens;
 }
 
-function parseDistillArgs(input: string): {
+function isDistillOptionToken(token: string | undefined): boolean {
+  return token === "--file"
+    || token === "-f"
+    || token === "--dir"
+    || token === "--directory"
+    || token === "-d"
+    || token === "--no-recursive"
+    || token === "--recursive"
+    || token === "--semantic-cleanup"
+    || token === "--no-semantic-cleanup";
+}
+
+export function parseDistillArgs(input: string): {
   files: string[];
   directories: string[];
   recursive: boolean;
@@ -162,7 +174,7 @@ function parseDistillArgs(input: string): {
     const next = tokens[index + 1];
 
     if (token === "--file" || token === "-f") {
-      if (!next) {
+      if (!next || isDistillOptionToken(next)) {
         warnings.push("Missing path after --file");
         continue;
       }
@@ -172,7 +184,7 @@ function parseDistillArgs(input: string): {
     }
 
     if (token === "--dir" || token === "--directory" || token === "-d") {
-      if (!next) {
+      if (!next || isDistillOptionToken(next)) {
         warnings.push("Missing path after --dir");
         continue;
       }
@@ -232,7 +244,7 @@ function extractMessageText(message: AssistantMessage): string {
     .trim();
 }
 
-function parseDecision(text: string): DuplicateGroupDecision {
+export function parseDuplicateGroupDecision(text: string): DuplicateGroupDecision {
   const cleaned = text
     .trim()
     .replace(/^```(?:json)?/i, "")
@@ -350,7 +362,7 @@ function isSemanticCleanupMode(value: unknown): value is SemanticCleanupMode {
   return value === "off" || value === "manual_only" || value === "all";
 }
 
-function getConfiguredSemanticCleanupMode(): { mode: SemanticCleanupMode; warning?: string } {
+export function getConfiguredSemanticCleanupMode(): { mode: SemanticCleanupMode; warning?: string } {
   const raw = (process.env[SEMANTIC_CLEANUP_MODE_ENV_VAR] ?? DEFAULT_SEMANTIC_CLEANUP_MODE).trim().toLowerCase();
   if (raw.length === 0) {
     return { mode: DEFAULT_SEMANTIC_CLEANUP_MODE };
@@ -366,7 +378,7 @@ function getConfiguredSemanticCleanupMode(): { mode: SemanticCleanupMode; warnin
   };
 }
 
-function isSemanticCleanupEnabled(
+export function isSemanticCleanupEnabled(
   mode: SemanticCleanupMode,
   source: "auto" | "manual",
   override: boolean | null | undefined,
@@ -376,6 +388,13 @@ function isSemanticCleanupEnabled(
   if (mode === "off") return false;
   if (mode === "all") return true;
   return source === "manual";
+}
+
+export function extractRaincatcherFilesWritten(event: unknown): string[] {
+  const raincatcherEvent = event as RaincatcherFilesWrittenEvent | undefined;
+  return Array.isArray(raincatcherEvent?.filesWritten)
+    ? raincatcherEvent.filesWritten.filter((file): file is string => typeof file === "string")
+    : [];
 }
 
 function formatSemanticCleanupMode(mode: SemanticCleanupMode): string {
@@ -434,7 +453,7 @@ async function adjudicateGroup(
     },
   );
 
-  return parseDecision(extractMessageText(response));
+  return parseDuplicateGroupDecision(extractMessageText(response));
 }
 
 async function proposeSemanticCleanupForFile(
@@ -846,10 +865,7 @@ export default function raindistiller(pi: ExtensionAPI): void {
 
   pi.events.on("raincatcher:files-written", (event) => {
     if (!state.autoEnabled) return;
-    const raincatcherEvent = event as RaincatcherFilesWrittenEvent | undefined;
-    const files = Array.isArray(raincatcherEvent?.filesWritten)
-      ? raincatcherEvent.filesWritten.filter((file): file is string => typeof file === "string")
-      : [];
+    const files = extractRaincatcherFilesWritten(event);
     if (files.length === 0) return;
     queueFiles(files);
     void drainAutoQueue();
