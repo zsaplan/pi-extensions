@@ -23,9 +23,9 @@ import {
   splitIntoLines,
   toRootRelativePath,
   type FactLintIssue,
-} from "../../rain-core/src/index.ts";
+} from "@zsaplan/rain-core";
 
-type Citation = {
+export type Citation = {
   path: string;
   file: string;
   startLine: number;
@@ -33,7 +33,7 @@ type Citation = {
   quote: string;
 };
 
-type VerificationResult = {
+export type VerificationResult = {
   status: "answered" | "insufficient_evidence" | "conflict";
   data: Record<string, unknown>;
   citations: Citation[];
@@ -270,7 +270,7 @@ Use these response shapes:
 - conflict: data = {"conflicts":["...","..."]}, citations = [{"path":"/data/conflicts/0", ...}], missingInformation = [], warnings = []
 For citations, quote must exactly match the cited file lines.`;
 
-class ToolInputError extends Error {
+export class ToolInputError extends Error {
   readonly code: string;
   readonly details?: ToolErrorDetails;
 
@@ -282,7 +282,7 @@ class ToolInputError extends Error {
   }
 }
 
-class ResultValidationError extends Error {
+export class ResultValidationError extends Error {
   readonly code: string;
   readonly details?: ToolErrorDetails;
 
@@ -358,7 +358,11 @@ function ensureKbReady(kbRoot: string): void {
   }
 }
 
-function ensureKnowledgeMarkdownPath(filePath: string): void {
+export function ensureKnowledgeMarkdownPath(filePath: string): void {
+  if (filePath.split(/[\\/]+/).includes("..")) {
+    throw new ToolInputError("PATH_ESCAPE", `Path traversal is not allowed: ${filePath}`, { filePath });
+  }
+
   try {
     ensureMarkdownRelativePath(filePath);
   } catch (error) {
@@ -368,7 +372,7 @@ function ensureKnowledgeMarkdownPath(filePath: string): void {
   }
 }
 
-function ensureWithinKbRoot(kbRoot: string, relativePath: string): string {
+export function ensureWithinKbRoot(kbRoot: string, relativePath: string): string {
   try {
     return ensureWithinRoot(kbRoot, relativePath);
   } catch (error) {
@@ -379,7 +383,7 @@ function ensureWithinKbRoot(kbRoot: string, relativePath: string): string {
   }
 }
 
-function toKbRelativePath(kbRoot: string, absolutePath: string): string {
+export function toKbRelativePath(kbRoot: string, absolutePath: string): string {
   try {
     return toRootRelativePath(kbRoot, absolutePath);
   } catch (error) {
@@ -395,7 +399,7 @@ function summarizeFiles(files: string[], max = 5): string {
   return `${files.slice(0, max).join(", ")}, ...`;
 }
 
-function buildFactFileIndex(kbRoot: string): FactFileIndex {
+export function buildFactFileIndex(kbRoot: string): FactFileIndex {
   const lintResult = lintKnowledgeBase(kbRoot);
   const issuesByFile = new Map<string, FactLintIssue[]>();
 
@@ -426,17 +430,18 @@ function buildFactFileIndex(kbRoot: string): FactFileIndex {
   };
 }
 
-function readTool(kbRoot: string, fileIndex: FactFileIndex, input: Static<typeof readParameters>): ReadOutput {
+function assertPositiveInteger(value: number, code: string, label: string): void {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new ToolInputError(code, `${label} must be a positive integer`, { [label]: value });
+  }
+}
+
+export function readTool(kbRoot: string, fileIndex: FactFileIndex, input: Static<typeof readParameters>): ReadOutput {
   const offset = input.offset ?? 1;
   const limit = input.limit ?? DEFAULT_READ_LIMIT;
 
-  if (!Number.isInteger(offset) || offset < 1) {
-    throw new ToolInputError("INVALID_OFFSET", "offset must be a positive integer", { offset });
-  }
-
-  if (!Number.isInteger(limit) || limit < 1) {
-    throw new ToolInputError("INVALID_LIMIT", "limit must be a positive integer", { limit });
-  }
+  assertPositiveInteger(offset, "INVALID_OFFSET", "offset");
+  assertPositiveInteger(limit, "INVALID_LIMIT", "limit");
 
   ensureKnowledgeMarkdownPath(input.filePath);
   if (!fileIndex.validFileSet.has(input.filePath)) {
@@ -476,18 +481,20 @@ function readTool(kbRoot: string, fileIndex: FactFileIndex, input: Static<typeof
   };
 }
 
-function findTool(fileIndex: FactFileIndex, input: Static<typeof findParameters>): string[] {
+export function findTool(fileIndex: FactFileIndex, input: Static<typeof findParameters>): string[] {
   const query = input.query.trim().toLowerCase();
   const limit = input.limit ?? DEFAULT_FIND_LIMIT;
+  assertPositiveInteger(limit, "INVALID_LIMIT", "limit");
 
   return fileIndex.validFiles
     .filter((file) => file.toLowerCase().includes(query))
     .slice(0, limit);
 }
 
-function grepTool(kbRoot: string, fileIndex: FactFileIndex, input: Static<typeof grepParameters>): GrepHit[] {
+export function grepTool(kbRoot: string, fileIndex: FactFileIndex, input: Static<typeof grepParameters>): GrepHit[] {
   const pattern = input.pattern.trim().toLowerCase();
   const limit = input.limit ?? DEFAULT_GREP_LIMIT;
+  assertPositiveInteger(limit, "INVALID_LIMIT", "limit");
   if (!pattern) return [];
 
   const hits: GrepHit[] = [];
@@ -511,7 +518,7 @@ function grepTool(kbRoot: string, fileIndex: FactFileIndex, input: Static<typeof
   return hits;
 }
 
-function readCitationLines(kbRoot: string, relativeFilePath: string, startLine: number, endLine: number): string {
+export function readCitationLines(kbRoot: string, relativeFilePath: string, startLine: number, endLine: number): string {
   ensureKnowledgeMarkdownPath(relativeFilePath);
   const absolutePath = ensureWithinKbRoot(kbRoot, relativeFilePath);
   const content = fs.readFileSync(absolutePath, "utf8");
@@ -529,7 +536,7 @@ function readCitationLines(kbRoot: string, relativeFilePath: string, startLine: 
   return lines.slice(startLine - 1, endLine).join("\n");
 }
 
-function validateCitations(kbRoot: string, citations: Citation[], fileIndex?: FactFileIndex): void {
+export function validateCitations(kbRoot: string, citations: Citation[], fileIndex?: FactFileIndex): void {
   for (const citation of citations) {
     if (!citation.path.startsWith("/data")) {
       throw new ResultValidationError("INVALID_CITATION_PATH", "Citation path must target /data", {
@@ -564,7 +571,7 @@ function validateCitations(kbRoot: string, citations: Citation[], fileIndex?: Fa
   }
 }
 
-function validateFieldCoverage(data: Record<string, unknown>, citations: Citation[]): void {
+export function validateFieldCoverage(data: Record<string, unknown>, citations: Citation[]): void {
   const requiredPointers = collectLeafPointers(data, ["data"]);
   const citedPointers = new Set(citations.map((citation) => citation.path));
 
@@ -595,7 +602,68 @@ function validateFieldCoverage(data: Record<string, unknown>, citations: Citatio
   }
 }
 
-function validateResult(input: SubmitResultInput, context: ValidationContext): VerificationResult {
+function assertStringArray(value: unknown[], fieldName: string): void {
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      throw new ResultValidationError("INVALID_SCHEMA", `${fieldName} entries must be strings`, {
+        fieldName,
+        entry,
+      });
+    }
+  }
+}
+
+function assertOnlyDataKeys(
+  data: Record<string, unknown>,
+  expectedKeys: string[],
+  status: VerificationResult["status"],
+): void {
+  const expectedKeySet = new Set(expectedKeys);
+  const actualKeys = Object.keys(data);
+  const unsupportedKeys = actualKeys.filter((key) => !expectedKeySet.has(key));
+  if (unsupportedKeys.length > 0) {
+    throw new ResultValidationError(
+      "UNSUPPORTED_DATA_FIELD",
+      `${status} results may only populate ${expectedKeys.length > 0 ? expectedKeys.join(", ") : "no data fields"}`,
+      { status, unsupportedKeys },
+    );
+  }
+}
+
+function validateStatusDataShape(status: VerificationResult["status"], data: Record<string, unknown>): void {
+  if (status === "answered") {
+    if (typeof data.answer !== "string") {
+      throw new ResultValidationError("INVALID_SCHEMA", "answered results must populate data.answer", {
+        status,
+      });
+    }
+    assertOnlyDataKeys(data, ["answer"], status);
+    return;
+  }
+
+  if (status === "conflict") {
+    if (!Array.isArray(data.conflicts) || data.conflicts.length === 0) {
+      throw new ResultValidationError("INVALID_SCHEMA", "conflict results must populate data.conflicts", {
+        status,
+      });
+    }
+
+    for (const conflict of data.conflicts) {
+      if (typeof conflict !== "string") {
+        throw new ResultValidationError("INVALID_SCHEMA", "conflict entries must be strings", {
+          status,
+        });
+      }
+    }
+
+    assertOnlyDataKeys(data, ["conflicts"], status);
+    return;
+  }
+
+  assertOnlyDataKeys(data, [], status);
+}
+
+export function validateResult(input: SubmitResultInput, context: ValidationContext): VerificationResult {
   const status = input?.status;
   if (status !== "answered" && status !== "insufficient_evidence" && status !== "conflict") {
     throw new ResultValidationError("INVALID_STATUS", "Unsupported response status", { status });
@@ -621,6 +689,10 @@ function validateResult(input: SubmitResultInput, context: ValidationContext): V
     throw new ResultValidationError("INVALID_SCHEMA", "warnings must be an array");
   }
 
+  assertStringArray(input.missingInformation, "missingInformation");
+  assertStringArray(input.warnings, "warnings");
+  validateStatusDataShape(status, input.data);
+
   for (const citation of input.citations) {
     if (!citation || typeof citation !== "object") {
       throw new ResultValidationError("INVALID_CITATION", "Each citation must be an object", { citation });
@@ -639,28 +711,6 @@ function validateResult(input: SubmitResultInput, context: ValidationContext): V
 
   validateCitations(context.kbRoot, input.citations, context.fileIndex);
   validateFieldCoverage(input.data, input.citations);
-
-  if (status === "answered" && typeof input.data.answer !== "string") {
-    throw new ResultValidationError("INVALID_SCHEMA", "answered results must populate data.answer", {
-      status,
-    });
-  }
-
-  if (status === "conflict") {
-    if (!Array.isArray(input.data.conflicts) || input.data.conflicts.length === 0) {
-      throw new ResultValidationError("INVALID_SCHEMA", "conflict results must populate data.conflicts", {
-        status,
-      });
-    }
-
-    for (const conflict of input.data.conflicts) {
-      if (typeof conflict !== "string") {
-        throw new ResultValidationError("INVALID_SCHEMA", "conflict entries must be strings", {
-          status,
-        });
-      }
-    }
-  }
 
   return {
     status,
@@ -836,7 +886,7 @@ function matchesAnyPattern(text: string, patterns: readonly RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(text));
 }
 
-function shouldNudgeRainmanLookup(prompt: string): boolean {
+export function shouldNudgeRainmanLookup(prompt: string): boolean {
   const normalizedPrompt = prompt.trim().toLowerCase();
   if (!normalizedPrompt) return false;
   if (matchesAnyPattern(normalizedPrompt, LOOKUP_SKIP_PATTERNS)) return false;
@@ -856,7 +906,7 @@ function summarizeCitations(citations: Citation[]): string[] {
   });
 }
 
-function formatVerificationResult(result: VerificationResult): string {
+export function formatVerificationResult(result: VerificationResult): string {
   const lines: string[] = [`status: ${result.status}`];
 
   if (typeof result.data.answer === "string") {
