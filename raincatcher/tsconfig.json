@@ -12,7 +12,8 @@
     "tsBuildInfoFile": "./tmp/tsconfig.tsbuildinfo"
   },
   "include": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "test/**/*.test.ts"
   ],
   "exclude": [
     "tmp/**"

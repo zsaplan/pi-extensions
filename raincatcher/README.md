@@ -12,6 +12,7 @@ A minimal pi extension that watches agent activity and records durable facts to 
 - Writes only canonical structured fact files like `# SUBJECT / TOPIC` with bullets shaped as `- RELATION | OBJECT | key=value`
 - Groups facts into subject/topic files like `BC_SITES__GITOPS.md` and `BRITEAUTH__DEFINITION.md`
 - Deduplicates existing structured bullets per file
+- Serializes per-file writes through Pi's file mutation queue, validates the final markdown, and rewrites the target file with `writeFile`
 - Lints files before writing and skips malformed existing files instead of appending mixed-format content
 - Skips obvious secret-looking values
 - Shows a footer status for session totals like facts/files captured

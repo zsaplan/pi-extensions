@@ -186,6 +186,8 @@ Those entries allow resumed sessions and tree navigation to restore counts and r
 
 Accepted facts are written to KB markdown files under the resolved knowledge root.
 
+Writes are serialized through Pi's per-file mutation queue and rewrite the full target file with `writeFile` after validating the resulting markdown. This is sufficient for the current single-process extension workflow, but it is not a cross-process atomic rename protocol.
+
 ---
 
 ## Secret-handling model
