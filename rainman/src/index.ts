@@ -23,7 +23,7 @@ import {
   splitIntoLines,
   toRootRelativePath,
   type FactLintIssue,
-} from "@zsaplan/rain-core";
+} from "../../rain-core/src/index.ts";
 
 type Citation = {
   path: string;

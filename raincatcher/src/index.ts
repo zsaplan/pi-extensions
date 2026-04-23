@@ -18,7 +18,7 @@ import {
   sanitizeTopic,
   toFactFilename,
   type StructuredFactBullet,
-} from "@zsaplan/rain-core";
+} from "../../rain-core/src/index.ts";
 
 type ToolRecord = {
   toolName: string;

@@ -9,7 +9,7 @@ import {
   lintKnowledgeBaseSemanticCleanup,
   parseStructuredFactBulletText,
   renderStructuredFactBullet,
-} from "@zsaplan/rain-core";
+} from "../../rain-core/src/index.ts";
 import {
   type DistillProgress,
   type DistillProgressStage,

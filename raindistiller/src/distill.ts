@@ -12,7 +12,7 @@ import {
   resolveMarkdownFiles,
   scanDuplicateCandidateGroups,
   type DuplicateCandidateGroup,
-} from "@zsaplan/rain-core";
+} from "../../rain-core/src/index.ts";
 import {
   resolveSemanticCleanupForFiles,
   type SemanticCleanupActionAudit,

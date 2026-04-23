@@ -11,7 +11,7 @@ import {
   renderMarkdown,
   renderStructuredFactLine,
   type FactLintIssue,
-} from "@zsaplan/rain-core";
+} from "../../rain-core/src/index.ts";
 
 export type SemanticCleanupFileAction = {
   lineNumber: number;
