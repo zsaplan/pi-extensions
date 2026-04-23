@@ -20,23 +20,29 @@ import {
   type StructuredFactBullet,
 } from "@zsaplan/rain-core";
 
-type ToolRecord = {
+export type ToolRecord = {
   toolName: string;
   args: unknown;
   result: unknown;
   isError: boolean;
 };
 
-type CandidateFact = {
+export type CandidateFact = {
   subject: string;
   topic: string;
   bullet: StructuredFactBullet;
 };
 
-type RaincatcherCaptureEntry = {
+export type RaincatcherCaptureEntry = {
   capturedAt: number;
   factsWritten: number;
   filesWritten: string[];
+};
+
+export type RaincatcherFilesWrittenEvent = {
+  kbRoot: string;
+  filesWritten: string[];
+  factsWritten: number;
 };
 
 type RuntimeState = {
@@ -135,15 +141,15 @@ function now(): number {
   return Date.now();
 }
 
-function getKbRoot(): string {
+export function getKbRoot(): string {
   return getSharedKbRoot(getAgentDir());
 }
 
-function truncate(text: string, max: number): string {
+export function truncate(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
 }
 
-function redactSecrets(text: string): string {
+export function redactSecrets(text: string): string {
   let next = text;
   for (const pattern of SECRET_PATTERNS) next = next.replace(pattern, "[REDACTED]");
   next = next.replace(
@@ -153,12 +159,12 @@ function redactSecrets(text: string): string {
   return next;
 }
 
-function looksSecretish(text: string): boolean {
+export function looksSecretish(text: string): boolean {
   return SECRET_PATTERNS_NO_GLOBAL.some((pattern) => pattern.test(text))
     || /\b(?:token|secret|password|passwd|api[_ -]?key|private key)\b\s*[:=]\s*\S+/i.test(text);
 }
 
-function extractTextParts(content: unknown): string {
+export function extractTextParts(content: unknown): string {
   if (!Array.isArray(content)) return "";
   return content
     .filter((part): part is { type: string; text?: string } => !!part && typeof part === "object" && "type" in part)
@@ -177,11 +183,11 @@ function stringifyValue(value: unknown): string {
   }
 }
 
-function snippet(value: unknown, max = MAX_SNIPPET_CHARS): string {
+export function snippet(value: unknown, max = MAX_SNIPPET_CHARS): string {
   return truncate(redactSecrets(normalizeWhitespace(stringifyValue(value))), max);
 }
 
-function extractMessageText(message: any): string {
+export function extractMessageText(message: any): string {
   const direct = typeof message?.content === "string"
     ? message.content
     : extractTextParts(message?.content);
@@ -194,14 +200,14 @@ function getRoleLabel(message: any): string {
   return role;
 }
 
-function shouldKeepStructuredFact(fact: string): boolean {
+export function shouldKeepStructuredFact(fact: string): boolean {
   const cleaned = normalizeWhitespace(fact);
   if (cleaned.length < 12 || cleaned.length > 320) return false;
   if (looksSecretish(cleaned)) return false;
   return true;
 }
 
-function parseFacts(raw: string): CandidateFact[] {
+export function parseFacts(raw: string): CandidateFact[] {
   const cleaned = raw
     .trim()
     .replace(/^```(?:json)?/i, "")
@@ -269,7 +275,7 @@ async function ensureParent(path: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
 }
 
-function buildExtractionPrompt(messages: any[], tools: ToolRecord[]): string {
+export function buildExtractionPrompt(messages: any[], tools: ToolRecord[]): string {
   const renderedMessages = messages
     .slice(-MAX_MESSAGES)
     .map((message) => {
@@ -305,7 +311,7 @@ function buildExtractionPrompt(messages: any[], tools: ToolRecord[]): string {
   ].join("\n");
 }
 
-function renderBranchEntry(entry: any): string {
+export function renderBranchEntry(entry: any): string {
   if (entry?.type === "message") {
     const message = entry.message;
     if (message?.role === "bashExecution") {
@@ -331,7 +337,7 @@ function renderBranchEntry(entry: any): string {
   return "";
 }
 
-function buildHarvestPrompt(branchEntries: any[]): string {
+export function buildHarvestPrompt(branchEntries: any[]): string {
   const rendered = branchEntries
     .map((entry) => renderBranchEntry(entry))
     .filter(Boolean)
@@ -359,7 +365,12 @@ async function resolveModel(ctx: any): Promise<{ model: any; apiKey?: string; he
   };
 }
 
-async function appendFactsToDisk(facts: CandidateFact[]): Promise<{ filesWritten: string[]; factsWritten: number }> {
+export type FactWriteResult = {
+  filesWritten: string[];
+  factsWritten: number;
+};
+
+export async function appendFactsToDisk(facts: CandidateFact[]): Promise<FactWriteResult> {
   if (facts.length === 0) return { filesWritten: [], factsWritten: 0 };
 
   const kbRoot = getKbRoot();
@@ -428,6 +439,14 @@ async function appendFactsToDisk(facts: CandidateFact[]): Promise<{ filesWritten
   return { filesWritten, factsWritten };
 }
 
+export function buildFilesWrittenEvent(writeResult: FactWriteResult, kbRoot = getKbRoot()): RaincatcherFilesWrittenEvent {
+  return {
+    kbRoot,
+    filesWritten: [...writeResult.filesWritten],
+    factsWritten: writeResult.factsWritten,
+  };
+}
+
 export default function raincatcher(pi: ExtensionAPI): void {
   const state: RuntimeState = {
     enabled: true,
@@ -484,16 +503,12 @@ export default function raincatcher(pi: ExtensionAPI): void {
     ctx.ui.setStatus("raincatcher", `${icon}${counts}${delta}${suffix}`);
   }
 
-  function emitCaptureFiles(writeResult: { filesWritten: string[]; factsWritten: number }): void {
+  function emitCaptureFiles(writeResult: FactWriteResult): void {
     if (writeResult.filesWritten.length === 0) return;
-    pi.events.emit("raincatcher:files-written", {
-      kbRoot: getKbRoot(),
-      filesWritten: writeResult.filesWritten,
-      factsWritten: writeResult.factsWritten,
-    });
+    pi.events.emit("raincatcher:files-written", buildFilesWrittenEvent(writeResult));
   }
 
-  function recordCapture(piApi: ExtensionAPI, capturedAt: number, writeResult: { filesWritten: string[]; factsWritten: number }): void {
+  function recordCapture(piApi: ExtensionAPI, capturedAt: number, writeResult: FactWriteResult): void {
     state.lastRunAt = capturedAt;
     state.lastFilesWritten = writeResult.filesWritten;
     state.lastFactsWritten = writeResult.factsWritten;
@@ -509,7 +524,7 @@ export default function raincatcher(pi: ExtensionAPI): void {
     emitCaptureFiles(writeResult);
   }
 
-  function notifyCaptureSummary(ctx: any, writeResult: { filesWritten: string[]; factsWritten: number }): void {
+  function notifyCaptureSummary(ctx: any, writeResult: FactWriteResult): void {
     if (!ctx?.hasUI) return;
     ctx.ui.notify(
       `Raincatcher extracted ${writeResult.factsWritten} facts and edited ${writeResult.filesWritten.length} KB files`,
