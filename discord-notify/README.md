@@ -52,3 +52,13 @@ For quick testing from a checkout:
 ```bash
 pi -e ./discord-notify
 ```
+
+## Development
+
+From the repo root, run the package-local validation contract with:
+
+```bash
+npm run verify --workspace discord-notify
+```
+
+The package-local contract runs lint, typecheck, and unit tests. Webhook send failures are best-effort: they are reported as warnings and must not interrupt normal Pi work.
