@@ -215,7 +215,7 @@ This package does not claim perfect secret detection, but it is designed to stro
 
 That coupling is intentional and fundamental.
 
-Per the repo-level design, this dependency should ultimately be expressed as an explicit package dependency and public API boundary rather than as a repo-relative source import.
+Per the repo-level design, this dependency is expressed as an explicit package dependency and public API boundary. `raincatcher` should continue to consume `rain-core` through that package boundary rather than by reaching into sibling source paths.
 
 ## Coupling to other Rain packages
 

@@ -18,7 +18,7 @@ import {
   sanitizeTopic,
   toFactFilename,
   type StructuredFactBullet,
-} from "../../rain-core/src/index.ts";
+} from "@zsaplan/rain-core";
 
 type ToolRecord = {
   toolName: string;
@@ -564,10 +564,10 @@ export default function raincatcher(pi: ExtensionAPI): void {
       return;
     }
 
-    const messages = Array.isArray(event?.messages) ? event.messages : [];
+    const messages: any[] = Array.isArray(event?.messages) ? event.messages : [];
     const promptTextSize = messages
-      .map((message) => extractMessageText(message).length)
-      .reduce((sum, count) => sum + count, 0);
+      .map((message: any) => extractMessageText(message).length)
+      .reduce((sum: number, count: number) => sum + count, 0);
 
     if (messages.length === 0 && state.promptTools.length === 0) {
       syncStatus(ctx);

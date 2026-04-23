@@ -38,6 +38,6 @@ A pi extension that distills Raincatcher knowledge files using model-reviewed du
 - If both files and directories are supplied, they are appended and deduped
 - `RAINDISTILLER_SEMANTIC_CLEANUP_MODE=off|manual_only|all` controls whether semantic cleanup runs in no runs, manual runs only, or both manual and auto runs
 - The default semantic cleanup rollout mode is `manual_only`
-- When installing from this repo source, prefer `pi install .` at the repo root so shared `rain-core` imports remain available
+- When installing from this repo source, `pi install .` at the repo root remains the simplest whole-repo install path
 - The dedupe core uses token overlap, trigram overlap, light stemming, and edit-distance-style lexical similarity to surface candidate groups
 - The model still decides whether a candidate group is truly duplicate enough to remove or which semantic rewrites are worth attempting; deterministic validation gates decide what is actually applied

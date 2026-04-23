@@ -21,6 +21,18 @@
     "package.json"
   ],
   "scripts": {
-    "test": "node --test test/*.test.ts"
-  }
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.ts",
+    "verify": "npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "gts": "^7.0.0",
+    "typescript": "^5.9.3"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "main": "./src/index.ts",
+  "types": "./src/index.ts"
 }

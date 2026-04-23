@@ -15,12 +15,13 @@
   ],
   "scripts": {
     "lint": "gts lint",
-    "fix": "gts fix && npm run build:response-review-web",
-    "typecheck": "tsc -p discord-notify/tsconfig.json --noEmit && tsc -p polish-solution/tsconfig.json --noEmit && tsc -p response-review/tsconfig.src.json --noEmit && tsc -p response-review/tsconfig.web.json --noEmit",
-    "build:response-review-web": "node response-review/scripts/build-web.mjs",
-    "knip": "knip -c knip.config.ts --include files,dependencies,unlisted,unresolved",
-    "verify": "npm run lint && npm run typecheck && npm run knip && npm run build:response-review-web && node --check response-review/web/app.js",
-    "prepare": "npm run build:response-review-web"
+    "fix": "gts fix && npm run prepare:packages",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "verify:packages": "npm run verify --workspaces --if-present",
+    "prepare:packages": "npm run prepare --workspaces --if-present",
+    "verify": "npm run lint && npm run verify:packages",
+    "prepare": "npm run prepare:packages"
   },
   "files": [
     "discord-notify",
@@ -30,6 +31,7 @@
     "raindistiller",
     "rainman",
     "response-review",
+    "DESIGN.md",
     "README.md",
     "package.json"
   ],
@@ -47,6 +49,7 @@
     ]
   },
   "dependencies": {
+    "@zsaplan/rain-core": "file:./rain-core",
     "glimpseui": "^0.6.0"
   },
   "peerDependencies": {
@@ -60,5 +63,14 @@
     "gts": "^7.0.0",
     "knip": "^5.88.1",
     "typescript": "^5.9.3"
-  }
+  },
+  "workspaces": [
+    "discord-notify",
+    "polish-solution",
+    "rain-core",
+    "raincatcher",
+    "raindistiller",
+    "rainman",
+    "response-review"
+  ]
 }

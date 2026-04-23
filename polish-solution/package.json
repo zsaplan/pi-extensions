@@ -20,6 +20,7 @@
   "files": [
     "src",
     "skills",
+    "DESIGN.md",
     "README.md",
     "package.json"
   ],
@@ -35,5 +36,14 @@
     "@mariozechner/pi-ai": "*",
     "@mariozechner/pi-coding-agent": "*",
     "@sinclair/typebox": "*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "verify": "npm run typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "gts": "^7.0.0",
+    "typescript": "^5.9.3"
   }
 }

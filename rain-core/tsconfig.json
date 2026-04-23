@@ -1,7 +1,6 @@
 {
   "extends": "gts/tsconfig-google.json",
   "compilerOptions": {
-    "rootDir": ".",
     "noEmit": true,
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
@@ -9,10 +8,12 @@
     "lib": ["ES2022"],
     "types": ["node"],
     "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
     "tsBuildInfoFile": "./tmp/tsconfig.tsbuildinfo"
   },
   "include": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "test/**/*.test.ts"
   ],
   "exclude": [
     "tmp/**"
