@@ -11,7 +11,7 @@ import {
   renderMarkdown,
   renderStructuredFactLine,
   type FactLintIssue,
-} from "../../rain-core/src/index.ts";
+} from "@zsaplan/rain-core";
 
 export type SemanticCleanupFileAction = {
   lineNumber: number;
@@ -226,7 +226,10 @@ function buildFileResult(
     .filter((audit): audit is SemanticCleanupActionAudit => audit?.outcome === "accepted");
   const skippedActions = orderedResolutions
     .map((resolution) => resolution.audit)
-    .filter((audit): audit is SemanticCleanupActionAudit => Boolean(audit) && audit.outcome !== "accepted");
+    .filter(
+      (audit): audit is SemanticCleanupActionAudit =>
+        audit !== undefined && audit.outcome !== "accepted",
+    );
 
   return {
     file,

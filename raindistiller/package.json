@@ -17,11 +17,14 @@
   ],
   "files": [
     "src",
+    "DESIGN.md",
     "README.md",
     "package.json"
   ],
   "scripts": {
-    "test": "node --test test/*.test.ts"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.ts",
+    "verify": "npm run typecheck && npm run test"
   },
   "pi": {
     "extensions": [
@@ -29,6 +32,16 @@
     ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*"
+    "@mariozechner/pi-ai": "^0.69.0",
+    "@mariozechner/pi-coding-agent": "^0.69.0",
+    "@mariozechner/pi-tui": "^0.69.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "gts": "^7.0.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@zsaplan/rain-core": "file:../rain-core"
   }
 }

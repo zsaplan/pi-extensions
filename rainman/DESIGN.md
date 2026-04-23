@@ -221,7 +221,7 @@ The KB itself remains the durable source of evidence; the session entries are on
 - structured fact parsing/rendering support
 - path-safety and markdown file helpers
 
-Per the repo-level design, this dependency should ultimately be expressed as an explicit package dependency and public API boundary rather than a repo-relative source import.
+Per the repo-level design, this dependency is expressed as an explicit package dependency and public API boundary. `rainman` should continue to consume `rain-core` through that package boundary rather than by reaching into sibling source paths.
 
 ## Coupling to `raincatcher`
 

@@ -30,6 +30,6 @@ A minimal pi extension that watches agent activity and records durable facts to 
 
 - Raincatcher now honors the shared KB root override env var: `PI_RAINMAN_KB_ROOT`
 - Raincatcher now consumes shared `rain-core` structured fact guidance, parsing, rendering, and linting APIs
-- When installing from this repo source, prefer `pi install .` at the repo root so shared `rain-core` imports remain available
+- When installing from this repo source, `pi install .` at the repo root remains the simplest whole-repo install path
 - This first version is intentionally quiet: no widgets, no custom editor UI, no persistent config beyond the shared env override
 - If no active model or auth is available, it simply does nothing

@@ -1,5 +1,5 @@
 {
-  "extends": "./node_modules/gts/tsconfig-google.json",
+  "extends": "gts/tsconfig-google.json",
   "compilerOptions": {
     "rootDir": ".",
     "noEmit": true
@@ -9,7 +9,7 @@
     "polish-solution/src/**/*.ts",
     "response-review/src/**/*.ts",
     "response-review/web/**/*.ts",
-    "knip.config.ts"
+    "response-review/knip.config.ts"
   ],
   "exclude": [
     "node_modules/**",

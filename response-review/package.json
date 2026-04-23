@@ -20,6 +20,7 @@
     "src",
     "scripts",
     "web",
+    "DESIGN.md",
     "README.md",
     "package.json"
   ],
@@ -29,17 +30,25 @@
     ]
   },
   "scripts": {
+    "typecheck": "tsc -p tsconfig.src.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "build": "npm run build:web",
     "build:web": "node ./scripts/build-web.mjs",
+    "check:artifacts": "node --check web/app.js",
+    "knip": "knip -c knip.config.ts --include files,dependencies,unlisted,unresolved",
+    "verify": "npm run typecheck && npm run knip && npm run build && npm run check:artifacts",
     "prepare": "npm run build:web"
   },
   "dependencies": {
     "glimpseui": "^0.6.0"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*"
+    "@mariozechner/pi-coding-agent": "^0.69.0",
+    "@mariozechner/pi-tui": "^0.69.0"
   },
   "devDependencies": {
+    "@types/node": "^24.12.2",
+    "gts": "^7.0.0",
+    "knip": "^5.88.1",
     "typescript": "^5.9.3"
   }
 }

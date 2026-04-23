@@ -14,6 +14,8 @@ Personal repo-backed source for pi extensions.
 
 Extension packages keep their own `package.json` and `pi` manifest. `rain-core/` is the shared deterministic utility layer; model policy and runtime orchestration stay in the extension packages.
 
+Repo-wide design lives in [`DESIGN.md`](./DESIGN.md). Each extension directory also carries its own package-level `DESIGN.md` describing that package's responsibilities, boundaries, and coupling.
+
 ## Directory layout
 
 ```text
@@ -60,7 +62,7 @@ pi-extensions/
 pi -e .
 
 # or load individual source packages from this repo checkout
-# (these source paths work because the sibling rain-core package is present in the repo)
+# (run `npm install` at the repo root first so local package dependencies are wired up)
 pi -e ./discord-notify
 pi -e ./polish-solution
 pi -e ./raincatcher
@@ -68,34 +70,46 @@ pi -e ./raindistiller
 pi -e ./rainman
 pi -e ./response-review
 
-# install the whole repo-backed package so shared rain-core imports stay intact
+# install the whole repo-backed package
 pi install .
 ```
 
-Note: `response-review/` has a runtime dependency on `glimpseui`, so direct source loading (`pi -e ./response-review`) needs an `npm install` inside that package first. `pi install .` handles package installs for you.
+Note: `response-review/` has a runtime dependency on `glimpseui`, so direct source loading (`pi -e ./response-review`) needs dependencies installed first. Running `npm install` at the repo root is the simplest option; `pi install .` also handles package installs for you.
 
 ## Development workflow
 
-The repo-root lint and typecheck scripts cover `discord-notify`, `polish-solution`, and `response-review`. The repo-root `knip` and response-review browser-artifact checks remain scoped to `response-review`.
+The repo now follows a package-local verification model with root orchestration:
+
+- each package owns its own `npm run verify`
+- the repo root uses npm workspaces to fan out shared commands to those package-local contracts
+- the root `npm run lint` command remains the shared repo-root gts lint surface for the currently onboarded files
+- package-specific checks such as `response-review`'s `knip` run live in the owning package now, not in the root script implementation
 
 Run these from the repository root:
 
 ```bash
+npm install
 npm run lint
-npm run fix
 npm run typecheck
-npm run knip
+npm run test
 npm run verify
+```
+
+Useful targeted commands:
+
+```bash
+npm run verify --workspace response-review
+npm run verify --workspace rainman
 ```
 
 Notes:
 
+- `npm run typecheck` fans out to each workspace package's local `typecheck` script when present.
+- `npm run test` fans out to each workspace package's local `test` script when present.
+- `npm run verify` runs the shared root lint surface, then fans out to each workspace package's local `verify` script.
 - `response-review/web/app.ts` is the tracked source-of-truth browser file.
 - `response-review/web/app.js` is an untracked runtime artifact that is rebuilt on demand if missing or stale.
-- `npm run fix` applies `gts` formatting across the repo-root lint surface and regenerates the untracked `response-review/web/app.js` runtime artifact from `response-review/web/app.ts`.
-- `npm run typecheck` runs semantic TypeScript checks for `discord-notify/src`, `polish-solution/src`, `response-review/src`, and `response-review/web`.
-- `npm run verify` runs linting and semantic typechecking for that onboarded surface, then runs `knip`, rebuilds the generated web script, and checks the generated `response-review/web/app.js` syntax.
-- The other extensions can be onboarded to the same tooling in a later pass.
+- `response-review` owns its own web build, artifact checks, and `knip` validation inside `response-review/package.json`.
 
 ## Source of truth for this initial import
 

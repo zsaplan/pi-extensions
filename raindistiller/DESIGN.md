@@ -236,7 +236,7 @@ The UI should help an operator understand what happened without requiring a sepa
 - duplicate candidate generation
 - semantic warning detection primitives
 
-That dependency is intentional. Per the repo-level design, it should ultimately be expressed as an explicit package dependency and public API boundary rather than a repo-relative source import.
+That dependency is intentional and is expressed as an explicit package dependency and public API boundary. `raindistiller` should continue to consume `rain-core` through that package boundary rather than through sibling source imports.
 
 ## Coupling to `raincatcher`
 

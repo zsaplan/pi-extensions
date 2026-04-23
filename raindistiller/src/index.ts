@@ -9,7 +9,7 @@ import {
   lintKnowledgeBaseSemanticCleanup,
   parseStructuredFactBulletText,
   renderStructuredFactBullet,
-} from "../../rain-core/src/index.ts";
+} from "@zsaplan/rain-core";
 import {
   type DistillProgress,
   type DistillProgressStage,
@@ -221,9 +221,13 @@ function getThinkingLevel(source: "auto" | "manual"): ThinkingLevel {
 function extractMessageText(message: AssistantMessage): string {
   if (typeof message.content === "string") return message.content;
   return message.content
-    .filter((part): part is { type: string; text?: string } => !!part && typeof part === "object" && "type" in part)
-    .filter((part) => part.type === "text" && typeof part.text === "string")
-    .map((part) => part.text ?? "")
+    .flatMap((part): string[] => {
+      if (!part || typeof part !== "object") return [];
+      const candidate = part as { type?: string; text?: string };
+      return candidate.type === "text" && typeof candidate.text === "string"
+        ? [candidate.text]
+        : [];
+    })
     .join("\n")
     .trim();
 }
@@ -840,9 +844,12 @@ export default function raindistiller(pi: ExtensionAPI): void {
     }
   }
 
-  pi.events.on("raincatcher:files-written", (event: RaincatcherFilesWrittenEvent | undefined) => {
+  pi.events.on("raincatcher:files-written", (event) => {
     if (!state.autoEnabled) return;
-    const files = Array.isArray(event?.filesWritten) ? event.filesWritten.filter((file): file is string => typeof file === "string") : [];
+    const raincatcherEvent = event as RaincatcherFilesWrittenEvent | undefined;
+    const files = Array.isArray(raincatcherEvent?.filesWritten)
+      ? raincatcherEvent.filesWritten.filter((file): file is string => typeof file === "string")
+      : [];
     if (files.length === 0) return;
     queueFiles(files);
     void drainAutoQueue();

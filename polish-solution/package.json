@@ -20,6 +20,7 @@
   "files": [
     "src",
     "skills",
+    "DESIGN.md",
     "README.md",
     "package.json"
   ],
@@ -32,8 +33,17 @@
     ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-ai": "*",
-    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-ai": "^0.69.0",
+    "@mariozechner/pi-coding-agent": "^0.69.0",
     "@sinclair/typebox": "*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "verify": "npm run typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "gts": "^7.0.0",
+    "typescript": "^5.9.3"
   }
 }
