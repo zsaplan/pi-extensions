@@ -11,6 +11,7 @@
     "polish-solution/src/**/*.ts",
     "polish-solution/test/**/*.ts",
     "response-review/src/**/*.ts",
+    "response-review/test/**/*.test.ts",
     "response-review/web/**/*.ts",
     "response-review/knip.config.ts"
   ],

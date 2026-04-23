@@ -4,22 +4,25 @@
     "rootDir": ".",
     "noEmit": true,
     "allowJs": true,
+    "allowImportingTsExtensions": true,
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM"],
     "types": ["node"],
-    "skipLibCheck": true,
-    "allowImportingTsExtensions": true
+    "skipLibCheck": true
   },
   "include": [
+    "knip.config.ts",
     "src/**/*.ts",
     "test/**/*.test.ts",
+    "web/**/*.ts",
+    "web/**/*.d.ts",
     "scripts/**/*.d.ts",
     "scripts/**/*.mjs"
   ],
   "exclude": [
-    "web/**",
+    "web/**/*.js",
     "tmp/**"
   ]
 }

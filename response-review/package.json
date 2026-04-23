@@ -30,12 +30,14 @@
     ]
   },
   "scripts": {
+    "lint": "gts lint",
     "typecheck": "tsc -p tsconfig.src.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "test": "node --test test/*.test.ts",
     "build": "npm run build:web",
     "build:web": "node ./scripts/build-web.mjs",
-    "check:artifacts": "node --check web/app.js",
+    "check:artifacts": "node ./scripts/check-artifacts.mjs",
     "knip": "knip -c knip.config.ts --include files,dependencies,unlisted,unresolved",
-    "verify": "npm run typecheck && npm run knip && npm run build && npm run check:artifacts",
+    "verify": "npm run lint && npm run typecheck && npm run test && npm run knip && npm run build && npm run check:artifacts",
     "prepare": "npm run build:web"
   },
   "dependencies": {

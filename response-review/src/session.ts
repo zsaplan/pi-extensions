@@ -17,6 +17,19 @@ type ResponseReviewSessionManager = Pick<
   'getCwd' | 'getSessionFile' | 'getSessionId' | 'getSessionName' | 'getBranch'
 >;
 
+interface ResponseReviewSessionListEntry {
+  id: string;
+  path: string;
+  name?: string | null;
+  firstMessage?: string;
+  modified: Date;
+}
+
+interface ResolveSessionPathOptions {
+  listSessions?: () => Promise<ResponseReviewSessionListEntry[]>;
+  pathExists?: (path: string) => Promise<boolean>;
+}
+
 const SESSION_PICK_LIMIT = 200;
 const RESPONSE_PREVIEW_LIMIT = 160;
 const USER_PREVIEW_LIMIT = 120;
@@ -124,7 +137,7 @@ function buildSessionSource(
   };
 }
 
-function collectAssistantResponses(
+export function collectAssistantResponses(
   manager: ResponseReviewSessionManager,
 ): ResponseReviewEntryData[] {
   const branch = manager.getBranch();
@@ -174,9 +187,10 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-async function resolveSessionPath(
+export async function resolveSessionPath(
   rawArg: string,
-  ctx: ExtensionCommandContext,
+  ctx: Pick<ExtensionCommandContext, 'cwd'>,
+  options: ResolveSessionPathOptions = {},
 ): Promise<string | null> {
   const arg = stripWrappingQuotes(rawArg);
   if (arg.length === 0 || arg === 'current') {
@@ -184,11 +198,13 @@ async function resolveSessionPath(
   }
 
   const candidatePath = resolve(ctx.cwd, expandHome(arg));
-  if (await pathExists(candidatePath)) {
+  const pathExistsFn = options.pathExists ?? pathExists;
+  if (await pathExistsFn(candidatePath)) {
     return candidatePath;
   }
 
-  const sessions = (await SessionManager.listAll()).sort(
+  const listSessions = options.listSessions ?? (() => SessionManager.listAll());
+  const sessions = (await listSessions()).sort(
     (a, b) => b.modified.getTime() - a.modified.getTime(),
   );
   const lowered = arg.toLowerCase();

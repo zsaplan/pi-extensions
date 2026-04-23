@@ -5,6 +5,14 @@ import type {
 } from '@mariozechner/pi-coding-agent';
 import {Key, matchesKey, truncateToWidth} from '@mariozechner/pi-tui';
 import {open, type GlimpseWindow} from 'glimpseui';
+import {
+  isCancelPayload,
+  isClipboardReadPayload,
+  isClipboardWritePayload,
+  isRequestPayload,
+  isResponseReviewWindowMessage,
+  isSubmitPayload,
+} from './message.js';
 import {composeResponseReviewPrompt} from './prompt.js';
 import {loadResponseReviewSession} from './session.js';
 import type {
@@ -16,39 +24,8 @@ import type {
   ResponseReviewRequestPayload,
   ResponseReviewSubmitPayload,
   ResponseReviewWindowData,
-  ResponseReviewWindowMessage,
 } from './types.js';
 import {buildResponseReviewHtml} from './ui.js';
-
-function isSubmitPayload(
-  value: ResponseReviewWindowMessage,
-): value is ResponseReviewSubmitPayload {
-  return value.type === 'submit';
-}
-
-function isCancelPayload(
-  value: ResponseReviewWindowMessage,
-): value is ResponseReviewCancelPayload {
-  return value.type === 'cancel';
-}
-
-function isRequestPayload(
-  value: ResponseReviewWindowMessage,
-): value is ResponseReviewRequestPayload {
-  return value.type === 'request-response';
-}
-
-function isClipboardWritePayload(
-  value: ResponseReviewWindowMessage,
-): value is ResponseReviewClipboardWritePayload {
-  return value.type === 'clipboard-write';
-}
-
-function isClipboardReadPayload(
-  value: ResponseReviewWindowMessage,
-): value is ResponseReviewClipboardReadPayload {
-  return value.type === 'clipboard-read';
-}
 
 type WaitingEditorResult = 'escape' | 'window-settled';
 
@@ -157,15 +134,20 @@ export default function (pi: ExtensionAPI) {
   let activeWindow: GlimpseWindow | null = null;
   let activeWaitingUIDismiss: (() => void) | null = null;
 
-  function closeActiveWindow(): void {
-    if (activeWindow === null) return;
-    const windowToClose = activeWindow;
-    activeWindow = null;
+  function closeWindow(windowToClose: GlimpseWindow): void {
+    if (activeWindow === windowToClose) {
+      activeWindow = null;
+    }
     try {
       windowToClose.close();
     } catch {
       // Ignore close errors from already-closed windows.
     }
+  }
+
+  function closeActiveWindow(): void {
+    if (activeWindow === null) return;
+    closeWindow(activeWindow);
   }
 
   function showWaitingUI(ctx: ExtensionCommandContext): {
@@ -251,76 +233,77 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    const loadedSession = await loadResponseReviewSession(rawArgs, ctx);
-    if (loadedSession.responses.length === 0) {
-      ctx.ui.notify(
-        'No assistant responses with visible text were found.',
-        'info',
-      );
-      return;
-    }
-
-    const responseMap = new Map<string, ResponseReviewEntryData>(
-      loadedSession.responses.map(response => [response.id, response]),
-    );
-    const windowData: ResponseReviewWindowData = {
-      session: loadedSession.session,
-      responses: loadedSession.responses.map(response => ({
-        id: response.id,
-        index: response.index,
-        timestamp: response.timestamp,
-        provider: response.provider,
-        model: response.model,
-        preview: response.preview,
-        precedingUserPreview: response.precedingUserPreview,
-        lineCount: response.lineCount,
-        charCount: response.charCount,
-      })),
-    };
-
-    const html = buildResponseReviewHtml(windowData);
-    const window = open(html, {
-      width: 1680,
-      height: 1020,
-      title: 'pi response review',
-    });
-    activeWindow = window;
-
-    const waitingUI = showWaitingUI(ctx);
-
-    const sendWindowMessage = (message: ResponseReviewHostMessage): void => {
-      if (activeWindow !== window) return;
-      const payload = escapeForInlineScript(JSON.stringify(message));
-      window.send(`window.__responseReviewReceive(${payload});`);
-    };
-
-    const sendHostDebug = (
-      message: string,
-      details?: Record<string, unknown>,
-    ): void => {
-      sendWindowMessage({
-        type: 'debug-log',
-        source: 'host',
-        message,
-        details,
-      });
-    };
-
-    ctx.ui.notify('Opened native response review window.', 'info');
+    let window: GlimpseWindow | null = null;
+    let waitingUI: ReturnType<typeof showWaitingUI> | null = null;
 
     try {
+      const loadedSession = await loadResponseReviewSession(rawArgs, ctx);
+      if (loadedSession.responses.length === 0) {
+        ctx.ui.notify(
+          'No assistant responses with visible text were found.',
+          'info',
+        );
+        return;
+      }
+
+      const responseMap = new Map<string, ResponseReviewEntryData>(
+        loadedSession.responses.map(response => [response.id, response]),
+      );
+      const windowData: ResponseReviewWindowData = {
+        session: loadedSession.session,
+        responses: loadedSession.responses.map(response => ({
+          id: response.id,
+          index: response.index,
+          timestamp: response.timestamp,
+          provider: response.provider,
+          model: response.model,
+          preview: response.preview,
+          precedingUserPreview: response.precedingUserPreview,
+          lineCount: response.lineCount,
+          charCount: response.charCount,
+        })),
+      };
+
+      const html = buildResponseReviewHtml(windowData);
+      window = open(html, {
+        width: 1680,
+        height: 1020,
+        title: 'pi response review',
+      });
+      const reviewWindow = window;
+      activeWindow = reviewWindow;
+
+      waitingUI = showWaitingUI(ctx);
+
+      const sendWindowMessage = (message: ResponseReviewHostMessage): void => {
+        if (activeWindow !== reviewWindow) return;
+        const payload = escapeForInlineScript(JSON.stringify(message));
+        reviewWindow.send(`window.__responseReviewReceive(${payload});`);
+      };
+
+      const sendHostDebug = (
+        message: string,
+        details?: Record<string, unknown>,
+      ): void => {
+        sendWindowMessage({
+          type: 'debug-log',
+          source: 'host',
+          message,
+          details,
+        });
+      };
+
+      ctx.ui.notify('Opened native response review window.', 'info');
+
       const terminalMessagePromise = new Promise<
         ResponseReviewSubmitPayload | ResponseReviewCancelPayload | null
       >((resolve, reject) => {
         let settled = false;
 
         const cleanup = (): void => {
-          window.removeListener('message', onMessage);
-          window.removeListener('closed', onClosed);
-          window.removeListener('error', onError);
-          if (activeWindow === window) {
-            activeWindow = null;
-          }
+          reviewWindow.removeListener('message', onMessage);
+          reviewWindow.removeListener('closed', onClosed);
+          reviewWindow.removeListener('error', onError);
         };
 
         const settle = (
@@ -426,21 +409,27 @@ export default function (pi: ExtensionAPI) {
         };
 
         const onMessage = (data: unknown): void => {
-          const message = data as ResponseReviewWindowMessage;
-          if (isRequestPayload(message)) {
-            void handleRequest(message);
+          if (!isResponseReviewWindowMessage(data)) {
+            sendHostDebug('ignored malformed window message', {
+              receivedType: typeof data,
+            });
             return;
           }
-          if (isClipboardWritePayload(message)) {
-            void handleClipboardWrite(message);
+
+          if (isRequestPayload(data)) {
+            void handleRequest(data);
             return;
           }
-          if (isClipboardReadPayload(message)) {
-            void handleClipboardRead(message);
+          if (isClipboardWritePayload(data)) {
+            void handleClipboardWrite(data);
             return;
           }
-          if (isSubmitPayload(message) || isCancelPayload(message)) {
-            settle(message);
+          if (isClipboardReadPayload(data)) {
+            void handleClipboardRead(data);
+            return;
+          }
+          if (isSubmitPayload(data) || isCancelPayload(data)) {
+            settle(data);
           }
         };
 
@@ -455,9 +444,9 @@ export default function (pi: ExtensionAPI) {
           reject(error);
         };
 
-        window.on('message', onMessage);
-        window.on('closed', onClosed);
-        window.on('error', onError);
+        reviewWindow.on('message', onMessage);
+        reviewWindow.on('closed', onClosed);
+        reviewWindow.on('error', onError);
       });
 
       const result = await Promise.race([
@@ -482,7 +471,7 @@ export default function (pi: ExtensionAPI) {
 
       waitingUI.dismiss();
       await waitingUI.promise;
-      closeActiveWindow();
+      closeWindow(reviewWindow);
 
       if (message === null || message.type === 'cancel') {
         ctx.ui.notify('Response review cancelled.', 'info');
@@ -505,8 +494,13 @@ export default function (pi: ExtensionAPI) {
         'info',
       );
     } catch (error) {
+      waitingUI?.dismiss();
       activeWaitingUIDismiss?.();
-      closeActiveWindow();
+      if (window !== null) {
+        closeWindow(window);
+      } else {
+        closeActiveWindow();
+      }
       const message = error instanceof Error ? error.message : String(error);
       ctx.ui.notify(`Response review failed: ${message}`, 'error');
     }
