@@ -5,6 +5,14 @@ import path from "node:path";
 import test from "node:test";
 import { distillKnowledgeFiles } from "../src/distill.ts";
 import {
+  extractRaincatcherFilesWritten,
+  getConfiguredSemanticCleanupMode,
+  isSemanticCleanupEnabled,
+  parseDistillArgs,
+  parseDuplicateGroupDecision,
+  tokenizeArgs,
+} from "../src/index.ts";
+import {
   parseSemanticCleanupProposal,
   resolveSemanticCleanupForFiles,
 } from "../src/semanticCleanup.ts";
@@ -18,6 +26,87 @@ function writeKbFile(kbRoot: string, filePath: string, content: string): void {
   fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
   fs.writeFileSync(absolutePath, content, "utf8");
 }
+
+test("tokenizeArgs preserves quoted paths and parseDistillArgs classifies command targets", () => {
+  assert.deepEqual(tokenizeArgs("--file \"Subject Notes.md\" --dir 'team docs' loose.md workspace"), [
+    "--file",
+    "Subject Notes.md",
+    "--dir",
+    "team docs",
+    "loose.md",
+    "workspace",
+  ]);
+
+  assert.deepEqual(parseDistillArgs("--file \"Subject Notes.md\" --dir 'team docs' --no-recursive --semantic-cleanup loose.md workspace"), {
+    files: ["Subject Notes.md", "loose.md"],
+    directories: ["team docs", "workspace"],
+    recursive: false,
+    semanticCleanupOverride: true,
+    warnings: [],
+  });
+
+  assert.deepEqual(parseDistillArgs(""), {
+    files: [],
+    directories: ["."],
+    recursive: true,
+    semanticCleanupOverride: null,
+    warnings: [],
+  });
+
+  assert.deepEqual(parseDistillArgs("--file --dir").warnings, ["Missing path after --file", "Missing path after --dir"]);
+});
+
+test("semantic cleanup mode environment and overrides gate automatic cleanup conservatively", (t) => {
+  const originalMode = process.env.RAINDISTILLER_SEMANTIC_CLEANUP_MODE;
+  t.after(() => {
+    if (originalMode === undefined) delete process.env.RAINDISTILLER_SEMANTIC_CLEANUP_MODE;
+    else process.env.RAINDISTILLER_SEMANTIC_CLEANUP_MODE = originalMode;
+  });
+
+  process.env.RAINDISTILLER_SEMANTIC_CLEANUP_MODE = "off";
+  assert.deepEqual(getConfiguredSemanticCleanupMode(), { mode: "off" });
+  assert.equal(isSemanticCleanupEnabled("off", "manual", null), false);
+  assert.equal(isSemanticCleanupEnabled("off", "auto", true), true);
+
+  process.env.RAINDISTILLER_SEMANTIC_CLEANUP_MODE = "manual_only";
+  assert.deepEqual(getConfiguredSemanticCleanupMode(), { mode: "manual_only" });
+  assert.equal(isSemanticCleanupEnabled("manual_only", "manual", null), true);
+  assert.equal(isSemanticCleanupEnabled("manual_only", "auto", null), false);
+  assert.equal(isSemanticCleanupEnabled("manual_only", "manual", false), false);
+
+  process.env.RAINDISTILLER_SEMANTIC_CLEANUP_MODE = "all";
+  assert.deepEqual(getConfiguredSemanticCleanupMode(), { mode: "all" });
+  assert.equal(isSemanticCleanupEnabled("all", "auto", null), true);
+
+  process.env.RAINDISTILLER_SEMANTIC_CLEANUP_MODE = "surprise";
+  const configured = getConfiguredSemanticCleanupMode();
+  assert.equal(configured.mode, "manual_only");
+  assert.match(configured.warning ?? "", /Invalid RAINDISTILLER_SEMANTIC_CLEANUP_MODE/);
+});
+
+test("extractRaincatcherFilesWritten ignores empty and malformed event payloads", () => {
+  assert.deepEqual(extractRaincatcherFilesWritten(undefined), []);
+  assert.deepEqual(extractRaincatcherFilesWritten({}), []);
+  assert.deepEqual(extractRaincatcherFilesWritten({ filesWritten: [] }), []);
+  assert.deepEqual(extractRaincatcherFilesWritten({ filesWritten: ["A.md", 42, null, "B.md"] }), ["A.md", "B.md"]);
+});
+
+test("parseDuplicateGroupDecision accepts JSON decisions and rejects malformed responses", () => {
+  assert.deepEqual(parseDuplicateGroupDecision("```json\n{\"action\":\"keep_all\",\"reason\":\"different scope\"}\n```"), {
+    action: "keep_all",
+    reason: "different scope",
+  });
+
+  assert.deepEqual(parseDuplicateGroupDecision("preface {\"action\":\"dedupe\",\"keepOccurrenceId\":\"occ-1\"} trailing"), {
+    action: "dedupe",
+    keepOccurrenceId: "occ-1",
+  });
+
+  assert.throws(() => parseDuplicateGroupDecision("not json"), SyntaxError);
+  assert.throws(() => parseDuplicateGroupDecision("{\"action\":\"merge\"}"), /invalid action/);
+  assert.throws(() => parseDuplicateGroupDecision("{\"action\":\"dedupe\"}"), /without keepOccurrenceId/);
+  assert.throws(() => parseDuplicateGroupDecision("{\"action\":\"keep_all\",\"reason\":5}"), /non-string reason/);
+});
 
 test("parseSemanticCleanupProposal accepts fenced JSON responses", () => {
   const proposal = parseSemanticCleanupProposal([
@@ -92,6 +181,44 @@ test("resolveSemanticCleanupForFiles accepts validated relation rewrites and rec
   assert.equal(fs.readFileSync(fileResult.backupPath!, "utf8"), originalContent);
 });
 
+test("resolveSemanticCleanupForFiles reports skipped actions without creating backups", async (t) => {
+  const kbRoot = makeKbRoot("raindistiller-semantic-skip-");
+  t.after(() => fs.rmSync(kbRoot, { recursive: true, force: true }));
+
+  const filePath = "BRITEAUTH__ARCHITECTURE.md";
+  const originalContent = [
+    "# BRITEAUTH / ARCHITECTURE",
+    "",
+    "- DEFINES | BriteAuth uses Amazon Cognito for sign-up and sign-in",
+    "",
+  ].join("\n");
+  writeKbFile(kbRoot, filePath, originalContent);
+
+  const result = await resolveSemanticCleanupForFiles({
+    kbRoot,
+    files: [filePath],
+    proposeSemanticCleanup: async () => ({
+      file: filePath,
+      actions: [{
+        lineNumber: 3,
+        action: "skip",
+        reason: "Need human confirmation before changing wording.",
+      }],
+    }),
+  });
+
+  assert.deepEqual(result.modifiedFiles, []);
+  assert.equal(result.issuesFound.length, 1);
+  assert.equal(result.issuesResolved.length, 0);
+  assert.equal(result.issuesSkipped.length, 1);
+  assert.equal(result.backupRoot, undefined);
+  assert.equal(result.actionAudit.length, 1);
+  assert.equal(result.actionAudit[0]?.outcome, "skipped");
+  assert.equal(result.actionAudit[0]?.reason, "Need human confirmation before changing wording.");
+  assert.equal(result.fileResults[0]?.backupPath, undefined);
+  assert.equal(fs.readFileSync(path.join(kbRoot, filePath), "utf8"), originalContent);
+});
+
 test("resolveSemanticCleanupForFiles rejects rewrites that do not reduce semantic warnings", async (t) => {
   const kbRoot = makeKbRoot("raindistiller-semantic-reject-");
   t.after(() => fs.rmSync(kbRoot, { recursive: true, force: true }));
@@ -127,6 +254,45 @@ test("resolveSemanticCleanupForFiles rejects rewrites that do not reduce semanti
   assert.equal(result.fileResults[0]?.skippedActions[0]?.outcome, "rejected");
   assert.match(result.warnings[0] ?? "", /did not reduce semantic warnings/i);
   assert.equal(fs.readFileSync(path.join(kbRoot, filePath), "utf8"), originalContent);
+});
+
+test("distillKnowledgeFiles ignores invalid dedupe decisions without modifying files", async (t) => {
+  const kbRoot = makeKbRoot("raindistiller-invalid-dedupe-");
+  t.after(() => fs.rmSync(kbRoot, { recursive: true, force: true }));
+
+  const canonicalContent = [
+    "# CANONICAL / TARGET",
+    "",
+    "- USES | deterministic duplicate fixture",
+    "",
+  ].join("\n");
+  const duplicateContent = [
+    "# DUP / TARGET",
+    "",
+    "- USES | deterministic duplicate fixture",
+    "",
+  ].join("\n");
+  writeKbFile(kbRoot, "CANONICAL__TARGET.md", canonicalContent);
+  writeKbFile(kbRoot, "DUP__TARGET.md", duplicateContent);
+
+  const result = await distillKnowledgeFiles(
+    {
+      kbRoot,
+      files: ["DUP__TARGET.md"],
+    },
+    {
+      adjudicateGroup: async () => ({
+        action: "dedupe",
+        keepOccurrenceId: "missing-occurrence-id",
+        reason: "Malformed model response fixture.",
+      }),
+    },
+  );
+
+  assert.equal(result.duplicatesRemoved, 0);
+  assert.deepEqual(result.modifiedFiles, []);
+  assert.match(result.warnings.join("\n"), /Ignored invalid dedupe decision/);
+  assert.equal(fs.readFileSync(path.join(kbRoot, "DUP__TARGET.md"), "utf8"), duplicateContent);
 });
 
 test("distillKnowledgeFiles re-runs dedupe after semantic cleanup rewrites", async (t) => {

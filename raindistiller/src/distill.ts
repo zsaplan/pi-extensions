@@ -4,6 +4,7 @@ import path from "node:path";
 import { withQueuedFileMutation } from "./fileMutationQueue.ts";
 import {
   extractBulletText,
+  lintFactFileContent,
   lintKnowledgeBase,
   parseFactFileContent,
   parseStructuredFactBulletText,
@@ -12,7 +13,7 @@ import {
   resolveMarkdownFiles,
   scanDuplicateCandidateGroups,
   type DuplicateCandidateGroup,
-} from "../../rain-core/src/index.ts";
+} from "@zsaplan/rain-core";
 import {
   resolveSemanticCleanupForFiles,
   type SemanticCleanupActionAudit,
@@ -102,6 +103,7 @@ type ApplyFileResult = {
   modified: boolean;
   deleted: boolean;
   removedCount: number;
+  warning?: string;
 };
 
 function summarizeFiles(files: string[], max = 5): string {
@@ -177,7 +179,7 @@ function validateDecision(group: DuplicateGroup, decision: DuplicateGroupDecisio
   return decision;
 }
 
-async function applyRemovals(absolutePath: string, lineIndexesToRemove: Set<number>): Promise<ApplyFileResult> {
+async function applyRemovals(relativePath: string, absolutePath: string, lineIndexesToRemove: Set<number>): Promise<ApplyFileResult> {
   return withQueuedFileMutation(absolutePath, async () => {
     if (!fs.existsSync(absolutePath)) {
       return { modified: false, deleted: false, removedCount: 0 };
@@ -223,6 +225,16 @@ async function applyRemovals(absolutePath: string, lineIndexesToRemove: Set<numb
     const nextContent = renderMarkdown(nextLines);
     if (nextContent === current) {
       return { modified: false, deleted: false, removedCount: 0 };
+    }
+
+    const structuralErrors = lintFactFileContent(relativePath, nextContent).issues.filter((issue) => issue.severity === "error");
+    if (structuralErrors.length > 0) {
+      return {
+        modified: false,
+        deleted: false,
+        removedCount: 0,
+        warning: `Skipped dedupe rewrite for ${relativePath}: candidate rewrite introduced ${structuralErrors.length} structural error${structuralErrors.length === 1 ? "" : "s"}.`,
+      };
     }
 
     await writeFile(absolutePath, nextContent, "utf8");
@@ -324,7 +336,8 @@ async function runDuplicatePass(
     if (!lineIndexesToRemove || lineIndexesToRemove.size === 0) continue;
 
     const absolutePath = path.join(kbRoot, filePath);
-    const result = await applyRemovals(absolutePath, lineIndexesToRemove);
+    const result = await applyRemovals(filePath, absolutePath, lineIndexesToRemove);
+    if (result.warning) warnings.push(result.warning);
     if (!result.modified) continue;
 
     duplicatesRemoved += result.removedCount;
