@@ -31,8 +31,10 @@
     "@mariozechner/pi-coding-agent": "^0.69.0"
   },
   "scripts": {
+    "lint": "gts lint",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "verify": "npm run typecheck"
+    "test": "node --test test/*.test.ts",
+    "verify": "npm run lint && npm run typecheck && npm run test"
   },
   "devDependencies": {
     "@types/node": "^24.12.2",
