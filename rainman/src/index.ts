@@ -1,4 +1,7 @@
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
+import { appendFile, mkdir, rm } from "node:fs/promises";
+import path from "node:path";
 import { Type, type Static } from "typebox";
 import {
   DefaultResourceLoader,
@@ -6,7 +9,9 @@ import {
   SettingsManager,
   createAgentSession,
   getAgentDir,
+  type AgentToolUpdateCallback,
   type ExtensionAPI,
+  type ExtensionContext,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
 import {
@@ -33,6 +38,27 @@ export type Citation = {
   quote: string;
 };
 
+export type LookupUsage = {
+  model?: string;
+  turns: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  cost: number;
+};
+
+export type LookupExecutionMeta = {
+  model: string;
+  kbRoot: string;
+  startedAt: string;
+  completedAt: string;
+  elapsedMs: number;
+  elapsed: string;
+  usage: LookupUsage;
+};
+
 export type VerificationResult = {
   status: "answered" | "insufficient_evidence" | "conflict";
   data: Record<string, unknown>;
@@ -43,6 +69,32 @@ export type VerificationResult = {
     model: string;
     kbRoot: string;
   };
+};
+
+export type LookupArtifactRef = {
+  id: string;
+  path: string;
+};
+
+export type LookupDiagnostics = {
+  messages?: unknown[];
+  toolAccess?: LookupToolAccessRecord;
+  usage?: LookupUsage;
+};
+
+export type LookupOutcome = {
+  result: VerificationResult;
+  execution: LookupExecutionMeta;
+  diagnostics?: LookupDiagnostics;
+};
+
+export type LookupToolResult = VerificationResult & {
+  result: VerificationResult;
+  execution: LookupExecutionMeta;
+  diagnostics?: LookupDiagnostics;
+  artifact?: LookupArtifactRef;
+  artifactFormat?: "jsonl";
+  artifactWarning?: string;
 };
 
 type StructuredReadFact = {
@@ -89,15 +141,27 @@ type RainmanQueryEntry = {
   status?: VerificationResult["status"];
   hit: boolean;
   isError: boolean;
+  elapsedMs?: number;
+  totalTokens?: number;
+  warningCount?: number;
+  malformedFileCount?: number;
+  artifactId?: string;
+  artifactPath?: string;
 };
 
 type RuntimeState = {
   activeRuns: number;
+  activeActivities: Map<string, { message: string; spinnerFrame: string | null; updatedAt: number }>;
   sessionQueries: number;
   sessionHits: number;
   sessionErrors: number;
   lastRunAt: number | null;
   lastStatus: string | null;
+  lastElapsedMs: number | null;
+  lastTotalTokens: number | null;
+  lastWarningCount: number | null;
+  lastMalformedFileCount: number | null;
+  lastArtifactPath: string | null;
 };
 
 type SubmittedResultState = {
@@ -111,9 +175,12 @@ type PromptAttemptResult =
   | { kind: "prompt-error"; error: unknown }
   | { kind: "submitted" };
 
-type LookupToolAccessRecord = {
+export type LookupToolAccessRecord = {
   activeToolNames: string[];
   configuredToolNames: string[];
+  systemPromptHasAvailableTools?: boolean;
+  systemPromptHasSubmitResult?: boolean;
+  availableToolsSection?: string;
 };
 
 type ToolErrorDetails = Record<string, unknown> | undefined;
@@ -121,6 +188,84 @@ type ToolErrorDetails = Record<string, unknown> | undefined;
 type ToolCallError = Error & {
   code?: string;
   details?: ToolErrorDetails;
+};
+
+type LookupSessionError = Error & {
+  lookupUsage?: LookupUsage;
+  lookupMessages?: unknown[];
+  lookupToolAccess?: LookupToolAccessRecord;
+};
+
+export type LookupArtifactMode = "off" | "failure" | "always";
+
+type LookupErrorRecord = {
+  name: string;
+  message: string;
+  stack?: string;
+};
+
+type LookupRunRecord = {
+  version: 1;
+  toolName: "rainman_lookup";
+  toolCallId: string;
+  runId: string;
+  createdAt: string;
+  question: string;
+  status: "success" | "error";
+  lookupStatus?: VerificationResult["status"];
+  execution: LookupExecutionMeta;
+  result?: VerificationResult;
+  error?: LookupErrorRecord;
+  diagnostics?: LookupDiagnostics;
+  fileIndex?: {
+    validFiles: number;
+    invalidFiles: number;
+    warnings: string[];
+  };
+};
+
+type LookupArtifactEntryBase = {
+  version: 1;
+  toolName: "rainman_lookup";
+  toolCallId: string;
+  runId: string;
+  timestamp: string;
+};
+
+type LookupArtifactEntry =
+  | (LookupArtifactEntryBase & {
+    entryType: "run-started";
+    question: string;
+    debugMode: LookupArtifactMode;
+  })
+  | (LookupArtifactEntryBase & {
+    entryType: "progress";
+    message: string;
+    details?: unknown;
+  })
+  | (LookupArtifactEntryBase & {
+    entryType: "progress-content";
+    content: string;
+    details?: unknown;
+  })
+  | (LookupArtifactEntryBase & {
+    entryType: "lookup-event";
+    event: unknown;
+  })
+  | (LookupArtifactEntryBase & {
+    entryType: "run-finished";
+    status: LookupRunRecord["status"];
+    record: LookupRunRecord;
+  });
+
+type LookupArtifactWriter = {
+  mode: LookupArtifactMode;
+  ref?: LookupArtifactRef;
+  append(entry: LookupArtifactEntry): Promise<void>;
+  appendBestEffort(entry: LookupArtifactEntry): void;
+  flush(): Promise<void>;
+  discard(): Promise<void>;
+  getWarning(): string | undefined;
 };
 
 const LOOKUP_TOOL_PARAMS = Type.Object({
@@ -173,12 +318,17 @@ const grepParameters = Type.Object({
 });
 
 const QUERY_ENTRY_TYPE = "rainman-query";
+const RUN_ENTRY_TYPE = "rainman-lookup-run";
+const DEBUG_ARTIFACTS_ENV_VAR = "PI_RAINMAN_DEBUG_ARTIFACTS";
 const DEFAULT_READ_LIMIT = 200;
 const DEFAULT_FIND_LIMIT = 20;
 const DEFAULT_GREP_LIMIT = 20;
 const RAINMAN_THINKING_LEVEL = "low" as const;
 const MAX_REPAIR_ATTEMPTS = 1;
 const MAX_AGENT_EXECUTION_MS = 45_000;
+const STATUS_KEY = "rainman";
+const HEARTBEAT_INTERVAL_MS = 2_000;
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const RAINMAN_SELF_TEST_QUESTION =
   "__rainman_self_test__ Return insufficient_evidence unless a lint-clean knowledge file literally answers this exact string.";
 const LOOKUP_DIRECTIVE_PATTERNS = [
@@ -763,12 +913,31 @@ function getRegisteredToolNames(tools: unknown): string[] {
 }
 
 function buildLookupToolAccessRecord(session: any): LookupToolAccessRecord {
+  const systemPrompt = typeof session?.systemPrompt === "string" ? session.systemPrompt : "";
+  const availableToolsSection = extractAvailableToolsSection(systemPrompt);
   return {
     activeToolNames: getRegisteredToolNames(session?.state?.tools),
     configuredToolNames: typeof session?.getAllTools === "function"
       ? getRegisteredToolNames(session.getAllTools())
       : [],
+    systemPromptHasAvailableTools: availableToolsSection !== undefined,
+    systemPromptHasSubmitResult: systemPrompt.includes("submit_result"),
+    availableToolsSection,
   };
+}
+
+function extractAvailableToolsSection(systemPrompt: string): string | undefined {
+  const start = systemPrompt.indexOf("Available tools:");
+  if (start === -1) return undefined;
+
+  const tail = systemPrompt.slice(start);
+  const endMarkers = ["\n\nIn addition to the tools above,", "\n\nGuidelines:"];
+  const end = endMarkers
+    .map((marker) => tail.indexOf(marker))
+    .filter((index) => index !== -1)
+    .sort((left, right) => left - right)[0];
+
+  return (end === undefined ? tail : tail.slice(0, end)).trim();
 }
 
 function getSessionMessages(session: any): unknown[] {
@@ -823,6 +992,191 @@ function createLookupPseudoToolCallError(toolNames: string[]): Error {
       `(${toolNames.join(", ")}) instead of invoking tools. ` +
       "This usually means the isolated lookup agent lost its tool scaffolding.",
   );
+}
+
+function getLookupSessionDiagnostics(error: unknown): LookupDiagnostics | undefined {
+  if (!error || typeof error !== "object") return undefined;
+
+  const errorRecord = error as LookupSessionError;
+  if (
+    errorRecord.lookupUsage === undefined &&
+    errorRecord.lookupMessages === undefined &&
+    errorRecord.lookupToolAccess === undefined
+  ) {
+    return undefined;
+  }
+
+  return {
+    usage: errorRecord.lookupUsage,
+    messages: errorRecord.lookupMessages,
+    toolAccess: errorRecord.lookupToolAccess,
+  };
+}
+
+function attachLookupSessionDiagnostics(
+  error: unknown,
+  session: any,
+  modelName: string,
+  lookupToolAccess: LookupToolAccessRecord,
+): Error {
+  const normalizedError = error instanceof Error ? error : new Error(String(error));
+  const diagnosticError = normalizedError as LookupSessionError;
+  diagnosticError.lookupMessages = getSessionMessages(session);
+  diagnosticError.lookupToolAccess = lookupToolAccess;
+  diagnosticError.lookupUsage = buildLookupUsage(diagnosticError.lookupMessages, modelName);
+  return diagnosticError;
+}
+
+function cloneJsonValue<T>(value: T): T {
+  if (value === undefined) return value;
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function buildErrorRecord(error: unknown): LookupErrorRecord {
+  const normalizedError = error instanceof Error ? error : new Error(String(error));
+  return {
+    name: normalizedError.name,
+    message: normalizedError.message,
+    stack: normalizedError.stack,
+  };
+}
+
+function sanitizeArtifactPathSegment(value: string, fallback: string): string {
+  const sanitized = value
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return sanitized || fallback;
+}
+
+export function getLookupArtifactMode(): LookupArtifactMode {
+  const rawMode = process.env[DEBUG_ARTIFACTS_ENV_VAR]?.trim().toLowerCase();
+  if (!rawMode || rawMode === "failure" || rawMode === "errors" || rawMode === "error") return "failure";
+  if (rawMode === "1" || rawMode === "true" || rawMode === "always" || rawMode === "on") return "always";
+  if (rawMode === "0" || rawMode === "false" || rawMode === "off" || rawMode === "none") return "off";
+  return "failure";
+}
+
+function getLookupArtifactDirectory(): string {
+  return path.join(getAgentDir(), "data", "rainman-lookup");
+}
+
+function buildLookupArtifactEntryBase(toolCallId: string, runId: string): LookupArtifactEntryBase {
+  return {
+    version: 1,
+    toolName: "rainman_lookup",
+    toolCallId,
+    runId,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+async function createLookupArtifactWriter(options: {
+  toolCallId: string;
+  runId: string;
+  question: string;
+  mode: LookupArtifactMode;
+}): Promise<LookupArtifactWriter> {
+  let ref: LookupArtifactRef | undefined;
+  let warning: string | undefined;
+  let writeQueue = Promise.resolve();
+
+  const setWarning = (error: unknown): void => {
+    if (warning) return;
+    warning = error instanceof Error ? error.message : String(error);
+  };
+
+  const enqueueAppend = (entry: LookupArtifactEntry): Promise<void> => {
+    if (!ref) return Promise.resolve();
+
+    const serializedEntry = `${JSON.stringify(cloneJsonValue(entry))}\n`;
+    const nextWrite = writeQueue
+      .then(() => appendFile(ref!.path, serializedEntry, { encoding: "utf8", mode: 0o600 }))
+      .catch((error) => {
+        setWarning(error);
+      });
+    writeQueue = nextWrite;
+    return nextWrite;
+  };
+
+  if (options.mode !== "off") {
+    try {
+      const artifactDirectory = getLookupArtifactDirectory();
+      await mkdir(artifactDirectory, { recursive: true });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const questionSlug = sanitizeArtifactPathSegment(options.question, "lookup");
+      ref = {
+        id: options.runId,
+        path: path.join(artifactDirectory, `${timestamp}_${questionSlug}_${options.runId}.jsonl`),
+      };
+
+      await appendFile(
+        ref.path,
+        `${JSON.stringify({
+          ...buildLookupArtifactEntryBase(options.toolCallId, options.runId),
+          entryType: "run-started",
+          question: options.question,
+          debugMode: options.mode,
+        } satisfies LookupArtifactEntry)}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      );
+    } catch (error) {
+      setWarning(error);
+      ref = undefined;
+    }
+  }
+
+  return {
+    mode: options.mode,
+    ref,
+    append(entry: LookupArtifactEntry): Promise<void> {
+      return enqueueAppend(entry);
+    },
+    appendBestEffort(entry: LookupArtifactEntry): void {
+      void enqueueAppend(entry);
+    },
+    async flush(): Promise<void> {
+      await writeQueue;
+    },
+    async discard(): Promise<void> {
+      await writeQueue;
+      if (!ref) return;
+      await rm(ref.path, { force: true }).catch((error) => {
+        setWarning(error);
+      });
+      ref = undefined;
+    },
+    getWarning(): string | undefined {
+      return warning;
+    },
+  };
+}
+
+function buildLookupArtifactEvent(
+  eventRecord: Record<string, unknown>,
+  attempt: number,
+  maxAttempts: number,
+): unknown | undefined {
+  switch (eventRecord.type) {
+    case "turn_start":
+    case "turn_end":
+    case "tool_execution_start":
+    case "tool_execution_update":
+    case "tool_execution_end":
+    case "auto_retry_start":
+    case "auto_retry_end":
+      return cloneJsonValue({ attempt, maxAttempts, ...eventRecord });
+    case "message_end": {
+      const message = eventRecord.message;
+      if (!message || typeof message !== "object") return undefined;
+      const role = (message as Record<string, unknown>).role;
+      if (role !== "assistant" && role !== "toolResult") return undefined;
+      return cloneJsonValue({ attempt, maxAttempts, ...eventRecord });
+    }
+    default:
+      return undefined;
+  }
 }
 
 function formatReadResult(result: ReadOutput): string {
@@ -1044,6 +1398,527 @@ function isRainmanSelfTestPass(result: VerificationResult): boolean {
   );
 }
 
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatTokenCount(count: number): string {
+  if (count < 1_000) return String(count);
+  if (count < 10_000) return `${(count / 1_000).toFixed(1)}k`;
+  if (count < 1_000_000) return `${Math.round(count / 1_000)}k`;
+  return `${(count / 1_000_000).toFixed(1)}M`;
+}
+
+export function formatUsageSummary(usage: LookupUsage): string {
+  const parts = [
+    `${formatTokenCount(usage.totalTokens)} tokens`,
+    `${usage.turns} turn${usage.turns === 1 ? "" : "s"}`,
+  ];
+  if (usage.input) parts.push(`↑${formatTokenCount(usage.input)}`);
+  if (usage.output) parts.push(`↓${formatTokenCount(usage.output)}`);
+  if (usage.cacheRead) parts.push(`R${formatTokenCount(usage.cacheRead)}`);
+  if (usage.cacheWrite) parts.push(`W${formatTokenCount(usage.cacheWrite)}`);
+  return parts.join(" · ");
+}
+
+function getFiniteNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+export function createEmptyLookupUsage(model?: string): LookupUsage {
+  return {
+    model,
+    turns: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: 0,
+  };
+}
+
+export function buildLookupUsage(messages: unknown[], fallbackModel?: string): LookupUsage {
+  const usage = createEmptyLookupUsage(fallbackModel);
+
+  for (const message of messages) {
+    if (!message || typeof message !== "object") continue;
+
+    const messageRecord = message as Record<string, unknown>;
+    if (messageRecord.role !== "assistant") continue;
+
+    usage.turns += 1;
+
+    if (!usage.model && typeof messageRecord.model === "string") {
+      const provider = typeof messageRecord.provider === "string"
+        ? messageRecord.provider
+        : undefined;
+      usage.model = provider
+        ? `${provider}/${messageRecord.model}`
+        : messageRecord.model;
+    }
+
+    const messageUsage = messageRecord.usage;
+    if (!messageUsage || typeof messageUsage !== "object") continue;
+
+    const usageRecord = messageUsage as Record<string, unknown>;
+    const input = getFiniteNumber(usageRecord.input);
+    const output = getFiniteNumber(usageRecord.output);
+    const cacheRead = getFiniteNumber(usageRecord.cacheRead);
+    const cacheWrite = getFiniteNumber(usageRecord.cacheWrite);
+    const totalTokens = getFiniteNumber(usageRecord.totalTokens);
+    usage.input += input;
+    usage.output += output;
+    usage.cacheRead += cacheRead;
+    usage.cacheWrite += cacheWrite;
+    usage.totalTokens += totalTokens || input + output + cacheRead + cacheWrite;
+
+    const cost = usageRecord.cost;
+    if (cost && typeof cost === "object") {
+      usage.cost += getFiniteNumber((cost as Record<string, unknown>).total);
+    }
+  }
+
+  if (!usage.totalTokens) {
+    usage.totalTokens =
+      usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+  }
+
+  return usage;
+}
+
+function truncateStatusText(value: string, maxLength = 80): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function formatStatusPath(value: string, maxLength = 72): string {
+  const normalized = value.replace(/\\/g, "/").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `…${normalized.slice(-(maxLength - 1))}`;
+}
+
+function getStringArgument(args: unknown, keys: string[]): string | undefined {
+  if (!args || typeof args !== "object") return undefined;
+  const record = args as Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function describeLookupToolActivity(toolName: string, args: unknown): string {
+  switch (toolName) {
+    case "find": {
+      const query = getStringArgument(args, ["query"]);
+      return query
+        ? `Rainman locating candidate fact files for "${truncateStatusText(query, 40)}"…`
+        : "Rainman locating candidate fact files…";
+    }
+    case "grep": {
+      const pattern = getStringArgument(args, ["pattern"]);
+      return pattern
+        ? `Rainman searching fact files for "${truncateStatusText(pattern, 40)}"…`
+        : "Rainman searching fact files…";
+    }
+    case "read": {
+      const filePath = getStringArgument(args, ["filePath"]);
+      return filePath
+        ? `Rainman reading ${formatStatusPath(filePath)}…`
+        : "Rainman reading a fact file…";
+    }
+    case "submit_result":
+      return "Rainman validating and submitting the evidence-backed result…";
+    default:
+      return `Rainman running ${toolName}…`;
+  }
+}
+
+function createLookupProgressReporter(
+  onUpdate: AgentToolUpdateCallback<unknown> | undefined,
+  ctx: ExtensionContext,
+  setActivity: (message: string | null, spinnerFrame?: string | null) => void,
+  artifactContext?: {
+    writer: LookupArtifactWriter;
+    toolCallId: string;
+    runId: string;
+  },
+) {
+  const toolStartedAt = Date.now();
+  let heartbeatId: NodeJS.Timeout | undefined;
+  let spinnerIndex = 0;
+
+  const buildUiMessage = (
+    baseMessage: string,
+    options?: {
+      phaseElapsedMs?: number;
+    },
+  ): string => {
+    const toolElapsedMs = Date.now() - toolStartedAt;
+    const timingParts: string[] = [];
+    if (options?.phaseElapsedMs !== undefined) {
+      timingParts.push(`action ${formatElapsed(options.phaseElapsedMs)}`);
+    }
+    timingParts.push(`total ${formatElapsed(toolElapsedMs)}`);
+    return `${baseMessage} (${timingParts.join(" · ")})`;
+  };
+
+  const emit = (
+    message: string,
+    details?: Record<string, unknown>,
+    options?: {
+      notify?: boolean;
+      includeContent?: boolean;
+      spinnerFrame?: string;
+      phaseElapsedMs?: number;
+    },
+  ): void => {
+    const toolElapsedMs = Date.now() - toolStartedAt;
+    if (options?.includeContent ?? true) {
+      onUpdate?.({
+        content: [{ type: "text", text: message }],
+        details: {
+          phase: "progress",
+          progressMessage: message,
+          toolElapsedMs,
+          ...(details ?? {}),
+        },
+      });
+    }
+
+    if (details?.phase !== "heartbeat" && artifactContext) {
+      artifactContext.writer.appendBestEffort({
+        ...buildLookupArtifactEntryBase(artifactContext.toolCallId, artifactContext.runId),
+        entryType: "progress",
+        message,
+        details: {
+          toolElapsedMs,
+          ...(details ?? {}),
+        },
+      });
+    }
+
+    const uiMessage = buildUiMessage(message, options);
+    setActivity(uiMessage, options?.spinnerFrame);
+    if (options?.notify && ctx.hasUI) {
+      ctx.ui.notify(message, "info");
+    }
+  };
+
+  const stopHeartbeat = (): void => {
+    if (heartbeatId !== undefined) {
+      clearInterval(heartbeatId);
+      heartbeatId = undefined;
+    }
+  };
+
+  const startHeartbeat = (
+    baseMessage: string,
+    details?: Record<string, unknown>,
+  ): void => {
+    stopHeartbeat();
+    const startedAt = Date.now();
+
+    const tick = (): void => {
+      const elapsedMs = Date.now() - startedAt;
+      const frame = SPINNER_FRAMES[spinnerIndex % SPINNER_FRAMES.length];
+      spinnerIndex += 1;
+      emit(
+        baseMessage,
+        {
+          ...(details ?? {}),
+          phase: "heartbeat",
+          baseMessage,
+          elapsedMs,
+        },
+        {
+          includeContent: false,
+          spinnerFrame: frame,
+          phaseElapsedMs: elapsedMs,
+        },
+      );
+    };
+
+    tick();
+    heartbeatId = setInterval(tick, HEARTBEAT_INTERVAL_MS);
+  };
+
+  return {
+    update(
+      message: string,
+      details?: Record<string, unknown>,
+      options?: { notify?: boolean; includeContent?: boolean },
+    ): void {
+      stopHeartbeat();
+      emit(message, details, options);
+    },
+    startHeartbeat,
+    stopHeartbeat,
+    clear(): void {
+      stopHeartbeat();
+      setActivity(null, null);
+    },
+  };
+}
+
+function getTextContentOutput(content: unknown): string | undefined {
+  if (!Array.isArray(content)) return undefined;
+
+  const text = content
+    .flatMap((block) => {
+      if (!block || typeof block !== "object") return [];
+      const blockRecord = block as Record<string, unknown>;
+      return blockRecord.type === "text" && typeof blockRecord.text === "string"
+        ? [blockRecord.text]
+        : [];
+    })
+    .join("\n\n")
+    .trim();
+
+  return text ? normalizeNewlines(text) : undefined;
+}
+
+export function formatActionOutputTail(content: string, maxLines = 12, maxChars = 8 * 1024): string {
+  const normalized = normalizeNewlines(content);
+  const lines = normalized.split("\n");
+  const tailLines = lines.slice(-maxLines);
+  let text = tailLines.join("\n");
+  let suffix: string | undefined;
+
+  if (tailLines.length < lines.length) {
+    const startLine = lines.length - tailLines.length + 1;
+    suffix = `[showing lines ${startLine}-${lines.length} of ${lines.length}]`;
+  }
+
+  if (text.length > maxChars) {
+    text = `…${text.slice(-(maxChars - 1))}`;
+    suffix = suffix
+      ? `${suffix}; truncated to last ${maxChars} chars`
+      : `[truncated to last ${maxChars} chars]`;
+  }
+
+  return suffix ? `${text}\n\n${suffix}` : text;
+}
+
+function indentTextBlock(content: string): string {
+  return content
+    .split("\n")
+    .map((line) => `    ${line}`)
+    .join("\n");
+}
+
+export function buildLookupActionOutput(toolName: string, result: unknown): string | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  const output = getTextContentOutput((result as { content?: unknown }).content);
+  if (!output) return undefined;
+
+  return [
+    `Current action output (${toolName}):`,
+    "",
+    indentTextBlock(formatActionOutputTail(output)),
+  ].join("\n");
+}
+
+function subscribeToLookupSessionEvents(
+  session: Awaited<ReturnType<typeof createAgentSession>>["session"],
+  progress: ReturnType<typeof createLookupProgressReporter>,
+  attempt: number,
+  maxAttempts: number,
+  artifactContext?: {
+    writer: LookupArtifactWriter;
+    toolCallId: string;
+    runId: string;
+  },
+): () => void {
+  let activeActivityKey: string | undefined;
+
+  const startActivity = (
+    key: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): void => {
+    if (activeActivityKey === key) return;
+    activeActivityKey = key;
+    progress.startHeartbeat(message, {
+      phase: "lookup-activity",
+      attempt,
+      maxAttempts,
+      activityKey: key,
+      timeoutMs: MAX_AGENT_EXECUTION_MS,
+      ...(details ?? {}),
+    });
+  };
+
+  const unsubscribe = session.subscribe((event: unknown) => {
+    if (!event || typeof event !== "object") return;
+
+    const eventRecord = event as Record<string, unknown>;
+    const artifactEvent = buildLookupArtifactEvent(eventRecord, attempt, maxAttempts);
+    if (artifactEvent && artifactContext) {
+      artifactContext.writer.appendBestEffort({
+        ...buildLookupArtifactEntryBase(artifactContext.toolCallId, artifactContext.runId),
+        entryType: "lookup-event",
+        event: artifactEvent,
+      });
+    }
+
+    switch (eventRecord.type) {
+      case "turn_start": {
+        const turnIndex = typeof eventRecord.turnIndex === "number"
+          ? eventRecord.turnIndex + 1
+          : undefined;
+        startActivity(
+          `turn:${turnIndex ?? "unknown"}`,
+          turnIndex
+            ? `Rainman analyzing the knowledge base in turn ${turnIndex}…`
+            : "Rainman analyzing the knowledge base…",
+          { turnIndex },
+        );
+        break;
+      }
+      case "tool_execution_start": {
+        const toolName = typeof eventRecord.toolName === "string"
+          ? eventRecord.toolName
+          : "tool";
+        const toolCallId = typeof eventRecord.toolCallId === "string"
+          ? eventRecord.toolCallId
+          : toolName;
+        const activityMessage = describeLookupToolActivity(toolName, eventRecord.args);
+        startActivity(
+          `tool:${toolCallId}`,
+          activityMessage,
+          {
+            toolName,
+            toolCallId,
+          },
+        );
+        break;
+      }
+      case "tool_execution_update": {
+        const toolName = typeof eventRecord.toolName === "string"
+          ? eventRecord.toolName
+          : "tool";
+        const actionOutput = buildLookupActionOutput(
+          toolName,
+          eventRecord.partialResult,
+        );
+        if (actionOutput && artifactContext) {
+          artifactContext.writer.appendBestEffort({
+            ...buildLookupArtifactEntryBase(artifactContext.toolCallId, artifactContext.runId),
+            entryType: "progress-content",
+            content: actionOutput,
+            details: {
+              phase: "lookup-tool-output",
+              attempt,
+              maxAttempts,
+              toolName,
+              isPartial: true,
+            },
+          });
+        }
+        break;
+      }
+      case "message_update": {
+        const assistantEvent = eventRecord.assistantMessageEvent;
+        if (!assistantEvent || typeof assistantEvent !== "object") break;
+
+        const assistantEventRecord = assistantEvent as Record<string, unknown>;
+        if (assistantEventRecord.type === "thinking_delta") {
+          startActivity("thinking", "Rainman reasoning about the knowledge base…");
+          break;
+        }
+
+        if (
+          assistantEventRecord.type === "text_delta" &&
+          typeof assistantEventRecord.delta === "string" &&
+          assistantEventRecord.delta.trim()
+        ) {
+          startActivity("drafting", "Rainman drafting the evidence-backed result…");
+        }
+        break;
+      }
+      case "tool_execution_end": {
+        const toolName = typeof eventRecord.toolName === "string"
+          ? eventRecord.toolName
+          : "tool";
+        const actionOutput = toolName === "submit_result"
+          ? undefined
+          : buildLookupActionOutput(toolName, eventRecord.result);
+        progress.stopHeartbeat();
+        activeActivityKey = undefined;
+
+        if (actionOutput && artifactContext) {
+          artifactContext.writer.appendBestEffort({
+            ...buildLookupArtifactEntryBase(artifactContext.toolCallId, artifactContext.runId),
+            entryType: "progress-content",
+            content: actionOutput,
+            details: {
+              phase: "lookup-tool-output",
+              attempt,
+              maxAttempts,
+              toolName,
+              isError: Boolean(eventRecord.isError),
+            },
+          });
+        }
+
+        if (eventRecord.isError) {
+          progress.update(
+            `Rainman tool ${toolName} failed.`,
+            {
+              phase: "lookup-tool-error",
+              attempt,
+              maxAttempts,
+              toolName,
+              isError: true,
+            },
+            { includeContent: false },
+          );
+          break;
+        }
+
+        if (toolName === "submit_result") {
+          progress.update(
+            "Rainman submitted the evidence-backed result.",
+            {
+              phase: "lookup-submit",
+              attempt,
+              maxAttempts,
+              toolName,
+            },
+            { includeContent: false },
+          );
+        }
+        break;
+      }
+      case "auto_retry_start": {
+        activeActivityKey = undefined;
+        progress.update("Rainman model request auto-retrying…", {
+          phase: "lookup-auto-retry",
+          attempt,
+          maxAttempts,
+        });
+        break;
+      }
+    }
+  });
+
+  return unsubscribe;
+}
+
 async function promptWithTimeout<T>(
   operation: Promise<T>,
   session: Awaited<ReturnType<typeof createAgentSession>>["session"],
@@ -1101,10 +1976,26 @@ async function runVerification(
   modelRegistry: any,
   thinkingLevel: any,
   signal?: AbortSignal,
-) {
+  progress?: ReturnType<typeof createLookupProgressReporter>,
+  artifactContext?: {
+    writer: LookupArtifactWriter;
+    toolCallId: string;
+    runId: string;
+  },
+): Promise<LookupOutcome> {
+  const startedAtMs = Date.now();
   const submittedResultState = createSubmittedResultState();
   const modelName = `${model.provider}/${model.id}`;
   const fileIndex = buildFactFileIndex(kbRoot);
+  progress?.update(
+    `Indexing Rainman knowledge base (${fileIndex.validFiles.length} clean files, ${fileIndex.invalidFiles.length} malformed skipped)…`,
+    {
+      phase: "index-kb",
+      validFiles: fileIndex.validFiles.length,
+      invalidFiles: fileIndex.invalidFiles.length,
+    },
+    { includeContent: false },
+  );
   const lookupTools = createCustomTools(kbRoot, modelName, submittedResultState, fileIndex);
   const lookupToolNames = lookupTools.map((tool) => tool.name);
   const resourceLoader = new DefaultResourceLoader({
@@ -1119,6 +2010,16 @@ async function runVerification(
     appendSystemPromptOverride: () => [],
   });
   await resourceLoader.reload();
+  progress?.update(
+    "Launching isolated Rainman lookup…",
+    {
+      phase: "launch-lookup",
+      model: modelName,
+      thinkingLevel,
+      timeoutMs: MAX_AGENT_EXECUTION_MS,
+    },
+    { includeContent: false },
+  );
 
   const createLookupSession = async () => {
     const { session } = await createAgentSession({
@@ -1148,6 +2049,39 @@ async function runVerification(
   const { session, lookupToolAccess: initialLookupToolAccess } = await createLookupSession();
   let lookupToolAccess = initialLookupToolAccess;
 
+  const buildExecutionMeta = (): LookupExecutionMeta => {
+    const completedAtMs = Date.now();
+    const usage = buildLookupUsage(getSessionMessages(session), modelName);
+    return {
+      model: usage.model ?? modelName,
+      kbRoot,
+      startedAt: new Date(startedAtMs).toISOString(),
+      completedAt: new Date(completedAtMs).toISOString(),
+      elapsedMs: Math.max(0, completedAtMs - startedAtMs),
+      elapsed: formatElapsed(completedAtMs - startedAtMs),
+      usage,
+    };
+  };
+
+  const finalizeResult = (result: VerificationResult): LookupOutcome => {
+    const execution = buildExecutionMeta();
+    return {
+      result: {
+        ...result,
+        meta: {
+          model: result.meta?.model ?? execution.model,
+          kbRoot: result.meta?.kbRoot ?? kbRoot,
+        },
+      },
+      execution,
+      diagnostics: {
+        messages: getSessionMessages(session),
+        toolAccess: lookupToolAccess,
+        usage: execution.usage,
+      },
+    };
+  };
+
   try {
     const missingConfiguredToolNames = getMissingToolNames(
       lookupToolNames,
@@ -1161,8 +2095,28 @@ async function runVerification(
 
     const maxAttempts = MAX_REPAIR_ATTEMPTS + 1;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      if (attempt > 1) {
+        progress?.update(
+          `Repairing Rainman lookup result (attempt ${attempt - 1} of ${MAX_REPAIR_ATTEMPTS})…`,
+          {
+            phase: "repair-attempt",
+            attempt,
+            maxAttempts,
+          },
+        );
+      }
+
       const prompt = attempt === 1 ? buildPrompt(question, fileIndex) : buildRepairPrompt(question, attempt - 1);
       const messageCountBeforePrompt = getSessionMessages(session).length;
+      const unsubscribeLookupEvents = progress
+        ? subscribeToLookupSessionEvents(session, progress, attempt, maxAttempts, artifactContext)
+        : undefined;
+      progress?.startHeartbeat("Rainman searching the knowledge base…", {
+        phase: "lookup-running",
+        attempt,
+        maxAttempts,
+        timeoutMs: MAX_AGENT_EXECUTION_MS,
+      });
       // Return as soon as submit_result validates instead of waiting for a trailing assistant turn.
       const promptOutcome = session.prompt(prompt)
         .then<PromptAttemptResult>(() => ({ kind: "prompt-complete" }))
@@ -1178,23 +2132,29 @@ async function runVerification(
           signal,
         );
       } catch (error) {
-        if (submittedResultState.value) return submittedResultState.value;
+        unsubscribeLookupEvents?.();
+        progress?.stopHeartbeat();
+        if (submittedResultState.value) return finalizeResult(submittedResultState.value);
         throw error;
       }
 
+      unsubscribeLookupEvents?.();
+      progress?.stopHeartbeat();
+
       if (outcome.kind === "submitted") {
+        const result = finalizeResult(submittedResultState.value!);
         await session.abort().catch(() => {
           // ignore abort failure after accepted result
         });
-        return submittedResultState.value!;
+        return result;
       }
 
       if (outcome.kind === "prompt-error") {
-        if (submittedResultState.value) return submittedResultState.value;
+        if (submittedResultState.value) return finalizeResult(submittedResultState.value);
         throw outcome.error;
       }
 
-      if (submittedResultState.value) return submittedResultState.value;
+      if (submittedResultState.value) return finalizeResult(submittedResultState.value);
 
       lookupToolAccess = buildLookupToolAccessRecord(session);
       const missingActiveToolNames = getMissingToolNames(
@@ -1222,11 +2182,13 @@ async function runVerification(
         throw createLookupPseudoToolCallError(pseudoToolCallToolNames);
       }
     }
+  } catch (error) {
+    throw attachLookupSessionDiagnostics(error, session, modelName, lookupToolAccess);
   } finally {
     session.dispose();
   }
 
-  return {
+  return finalizeResult({
     status: "insufficient_evidence",
     data: {},
     citations: [],
@@ -1236,14 +2198,102 @@ async function runVerification(
       model: modelName,
       kbRoot,
     },
-  } satisfies VerificationResult;
+  } satisfies VerificationResult);
+}
+
+function buildLookupToolResult(options: {
+  outcome: LookupOutcome;
+  artifact?: LookupArtifactRef;
+  artifactWarning?: string;
+}): LookupToolResult {
+  return {
+    ...options.outcome.result,
+    result: options.outcome.result,
+    execution: options.outcome.execution,
+    diagnostics: options.outcome.diagnostics,
+    artifact: options.artifact,
+    artifactFormat: options.artifact ? "jsonl" : undefined,
+    artifactWarning: options.artifactWarning,
+  };
+}
+
+function buildLookupRunRecord(options: {
+  toolCallId: string;
+  runId: string;
+  question: string;
+  status: "success" | "error";
+  outcome?: LookupOutcome;
+  execution: LookupExecutionMeta;
+  error?: unknown;
+  diagnostics?: LookupDiagnostics;
+  fileIndex?: FactFileIndex | null;
+}): LookupRunRecord {
+  return {
+    version: 1,
+    toolName: "rainman_lookup",
+    toolCallId: options.toolCallId,
+    runId: options.runId,
+    createdAt: options.execution.completedAt,
+    question: options.question,
+    status: options.status,
+    lookupStatus: options.outcome?.result.status,
+    execution: options.execution,
+    result: options.outcome?.result,
+    error: options.error ? buildErrorRecord(options.error) : undefined,
+    diagnostics: options.diagnostics ?? options.outcome?.diagnostics,
+    fileIndex: options.fileIndex
+      ? {
+        validFiles: options.fileIndex.validFiles.length,
+        invalidFiles: options.fileIndex.invalidFiles.length,
+        warnings: options.fileIndex.warnings,
+      }
+      : undefined,
+  };
+}
+
+function safeBuildFactFileIndex(
+  kbRoot: string,
+  buildIndex: typeof buildFactFileIndex = buildFactFileIndex,
+): FactFileIndex | null {
+  try {
+    if (!fs.existsSync(kbRoot) || !fs.statSync(kbRoot).isDirectory()) return null;
+    return buildIndex(kbRoot);
+  } catch {
+    return null;
+  }
+}
+
+function buildExecutionMetaFromError(options: {
+  startedAtMs: number;
+  error: unknown;
+  fallbackModel: string;
+  kbRoot: string;
+}): LookupExecutionMeta {
+  const completedAtMs = Date.now();
+  const diagnostics = getLookupSessionDiagnostics(options.error);
+  const usage = diagnostics?.usage ?? createEmptyLookupUsage(options.fallbackModel);
+  return {
+    model: usage.model ?? options.fallbackModel,
+    kbRoot: options.kbRoot,
+    startedAt: new Date(options.startedAtMs).toISOString(),
+    completedAt: new Date(completedAtMs).toISOString(),
+    elapsedMs: Math.max(0, completedAtMs - options.startedAtMs),
+    elapsed: formatElapsed(completedAtMs - options.startedAtMs),
+    usage,
+  };
 }
 
 async function executeLookupQuestion(
   question: string,
   signal: AbortSignal | undefined,
   ctx: any,
-): Promise<VerificationResult> {
+  progress?: ReturnType<typeof createLookupProgressReporter>,
+  artifactContext?: {
+    writer: LookupArtifactWriter;
+    toolCallId: string;
+    runId: string;
+  },
+): Promise<LookupOutcome> {
   const trimmedQuestion = question.trim();
   if (!trimmedQuestion) {
     throw new Error("question must not be empty");
@@ -1265,26 +2315,64 @@ async function executeLookupQuestion(
     ctx.modelRegistry,
     RAINMAN_THINKING_LEVEL,
     signal,
+    progress,
+    artifactContext,
   );
 }
 
-export default function rainman(pi: ExtensionAPI): void {
+type RainmanExtensionDeps = {
+  executeLookupQuestion: typeof executeLookupQuestion;
+  createLookupArtifactWriter: typeof createLookupArtifactWriter;
+  getKbRoot: typeof getKbRoot;
+  buildFactFileIndex: typeof buildFactFileIndex;
+  listMarkdownFiles: typeof listMarkdownFiles;
+  getLookupArtifactMode: typeof getLookupArtifactMode;
+  now: () => number;
+};
+
+export function createRainmanExtension(
+  overrides: Partial<RainmanExtensionDeps> = {},
+): (pi: ExtensionAPI) => void {
+  const deps: RainmanExtensionDeps = {
+    executeLookupQuestion,
+    createLookupArtifactWriter,
+    getKbRoot,
+    buildFactFileIndex,
+    listMarkdownFiles,
+    getLookupArtifactMode,
+    now: () => Date.now(),
+    ...overrides,
+  };
+
+  return function rainman(pi: ExtensionAPI): void {
   const state: RuntimeState = {
     activeRuns: 0,
+    activeActivities: new Map(),
     sessionQueries: 0,
     sessionHits: 0,
     sessionErrors: 0,
     lastRunAt: null,
     lastStatus: null,
+    lastElapsedMs: null,
+    lastTotalTokens: null,
+    lastWarningCount: null,
+    lastMalformedFileCount: null,
+    lastArtifactPath: null,
   };
 
   function restoreSessionState(ctx: any): void {
     state.activeRuns = 0;
+    state.activeActivities.clear();
     state.sessionQueries = 0;
     state.sessionHits = 0;
     state.sessionErrors = 0;
     state.lastRunAt = null;
     state.lastStatus = null;
+    state.lastElapsedMs = null;
+    state.lastTotalTokens = null;
+    state.lastWarningCount = null;
+    state.lastMalformedFileCount = null;
+    state.lastArtifactPath = null;
 
     const branchEntries = ctx?.sessionManager?.getBranch?.() ?? [];
     for (const entry of branchEntries) {
@@ -1297,12 +2385,25 @@ export default function rainman(pi: ExtensionAPI): void {
       if (data.isError) state.sessionErrors += 1;
       if (typeof data.ranAt === "number") state.lastRunAt = data.ranAt;
       state.lastStatus = data.isError ? "error" : data.status ?? state.lastStatus;
+      if (typeof data.elapsedMs === "number") state.lastElapsedMs = data.elapsedMs;
+      if (typeof data.totalTokens === "number") state.lastTotalTokens = data.totalTokens;
+      if (typeof data.warningCount === "number") state.lastWarningCount = data.warningCount;
+      if (typeof data.malformedFileCount === "number") state.lastMalformedFileCount = data.malformedFileCount;
+      if (typeof data.artifactPath === "string") state.lastArtifactPath = data.artifactPath;
     }
+  }
+
+  function getDisplayedActivity(): { message: string; spinnerFrame: string | null } | undefined {
+    const activeEntries = [...state.activeActivities.values()]
+      .sort((left, right) => right.updatedAt - left.updatedAt);
+    const latest = activeEntries[0];
+    return latest ? { message: latest.message, spinnerFrame: latest.spinnerFrame } : undefined;
   }
 
   function syncStatus(ctx: any): void {
     if (!ctx?.hasUI) return;
 
+    const displayedActivity = getDisplayedActivity();
     const theme = ctx.ui.theme;
     const icon = state.activeRuns > 0 ? theme.fg("accent", "🌧") : theme.fg("success", "🌧");
     const counts = [
@@ -1310,9 +2411,38 @@ export default function rainman(pi: ExtensionAPI): void {
       theme.fg("dim", ` h:${state.sessionHits}`),
       state.sessionErrors > 0 ? theme.fg("error", ` e:${state.sessionErrors}`) : theme.fg("dim", " e:0"),
     ].join("");
-    const suffix = state.activeRuns > 0 ? theme.fg("dim", " looking up") : "";
+    const activity = state.activeRuns > 0
+      ? theme.fg(
+        "dim",
+        displayedActivity
+          ? ` ${displayedActivity.spinnerFrame ? `${displayedActivity.spinnerFrame} ` : ""}${displayedActivity.message}`
+          : " looking up",
+      )
+      : "";
 
-    ctx.ui.setStatus("rainman", `${icon} ${counts}${suffix}`);
+    ctx.ui.setStatus(STATUS_KEY, `${icon} ${counts}${activity}`);
+    ctx.ui.setWorkingMessage(
+      displayedActivity?.message
+        ?? (state.activeRuns > 0 ? "Rainman lookup in progress" : undefined),
+    );
+  }
+
+  function setActiveActivity(
+    ctx: any,
+    ownerId: string,
+    message: string | null,
+    spinnerFrame: string | null = null,
+  ): void {
+    if (message === null) {
+      state.activeActivities.delete(ownerId);
+    } else {
+      state.activeActivities.set(ownerId, {
+        message,
+        spinnerFrame,
+        updatedAt: Date.now(),
+      });
+    }
+    syncStatus(ctx);
   }
 
   function recordQuery(entry: RainmanQueryEntry): void {
@@ -1321,6 +2451,11 @@ export default function rainman(pi: ExtensionAPI): void {
     if (entry.isError) state.sessionErrors += 1;
     state.lastRunAt = entry.ranAt;
     state.lastStatus = entry.isError ? "error" : entry.status ?? state.lastStatus;
+    state.lastElapsedMs = entry.elapsedMs ?? state.lastElapsedMs;
+    state.lastTotalTokens = entry.totalTokens ?? state.lastTotalTokens;
+    state.lastWarningCount = entry.warningCount ?? state.lastWarningCount;
+    state.lastMalformedFileCount = entry.malformedFileCount ?? state.lastMalformedFileCount;
+    state.lastArtifactPath = entry.artifactPath ?? state.lastArtifactPath;
     pi.appendEntry<RainmanQueryEntry>(QUERY_ENTRY_TYPE, entry);
   }
 
@@ -1336,7 +2471,8 @@ export default function rainman(pi: ExtensionAPI): void {
 
   pi.on("session_shutdown", async (_event, ctx: any) => {
     if (!ctx?.hasUI) return;
-    ctx.ui.setStatus("rainman", undefined);
+    ctx.ui.setStatus(STATUS_KEY, undefined);
+    ctx.ui.setWorkingMessage();
   });
 
   pi.on("before_agent_start", async (event: any) => {
@@ -1364,36 +2500,208 @@ export default function rainman(pi: ExtensionAPI): void {
       "Do not use this tool first for live state, very recent changes, or current incidents.",
     ],
     parameters: LOOKUP_TOOL_PARAMS,
-    async execute(_toolCallId, params: Static<typeof LOOKUP_TOOL_PARAMS>, signal, _onUpdate, ctx) {
+    async execute(toolCallId, params: Static<typeof LOOKUP_TOOL_PARAMS>, signal, onUpdate, ctx) {
+      const startedAtMs = deps.now();
+      const runId = randomUUID();
+      const kbRoot = deps.getKbRoot();
+      const fallbackModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(unknown model)";
+      const artifactWriter = await deps.createLookupArtifactWriter({
+        toolCallId,
+        runId,
+        question: params.question,
+        mode: deps.getLookupArtifactMode(),
+      });
+      const artifactContext = {
+        writer: artifactWriter,
+        toolCallId,
+        runId,
+      };
+      const progress = createLookupProgressReporter(
+        onUpdate,
+        ctx,
+        (message, spinnerFrame) => setActiveActivity(ctx, runId, message, spinnerFrame ?? null),
+        artifactContext,
+      );
+      let outcome: LookupOutcome | undefined;
+      let toolResult: LookupToolResult | undefined;
+      let finalError: unknown;
+      let executionForRecord: LookupExecutionMeta | undefined;
+      let diagnosticsForRecord: LookupDiagnostics | undefined;
+      const fileIndexForRecord = safeBuildFactFileIndex(kbRoot, deps.buildFactFileIndex);
+
+      if (artifactWriter.ref) {
+        onUpdate?.({
+          content: [],
+          details: {
+            phase: "artifact-created",
+            toolCallId,
+            artifact: artifactWriter.ref,
+            debugMode: artifactWriter.mode,
+          },
+        });
+      }
+
       state.activeRuns += 1;
       syncStatus(ctx);
+      progress.update(
+        "Starting Rainman lookup…",
+        {
+          phase: "start",
+          timeoutMs: MAX_AGENT_EXECUTION_MS,
+        },
+        { notify: true },
+      );
 
       try {
-        const result = await executeLookupQuestion(params.question, signal, ctx);
+        outcome = await deps.executeLookupQuestion(params.question, signal, ctx, progress, artifactContext);
+        executionForRecord = outcome.execution;
+        diagnosticsForRecord = outcome.diagnostics;
         recordQuery({
-          ranAt: Date.now(),
-          status: result.status,
-          hit: result.status === "answered",
+          ranAt: deps.now(),
+          status: outcome.result.status,
+          hit: outcome.result.status === "answered",
           isError: false,
+          elapsedMs: outcome.execution.elapsedMs,
+          totalTokens: outcome.execution.usage.totalTokens,
+          warningCount: outcome.result.warnings.length,
+          malformedFileCount: fileIndexForRecord?.invalidFiles.length,
+          artifactId: artifactWriter.mode === "always" ? artifactWriter.ref?.id : undefined,
+          artifactPath: artifactWriter.mode === "always" ? artifactWriter.ref?.path : undefined,
+        });
+        const usageSummary = formatUsageSummary(outcome.execution.usage);
+        const completionSummary = [outcome.execution.elapsed, usageSummary].filter(Boolean).join(" · ");
+        progress.update(`rainman_lookup finished: ${outcome.result.status}${completionSummary ? ` (${completionSummary})` : ""}.`, {
+          phase: "complete",
+          status: outcome.result.status,
+          elapsedMs: outcome.execution.elapsedMs,
+          warnings: outcome.result.warnings.length,
+          usage: outcome.execution.usage,
         });
         syncStatus(ctx);
-
-        return {
-          content: [{ type: "text", text: formatVerificationResult(result) }],
-          details: result,
-        };
       } catch (error) {
+        finalError = error;
+        diagnosticsForRecord = getLookupSessionDiagnostics(error);
+        executionForRecord = buildExecutionMetaFromError({
+          startedAtMs,
+          error,
+          fallbackModel,
+          kbRoot,
+        });
         recordQuery({
-          ranAt: Date.now(),
+          ranAt: deps.now(),
           hit: false,
           isError: true,
+          elapsedMs: executionForRecord.elapsedMs,
+          totalTokens: executionForRecord.usage.totalTokens,
+          malformedFileCount: fileIndexForRecord?.invalidFiles.length,
+          artifactId: artifactWriter.ref?.id,
+          artifactPath: artifactWriter.ref?.path,
+        });
+        const message = error instanceof Error ? error.message : String(error);
+        progress.update(`rainman_lookup failed: ${message}`, {
+          phase: "error",
+          isError: true,
+          elapsedMs: executionForRecord.elapsedMs,
+          usage: executionForRecord.usage,
         });
         syncStatus(ctx);
-        throw error;
-      } finally {
-        state.activeRuns = Math.max(0, state.activeRuns - 1);
-        syncStatus(ctx);
       }
+
+      const runRecord = buildLookupRunRecord({
+        toolCallId,
+        runId,
+        question: params.question,
+        status: finalError ? "error" : "success",
+        outcome,
+        execution: executionForRecord ?? buildExecutionMetaFromError({
+          startedAtMs,
+          error: finalError,
+          fallbackModel,
+          kbRoot,
+        }),
+        error: finalError,
+        diagnostics: diagnosticsForRecord,
+        fileIndex: fileIndexForRecord,
+      });
+      await artifactWriter.append({
+        ...buildLookupArtifactEntryBase(toolCallId, runId),
+        entryType: "run-finished",
+        status: runRecord.status,
+        record: runRecord,
+      });
+      await artifactWriter.flush();
+
+      if (!finalError && artifactWriter.mode === "failure") {
+        await artifactWriter.discard();
+      }
+
+      const artifactRef = artifactWriter.ref;
+      const artifactWarning = artifactWriter.getWarning();
+      if (artifactRef) {
+        pi.appendEntry(RUN_ENTRY_TYPE, {
+          toolCallId,
+          runId,
+          artifactId: artifactRef.id,
+          artifactPath: artifactRef.path,
+          artifactFormat: "jsonl",
+          createdAt: runRecord.createdAt,
+          status: runRecord.status,
+          lookupStatus: outcome?.result.status,
+          elapsedMs: runRecord.execution.elapsedMs,
+          totalTokens: runRecord.execution.usage.totalTokens,
+        });
+        onUpdate?.({
+          content: [],
+          details: {
+            phase: "artifact-finalized",
+            toolCallId,
+            artifact: artifactRef,
+            status: runRecord.status,
+          },
+        });
+      } else if (artifactWriter.mode === "failure" && !finalError) {
+        onUpdate?.({
+          content: [],
+          details: {
+            phase: "artifact-discarded",
+            toolCallId,
+            status: runRecord.status,
+          },
+        });
+      }
+
+      if (artifactWarning) {
+        progress.update(
+          `rainman_lookup artifact warning: ${artifactWarning}`,
+          {
+            phase: "artifact-error",
+            isError: true,
+          },
+          { includeContent: false },
+        );
+      }
+
+      state.activeRuns = Math.max(0, state.activeRuns - 1);
+      progress.clear();
+      syncStatus(ctx);
+
+      if (finalError) {
+        throw finalError;
+      }
+
+      if (!outcome) {
+        throw new Error("rainman_lookup completed without producing a structured lookup result.");
+      }
+
+      toolResult = buildLookupToolResult({
+        outcome,
+        artifact: artifactRef,
+        artifactWarning,
+      });
+      return {
+        content: [{ type: "text", text: formatVerificationResult(outcome.result) }],
+        details: toolResult,
+      };
     },
   });
 
@@ -1407,16 +2715,31 @@ export default function rainman(pi: ExtensionAPI): void {
       if (!ctx.hasUI) return;
 
       if (subcommand === "test") {
+        const selfTestActivityOwner = `rainman-test-${deps.now()}`;
+        const progress = createLookupProgressReporter(
+          undefined,
+          ctx,
+          (message, spinnerFrame) => setActiveActivity(ctx, selfTestActivityOwner, message, spinnerFrame ?? null),
+        );
         state.activeRuns += 1;
         syncStatus(ctx);
-        ctx.ui.notify("Rainman self-test started.", "info");
+        progress.update(
+          "Rainman self-test started.",
+          {
+            phase: "start",
+            timeoutMs: MAX_AGENT_EXECUTION_MS,
+          },
+          { notify: true, includeContent: false },
+        );
 
         try {
-          const result = await executeLookupQuestion(
+          const outcome = await deps.executeLookupQuestion(
             RAINMAN_SELF_TEST_QUESTION,
             ctx.signal,
             ctx,
+            progress,
           );
+          const result = outcome.result;
 
           if (!isRainmanSelfTestPass(result)) {
             ctx.ui.notify(
@@ -1430,10 +2753,12 @@ export default function rainman(pi: ExtensionAPI): void {
             return;
           }
 
+          const usageSummary = formatUsageSummary(outcome.execution.usage);
           ctx.ui.notify(
             [
               "Rainman self-test passed.",
               `Lookup status: ${result.status}`,
+              `Lookup runtime: ${[outcome.execution.elapsed, usageSummary].filter(Boolean).join(" · ")}`,
               ...result.warnings.map((warning) => `Warning: ${warning}`),
             ].join("\n"),
             "info",
@@ -1443,6 +2768,7 @@ export default function rainman(pi: ExtensionAPI): void {
           ctx.ui.notify(`Rainman self-test failed: ${message}`, "warning");
         } finally {
           state.activeRuns = Math.max(0, state.activeRuns - 1);
+          progress.clear();
           syncStatus(ctx);
         }
         return;
@@ -1453,12 +2779,14 @@ export default function rainman(pi: ExtensionAPI): void {
         return;
       }
 
-      const kbRoot = getKbRoot();
+      const kbRoot = deps.getKbRoot();
       const exists = fs.existsSync(kbRoot);
-      const fileIndex = exists ? buildFactFileIndex(kbRoot) : null;
-      const fileCount = exists ? listMarkdownFiles(kbRoot).length : 0;
+      const fileIndex = exists ? deps.buildFactFileIndex(kbRoot) : null;
+      const fileCount = exists ? deps.listMarkdownFiles(kbRoot).length : 0;
       const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(uses first available model)";
       const lastRun = state.lastRunAt ? new Date(state.lastRunAt).toLocaleString() : "never";
+      const lastElapsed = state.lastElapsedMs === null ? "none" : formatElapsed(state.lastElapsedMs);
+      const lastTokens = state.lastTotalTokens === null ? "none" : formatTokenCount(state.lastTotalTokens);
 
       ctx.ui.notify(
         [
@@ -1474,6 +2802,12 @@ export default function rainman(pi: ExtensionAPI): void {
           `Session errors: ${state.sessionErrors}`,
           `Last run: ${lastRun}`,
           `Last status: ${state.lastStatus ?? "none"}`,
+          `Last elapsed: ${lastElapsed}`,
+          `Last tokens: ${lastTokens}`,
+          `Last warnings: ${state.lastWarningCount ?? "none"}`,
+          `Last malformed files: ${state.lastMalformedFileCount ?? "none"}`,
+          `Last artifact: ${state.lastArtifactPath ?? "none"}`,
+          `Artifact mode: ${deps.getLookupArtifactMode()} (${DEBUG_ARTIFACTS_ENV_VAR})`,
           `KB root override env: ${KB_ROOT_ENV_VAR}`,
           ...(fileIndex?.warnings ?? []).map((warning) => `Warning: ${warning}`),
         ].join("\n"),
@@ -1481,4 +2815,9 @@ export default function rainman(pi: ExtensionAPI): void {
       );
     },
   });
+  };
+}
+
+export default function rainman(pi: ExtensionAPI): void {
+  return createRainmanExtension()(pi);
 }
