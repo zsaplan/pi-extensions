@@ -13,6 +13,8 @@ A pi extension that turns Raincatcher into a local knowledge-cache lookup tool f
 - The read tool returns raw lines plus parsed structured fact summaries for the requested range
 - Validates citations before returning an evidence-backed result
 - Tracks session-local TUI metrics for queries, hits, and errors
+- Streams concise start/progress/completion feedback during lookups and updates the working/status UI while a lookup is in flight
+- Includes polish-style elapsed-time and token-usage summaries when the isolated lookup session reports usage
 - Targets `~/.pi/agent/data/raincatcher` by default
 - Skips malformed fact files and surfaces warnings when malformed KB content is present
 
@@ -37,7 +39,7 @@ The tool returns a concise text summary plus structured details containing:
 - `citations`
 - `missingInformation`
 - `warnings`
-- `meta`
+- `meta` (including model/KB root plus lookup elapsed time and token usage when available)
 
 ## Command
 
@@ -51,6 +53,7 @@ A footer status is maintained for the current session with:
 - queries
 - hits (`answered` results)
 - errors (tool execution failures)
+- current lookup activity while a lookup is running
 
 ## Notes
 

@@ -36,7 +36,7 @@ This package owns:
 - building a lint-aware view of the knowledge base
 - running an isolated lookup sub-session with a very small tool surface
 - validating citations and result structure before returning an answer
-- reporting session-local lookup metrics and self-test status
+- reporting session-local lookup metrics, in-flight progress feedback, and self-test status
 - exposing a small `/rainman` command surface
 
 This package does **not** own:
@@ -84,6 +84,8 @@ The tool returns:
 
 - concise visible text
 - structured details containing status, data, citations, warnings, and meta
+- concise progress feedback while a lookup is running, including working/status updates for long-running isolated lookup turns
+- completion summaries that include elapsed time and token usage when the isolated lookup session reports usage
 
 Primary statuses are:
 

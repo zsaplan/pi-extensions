@@ -6,7 +6,9 @@ import {
   SettingsManager,
   createAgentSession,
   getAgentDir,
+  type AgentToolUpdateCallback,
   type ExtensionAPI,
+  type ExtensionContext,
   type ToolDefinition,
 } from "@mariozechner/pi-coding-agent";
 import {
@@ -33,6 +35,17 @@ export type Citation = {
   quote: string;
 };
 
+export type LookupUsage = {
+  model?: string;
+  turns: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  cost: number;
+};
+
 export type VerificationResult = {
   status: "answered" | "insufficient_evidence" | "conflict";
   data: Record<string, unknown>;
@@ -42,6 +55,11 @@ export type VerificationResult = {
   meta?: {
     model: string;
     kbRoot: string;
+    startedAt?: string;
+    completedAt?: string;
+    elapsedMs?: number;
+    elapsed?: string;
+    usage?: LookupUsage;
   };
 };
 
@@ -93,6 +111,8 @@ type RainmanQueryEntry = {
 
 type RuntimeState = {
   activeRuns: number;
+  activeMessage: string | null;
+  activeSpinnerFrame: string | null;
   sessionQueries: number;
   sessionHits: number;
   sessionErrors: number;
@@ -179,6 +199,9 @@ const DEFAULT_GREP_LIMIT = 20;
 const RAINMAN_THINKING_LEVEL = "low" as const;
 const MAX_REPAIR_ATTEMPTS = 1;
 const MAX_AGENT_EXECUTION_MS = 45_000;
+const STATUS_KEY = "rainman";
+const HEARTBEAT_INTERVAL_MS = 2_000;
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const RAINMAN_SELF_TEST_QUESTION =
   "__rainman_self_test__ Return insufficient_evidence unless a lint-clean knowledge file literally answers this exact string.";
 const LOOKUP_DIRECTIVE_PATTERNS = [
@@ -1044,6 +1067,511 @@ function isRainmanSelfTestPass(result: VerificationResult): boolean {
   );
 }
 
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatTokenCount(count: number): string {
+  if (count < 1_000) return String(count);
+  if (count < 10_000) return `${(count / 1_000).toFixed(1)}k`;
+  if (count < 1_000_000) return `${Math.round(count / 1_000)}k`;
+  return `${(count / 1_000_000).toFixed(1)}M`;
+}
+
+function formatUsageSummary(usage: LookupUsage): string {
+  const parts = [
+    `${formatTokenCount(usage.totalTokens)} tokens`,
+    `${usage.turns} turn${usage.turns === 1 ? "" : "s"}`,
+  ];
+  if (usage.input) parts.push(`↑${formatTokenCount(usage.input)}`);
+  if (usage.output) parts.push(`↓${formatTokenCount(usage.output)}`);
+  if (usage.cacheRead) parts.push(`R${formatTokenCount(usage.cacheRead)}`);
+  if (usage.cacheWrite) parts.push(`W${formatTokenCount(usage.cacheWrite)}`);
+  return parts.join(" · ");
+}
+
+function getFiniteNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function createEmptyLookupUsage(model?: string): LookupUsage {
+  return {
+    model,
+    turns: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    cost: 0,
+  };
+}
+
+function buildLookupUsage(messages: unknown[], fallbackModel?: string): LookupUsage {
+  const usage = createEmptyLookupUsage(fallbackModel);
+
+  for (const message of messages) {
+    if (!message || typeof message !== "object") continue;
+
+    const messageRecord = message as Record<string, unknown>;
+    if (messageRecord.role !== "assistant") continue;
+
+    usage.turns += 1;
+
+    if (!usage.model && typeof messageRecord.model === "string") {
+      const provider = typeof messageRecord.provider === "string"
+        ? messageRecord.provider
+        : undefined;
+      usage.model = provider
+        ? `${provider}/${messageRecord.model}`
+        : messageRecord.model;
+    }
+
+    const messageUsage = messageRecord.usage;
+    if (!messageUsage || typeof messageUsage !== "object") continue;
+
+    const usageRecord = messageUsage as Record<string, unknown>;
+    const input = getFiniteNumber(usageRecord.input);
+    const output = getFiniteNumber(usageRecord.output);
+    const cacheRead = getFiniteNumber(usageRecord.cacheRead);
+    const cacheWrite = getFiniteNumber(usageRecord.cacheWrite);
+    const totalTokens = getFiniteNumber(usageRecord.totalTokens);
+    usage.input += input;
+    usage.output += output;
+    usage.cacheRead += cacheRead;
+    usage.cacheWrite += cacheWrite;
+    usage.totalTokens += totalTokens || input + output + cacheRead + cacheWrite;
+
+    const cost = usageRecord.cost;
+    if (cost && typeof cost === "object") {
+      usage.cost += getFiniteNumber((cost as Record<string, unknown>).total);
+    }
+  }
+
+  if (!usage.totalTokens) {
+    usage.totalTokens =
+      usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
+  }
+
+  return usage;
+}
+
+function truncateStatusText(value: string, maxLength = 80): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function formatStatusPath(value: string, maxLength = 72): string {
+  const normalized = value.replace(/\\/g, "/").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `…${normalized.slice(-(maxLength - 1))}`;
+}
+
+function getStringArgument(args: unknown, keys: string[]): string | undefined {
+  if (!args || typeof args !== "object") return undefined;
+  const record = args as Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function describeLookupToolActivity(toolName: string, args: unknown): string {
+  switch (toolName) {
+    case "find": {
+      const query = getStringArgument(args, ["query"]);
+      return query
+        ? `Rainman locating candidate fact files for "${truncateStatusText(query, 40)}"…`
+        : "Rainman locating candidate fact files…";
+    }
+    case "grep": {
+      const pattern = getStringArgument(args, ["pattern"]);
+      return pattern
+        ? `Rainman searching fact files for "${truncateStatusText(pattern, 40)}"…`
+        : "Rainman searching fact files…";
+    }
+    case "read": {
+      const filePath = getStringArgument(args, ["filePath"]);
+      return filePath
+        ? `Rainman reading ${formatStatusPath(filePath)}…`
+        : "Rainman reading a fact file…";
+    }
+    case "submit_result":
+      return "Rainman validating and submitting the evidence-backed result…";
+    default:
+      return `Rainman running ${toolName}…`;
+  }
+}
+
+function createLookupProgressReporter(
+  onUpdate: AgentToolUpdateCallback<unknown> | undefined,
+  ctx: ExtensionContext,
+  setActivity: (message: string | null, spinnerFrame?: string | null) => void,
+) {
+  const toolStartedAt = Date.now();
+  let heartbeatId: NodeJS.Timeout | undefined;
+  let spinnerIndex = 0;
+
+  const setWorkingMessage = (message?: string): void => {
+    if (!ctx.hasUI) return;
+    ctx.ui.setWorkingMessage(message);
+  };
+
+  const buildUiMessage = (
+    baseMessage: string,
+    options?: {
+      phaseElapsedMs?: number;
+    },
+  ): string => {
+    const toolElapsedMs = Date.now() - toolStartedAt;
+    const timingParts: string[] = [];
+    if (options?.phaseElapsedMs !== undefined) {
+      timingParts.push(`action ${formatElapsed(options.phaseElapsedMs)}`);
+    }
+    timingParts.push(`total ${formatElapsed(toolElapsedMs)}`);
+    return `${baseMessage} (${timingParts.join(" · ")})`;
+  };
+
+  const emit = (
+    message: string,
+    details?: Record<string, unknown>,
+    options?: {
+      notify?: boolean;
+      includeContent?: boolean;
+      spinnerFrame?: string;
+      phaseElapsedMs?: number;
+    },
+  ): void => {
+    const toolElapsedMs = Date.now() - toolStartedAt;
+    if (options?.includeContent ?? true) {
+      onUpdate?.({
+        content: [{ type: "text", text: message }],
+        details: {
+          phase: "progress",
+          progressMessage: message,
+          toolElapsedMs,
+          ...(details ?? {}),
+        },
+      });
+    }
+
+    const uiMessage = buildUiMessage(message, options);
+    setActivity(uiMessage, options?.spinnerFrame);
+    setWorkingMessage(uiMessage);
+    if (options?.notify && ctx.hasUI) {
+      ctx.ui.notify(message, "info");
+    }
+  };
+
+  const stopHeartbeat = (): void => {
+    if (heartbeatId !== undefined) {
+      clearInterval(heartbeatId);
+      heartbeatId = undefined;
+    }
+  };
+
+  const startHeartbeat = (
+    baseMessage: string,
+    details?: Record<string, unknown>,
+  ): void => {
+    stopHeartbeat();
+    const startedAt = Date.now();
+
+    const tick = (): void => {
+      const elapsedMs = Date.now() - startedAt;
+      const frame = SPINNER_FRAMES[spinnerIndex % SPINNER_FRAMES.length];
+      spinnerIndex += 1;
+      emit(
+        baseMessage,
+        {
+          ...(details ?? {}),
+          phase: "heartbeat",
+          baseMessage,
+          elapsedMs,
+        },
+        {
+          includeContent: false,
+          spinnerFrame: frame,
+          phaseElapsedMs: elapsedMs,
+        },
+      );
+    };
+
+    tick();
+    heartbeatId = setInterval(tick, HEARTBEAT_INTERVAL_MS);
+  };
+
+  return {
+    update(
+      message: string,
+      details?: Record<string, unknown>,
+      options?: { notify?: boolean; includeContent?: boolean },
+    ): void {
+      stopHeartbeat();
+      emit(message, details, options);
+    },
+    updateContent(content: string, details?: Record<string, unknown>): void {
+      const toolElapsedMs = Date.now() - toolStartedAt;
+      onUpdate?.({
+        content: [{ type: "text", text: content }],
+        details: {
+          phase: "progress-content",
+          toolElapsedMs,
+          ...(details ?? {}),
+        },
+      });
+    },
+    startHeartbeat,
+    stopHeartbeat,
+    clear(): void {
+      stopHeartbeat();
+      setActivity(null, null);
+      setWorkingMessage();
+    },
+  };
+}
+
+function getTextContentOutput(content: unknown): string | undefined {
+  if (!Array.isArray(content)) return undefined;
+
+  const text = content
+    .flatMap((block) => {
+      if (!block || typeof block !== "object") return [];
+      const blockRecord = block as Record<string, unknown>;
+      return blockRecord.type === "text" && typeof blockRecord.text === "string"
+        ? [blockRecord.text]
+        : [];
+    })
+    .join("\n\n")
+    .trim();
+
+  return text ? normalizeNewlines(text) : undefined;
+}
+
+function formatActionOutputTail(content: string, maxLines = 12, maxChars = 8 * 1024): string {
+  const normalized = normalizeNewlines(content);
+  const lines = normalized.split("\n");
+  const tailLines = lines.slice(-maxLines);
+  let text = tailLines.join("\n");
+  let suffix: string | undefined;
+
+  if (tailLines.length < lines.length) {
+    const startLine = lines.length - tailLines.length + 1;
+    suffix = `[showing lines ${startLine}-${lines.length} of ${lines.length}]`;
+  }
+
+  if (text.length > maxChars) {
+    text = `…${text.slice(-(maxChars - 1))}`;
+    suffix = suffix
+      ? `${suffix}; truncated to last ${maxChars} chars`
+      : `[truncated to last ${maxChars} chars]`;
+  }
+
+  return suffix ? `${text}\n\n${suffix}` : text;
+}
+
+function indentTextBlock(content: string): string {
+  return content
+    .split("\n")
+    .map((line) => `    ${line}`)
+    .join("\n");
+}
+
+function buildLookupActionOutput(toolName: string, result: unknown): string | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  const output = getTextContentOutput((result as { content?: unknown }).content);
+  if (!output) return undefined;
+
+  return [
+    `Current action output (${toolName}):`,
+    "",
+    indentTextBlock(formatActionOutputTail(output)),
+  ].join("\n");
+}
+
+function subscribeToLookupSessionEvents(
+  session: Awaited<ReturnType<typeof createAgentSession>>["session"],
+  progress: ReturnType<typeof createLookupProgressReporter>,
+  attempt: number,
+  maxAttempts: number,
+): () => void {
+  let activeActivityKey: string | undefined;
+
+  const startActivity = (
+    key: string,
+    message: string,
+    details?: Record<string, unknown>,
+  ): void => {
+    if (activeActivityKey === key) return;
+    activeActivityKey = key;
+    progress.startHeartbeat(message, {
+      phase: "lookup-activity",
+      attempt,
+      maxAttempts,
+      activityKey: key,
+      timeoutMs: MAX_AGENT_EXECUTION_MS,
+      ...(details ?? {}),
+    });
+  };
+
+  const unsubscribe = session.subscribe((event: unknown) => {
+    if (!event || typeof event !== "object") return;
+
+    const eventRecord = event as Record<string, unknown>;
+    switch (eventRecord.type) {
+      case "turn_start": {
+        const turnIndex = typeof eventRecord.turnIndex === "number"
+          ? eventRecord.turnIndex + 1
+          : undefined;
+        startActivity(
+          `turn:${turnIndex ?? "unknown"}`,
+          turnIndex
+            ? `Rainman analyzing the knowledge base in turn ${turnIndex}…`
+            : "Rainman analyzing the knowledge base…",
+          { turnIndex },
+        );
+        break;
+      }
+      case "tool_execution_start": {
+        const toolName = typeof eventRecord.toolName === "string"
+          ? eventRecord.toolName
+          : "tool";
+        const toolCallId = typeof eventRecord.toolCallId === "string"
+          ? eventRecord.toolCallId
+          : toolName;
+        const activityMessage = describeLookupToolActivity(toolName, eventRecord.args);
+        startActivity(
+          `tool:${toolCallId}`,
+          activityMessage,
+          {
+            toolName,
+            toolCallId,
+          },
+        );
+        progress.updateContent(activityMessage, {
+          phase: "lookup-tool-start",
+          attempt,
+          maxAttempts,
+          toolName,
+          toolCallId,
+        });
+        break;
+      }
+      case "tool_execution_update": {
+        const toolName = typeof eventRecord.toolName === "string"
+          ? eventRecord.toolName
+          : "tool";
+        const actionOutput = buildLookupActionOutput(
+          toolName,
+          eventRecord.partialResult,
+        );
+        if (actionOutput) {
+          progress.updateContent(actionOutput, {
+            phase: "lookup-tool-output",
+            attempt,
+            maxAttempts,
+            toolName,
+            isPartial: true,
+          });
+        }
+        break;
+      }
+      case "message_update": {
+        const assistantEvent = eventRecord.assistantMessageEvent;
+        if (!assistantEvent || typeof assistantEvent !== "object") break;
+
+        const assistantEventRecord = assistantEvent as Record<string, unknown>;
+        if (assistantEventRecord.type === "thinking_delta") {
+          startActivity("thinking", "Rainman reasoning about the knowledge base…");
+          break;
+        }
+
+        if (
+          assistantEventRecord.type === "text_delta" &&
+          typeof assistantEventRecord.delta === "string" &&
+          assistantEventRecord.delta.trim()
+        ) {
+          startActivity("drafting", "Rainman drafting the evidence-backed result…");
+        }
+        break;
+      }
+      case "tool_execution_end": {
+        const toolName = typeof eventRecord.toolName === "string"
+          ? eventRecord.toolName
+          : "tool";
+        const actionOutput = toolName === "submit_result"
+          ? undefined
+          : buildLookupActionOutput(toolName, eventRecord.result);
+        progress.stopHeartbeat();
+        activeActivityKey = undefined;
+
+        if (actionOutput) {
+          progress.updateContent(actionOutput, {
+            phase: "lookup-tool-output",
+            attempt,
+            maxAttempts,
+            toolName,
+            isError: Boolean(eventRecord.isError),
+          });
+        }
+
+        if (eventRecord.isError) {
+          progress.update(
+            `Rainman tool ${toolName} failed.`,
+            {
+              phase: "lookup-tool-error",
+              attempt,
+              maxAttempts,
+              toolName,
+              isError: true,
+            },
+            { includeContent: false },
+          );
+          break;
+        }
+
+        if (toolName === "submit_result") {
+          progress.update(
+            "Rainman submitted the evidence-backed result.",
+            {
+              phase: "lookup-submit",
+              attempt,
+              maxAttempts,
+              toolName,
+            },
+            { includeContent: false },
+          );
+        }
+        break;
+      }
+      case "auto_retry_start": {
+        activeActivityKey = undefined;
+        progress.update("Rainman model request auto-retrying…", {
+          phase: "lookup-auto-retry",
+          attempt,
+          maxAttempts,
+        });
+        break;
+      }
+    }
+  });
+
+  return unsubscribe;
+}
+
 async function promptWithTimeout<T>(
   operation: Promise<T>,
   session: Awaited<ReturnType<typeof createAgentSession>>["session"],
@@ -1101,10 +1629,21 @@ async function runVerification(
   modelRegistry: any,
   thinkingLevel: any,
   signal?: AbortSignal,
+  progress?: ReturnType<typeof createLookupProgressReporter>,
 ) {
+  const startedAtMs = Date.now();
   const submittedResultState = createSubmittedResultState();
   const modelName = `${model.provider}/${model.id}`;
   const fileIndex = buildFactFileIndex(kbRoot);
+  progress?.update(
+    `Indexing Rainman knowledge base (${fileIndex.validFiles.length} clean files, ${fileIndex.invalidFiles.length} malformed skipped)…`,
+    {
+      phase: "index-kb",
+      validFiles: fileIndex.validFiles.length,
+      invalidFiles: fileIndex.invalidFiles.length,
+    },
+    { includeContent: false },
+  );
   const lookupTools = createCustomTools(kbRoot, modelName, submittedResultState, fileIndex);
   const lookupToolNames = lookupTools.map((tool) => tool.name);
   const resourceLoader = new DefaultResourceLoader({
@@ -1119,6 +1658,16 @@ async function runVerification(
     appendSystemPromptOverride: () => [],
   });
   await resourceLoader.reload();
+  progress?.update(
+    "Launching isolated Rainman lookup…",
+    {
+      phase: "launch-lookup",
+      model: modelName,
+      thinkingLevel,
+      timeoutMs: MAX_AGENT_EXECUTION_MS,
+    },
+    { includeContent: false },
+  );
 
   const createLookupSession = async () => {
     const { session } = await createAgentSession({
@@ -1148,6 +1697,23 @@ async function runVerification(
   const { session, lookupToolAccess: initialLookupToolAccess } = await createLookupSession();
   let lookupToolAccess = initialLookupToolAccess;
 
+  const finalizeResult = (result: VerificationResult): VerificationResult => {
+    const completedAtMs = Date.now();
+    const usage = buildLookupUsage(getSessionMessages(session), modelName);
+    return {
+      ...result,
+      meta: {
+        model: usage.model ?? result.meta?.model ?? modelName,
+        kbRoot: result.meta?.kbRoot ?? kbRoot,
+        startedAt: new Date(startedAtMs).toISOString(),
+        completedAt: new Date(completedAtMs).toISOString(),
+        elapsedMs: Math.max(0, completedAtMs - startedAtMs),
+        elapsed: formatElapsed(completedAtMs - startedAtMs),
+        usage,
+      },
+    };
+  };
+
   try {
     const missingConfiguredToolNames = getMissingToolNames(
       lookupToolNames,
@@ -1161,8 +1727,28 @@ async function runVerification(
 
     const maxAttempts = MAX_REPAIR_ATTEMPTS + 1;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      if (attempt > 1) {
+        progress?.update(
+          `Repairing Rainman lookup result (attempt ${attempt - 1} of ${MAX_REPAIR_ATTEMPTS})…`,
+          {
+            phase: "repair-attempt",
+            attempt,
+            maxAttempts,
+          },
+        );
+      }
+
       const prompt = attempt === 1 ? buildPrompt(question, fileIndex) : buildRepairPrompt(question, attempt - 1);
       const messageCountBeforePrompt = getSessionMessages(session).length;
+      const unsubscribeLookupEvents = progress
+        ? subscribeToLookupSessionEvents(session, progress, attempt, maxAttempts)
+        : undefined;
+      progress?.startHeartbeat("Rainman searching the knowledge base…", {
+        phase: "lookup-running",
+        attempt,
+        maxAttempts,
+        timeoutMs: MAX_AGENT_EXECUTION_MS,
+      });
       // Return as soon as submit_result validates instead of waiting for a trailing assistant turn.
       const promptOutcome = session.prompt(prompt)
         .then<PromptAttemptResult>(() => ({ kind: "prompt-complete" }))
@@ -1178,23 +1764,29 @@ async function runVerification(
           signal,
         );
       } catch (error) {
-        if (submittedResultState.value) return submittedResultState.value;
+        unsubscribeLookupEvents?.();
+        progress?.stopHeartbeat();
+        if (submittedResultState.value) return finalizeResult(submittedResultState.value);
         throw error;
       }
 
+      unsubscribeLookupEvents?.();
+      progress?.stopHeartbeat();
+
       if (outcome.kind === "submitted") {
+        const result = finalizeResult(submittedResultState.value!);
         await session.abort().catch(() => {
           // ignore abort failure after accepted result
         });
-        return submittedResultState.value!;
+        return result;
       }
 
       if (outcome.kind === "prompt-error") {
-        if (submittedResultState.value) return submittedResultState.value;
+        if (submittedResultState.value) return finalizeResult(submittedResultState.value);
         throw outcome.error;
       }
 
-      if (submittedResultState.value) return submittedResultState.value;
+      if (submittedResultState.value) return finalizeResult(submittedResultState.value);
 
       lookupToolAccess = buildLookupToolAccessRecord(session);
       const missingActiveToolNames = getMissingToolNames(
@@ -1226,7 +1818,7 @@ async function runVerification(
     session.dispose();
   }
 
-  return {
+  return finalizeResult({
     status: "insufficient_evidence",
     data: {},
     citations: [],
@@ -1236,13 +1828,14 @@ async function runVerification(
       model: modelName,
       kbRoot,
     },
-  } satisfies VerificationResult;
+  } satisfies VerificationResult);
 }
 
 async function executeLookupQuestion(
   question: string,
   signal: AbortSignal | undefined,
   ctx: any,
+  progress?: ReturnType<typeof createLookupProgressReporter>,
 ): Promise<VerificationResult> {
   const trimmedQuestion = question.trim();
   if (!trimmedQuestion) {
@@ -1265,12 +1858,15 @@ async function executeLookupQuestion(
     ctx.modelRegistry,
     RAINMAN_THINKING_LEVEL,
     signal,
+    progress,
   );
 }
 
 export default function rainman(pi: ExtensionAPI): void {
   const state: RuntimeState = {
     activeRuns: 0,
+    activeMessage: null,
+    activeSpinnerFrame: null,
     sessionQueries: 0,
     sessionHits: 0,
     sessionErrors: 0,
@@ -1280,6 +1876,8 @@ export default function rainman(pi: ExtensionAPI): void {
 
   function restoreSessionState(ctx: any): void {
     state.activeRuns = 0;
+    state.activeMessage = null;
+    state.activeSpinnerFrame = null;
     state.sessionQueries = 0;
     state.sessionHits = 0;
     state.sessionErrors = 0;
@@ -1310,9 +1908,22 @@ export default function rainman(pi: ExtensionAPI): void {
       theme.fg("dim", ` h:${state.sessionHits}`),
       state.sessionErrors > 0 ? theme.fg("error", ` e:${state.sessionErrors}`) : theme.fg("dim", " e:0"),
     ].join("");
-    const suffix = state.activeRuns > 0 ? theme.fg("dim", " looking up") : "";
+    const activity = state.activeRuns > 0
+      ? theme.fg(
+        "dim",
+        state.activeMessage
+          ? ` ${state.activeSpinnerFrame ? `${state.activeSpinnerFrame} ` : ""}${state.activeMessage}`
+          : " looking up",
+      )
+      : "";
 
-    ctx.ui.setStatus("rainman", `${icon} ${counts}${suffix}`);
+    ctx.ui.setStatus(STATUS_KEY, `${icon} ${counts}${activity}`);
+  }
+
+  function setActiveActivity(ctx: any, message: string | null, spinnerFrame: string | null = null): void {
+    state.activeMessage = message;
+    state.activeSpinnerFrame = message ? spinnerFrame : null;
+    syncStatus(ctx);
   }
 
   function recordQuery(entry: RainmanQueryEntry): void {
@@ -1336,7 +1947,7 @@ export default function rainman(pi: ExtensionAPI): void {
 
   pi.on("session_shutdown", async (_event, ctx: any) => {
     if (!ctx?.hasUI) return;
-    ctx.ui.setStatus("rainman", undefined);
+    ctx.ui.setStatus(STATUS_KEY, undefined);
   });
 
   pi.on("before_agent_start", async (event: any) => {
@@ -1364,17 +1975,41 @@ export default function rainman(pi: ExtensionAPI): void {
       "Do not use this tool first for live state, very recent changes, or current incidents.",
     ],
     parameters: LOOKUP_TOOL_PARAMS,
-    async execute(_toolCallId, params: Static<typeof LOOKUP_TOOL_PARAMS>, signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params: Static<typeof LOOKUP_TOOL_PARAMS>, signal, onUpdate, ctx) {
+      const startedAtMs = Date.now();
+      const progress = createLookupProgressReporter(
+        onUpdate,
+        ctx,
+        (message, spinnerFrame) => setActiveActivity(ctx, message, spinnerFrame ?? null),
+      );
       state.activeRuns += 1;
       syncStatus(ctx);
+      progress.update(
+        "Starting Rainman lookup…",
+        {
+          phase: "start",
+          timeoutMs: MAX_AGENT_EXECUTION_MS,
+        },
+        { notify: true },
+      );
 
       try {
-        const result = await executeLookupQuestion(params.question, signal, ctx);
+        const result = await executeLookupQuestion(params.question, signal, ctx, progress);
         recordQuery({
           ranAt: Date.now(),
           status: result.status,
           hit: result.status === "answered",
           isError: false,
+        });
+        const elapsed = result.meta?.elapsed ?? formatElapsed(Date.now() - startedAtMs);
+        const usageSummary = result.meta?.usage ? formatUsageSummary(result.meta.usage) : undefined;
+        const completionSummary = [elapsed, usageSummary].filter(Boolean).join(" · ");
+        progress.update(`rainman_lookup finished: ${result.status}${completionSummary ? ` (${completionSummary})` : ""}.`, {
+          phase: "complete",
+          status: result.status,
+          elapsedMs: result.meta?.elapsedMs ?? Date.now() - startedAtMs,
+          warnings: result.warnings.length,
+          usage: result.meta?.usage,
         });
         syncStatus(ctx);
 
@@ -1388,10 +2023,17 @@ export default function rainman(pi: ExtensionAPI): void {
           hit: false,
           isError: true,
         });
+        const message = error instanceof Error ? error.message : String(error);
+        progress.update(`rainman_lookup failed: ${message}`, {
+          phase: "error",
+          isError: true,
+          elapsedMs: Date.now() - startedAtMs,
+        });
         syncStatus(ctx);
         throw error;
       } finally {
         state.activeRuns = Math.max(0, state.activeRuns - 1);
+        progress.clear();
         syncStatus(ctx);
       }
     },
@@ -1407,15 +2049,28 @@ export default function rainman(pi: ExtensionAPI): void {
       if (!ctx.hasUI) return;
 
       if (subcommand === "test") {
+        const progress = createLookupProgressReporter(
+          undefined,
+          ctx,
+          (message, spinnerFrame) => setActiveActivity(ctx, message, spinnerFrame ?? null),
+        );
         state.activeRuns += 1;
         syncStatus(ctx);
-        ctx.ui.notify("Rainman self-test started.", "info");
+        progress.update(
+          "Rainman self-test started.",
+          {
+            phase: "start",
+            timeoutMs: MAX_AGENT_EXECUTION_MS,
+          },
+          { notify: true, includeContent: false },
+        );
 
         try {
           const result = await executeLookupQuestion(
             RAINMAN_SELF_TEST_QUESTION,
             ctx.signal,
             ctx,
+            progress,
           );
 
           if (!isRainmanSelfTestPass(result)) {
@@ -1430,10 +2085,13 @@ export default function rainman(pi: ExtensionAPI): void {
             return;
           }
 
+          const elapsed = result.meta?.elapsed;
+          const usageSummary = result.meta?.usage ? formatUsageSummary(result.meta.usage) : undefined;
           ctx.ui.notify(
             [
               "Rainman self-test passed.",
               `Lookup status: ${result.status}`,
+              ...(elapsed || usageSummary ? [`Lookup runtime: ${[elapsed, usageSummary].filter(Boolean).join(" · ")}`] : []),
               ...result.warnings.map((warning) => `Warning: ${warning}`),
             ].join("\n"),
             "info",
@@ -1443,6 +2101,7 @@ export default function rainman(pi: ExtensionAPI): void {
           ctx.ui.notify(`Rainman self-test failed: ${message}`, "warning");
         } finally {
           state.activeRuns = Math.max(0, state.activeRuns - 1);
+          progress.clear();
           syncStatus(ctx);
         }
         return;
