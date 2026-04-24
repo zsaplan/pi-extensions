@@ -313,7 +313,8 @@ Guidelines:
 - Default to skepticism. Try to disprove the change rather than validate it.
 - Prioritize expensive, dangerous, hard-to-detect failures.
 - Report only material findings that would materially impact design, robustness, or correctness.
-- Out of scope: tests, test coverage, lint-only concerns, docs-only concerns, monitoring, rollout chores, or other external supports. If the only plausible concerns are out-of-scope items such as tests or other external supports, approve with no findings.
+- Out of scope: tests, test coverage, lint-only concerns, docs-only concerns, generic monitoring suggestions for unrelated product changes, rollout chores, or other external supports. Monitoring, metrics, logs, traces, scraping, alerting, and notification routing are in scope when they are changed by the diff or required for the diff to work. If the only plausible concerns are out-of-scope items such as tests or other external supports, approve with no findings.
+- When reviewing observability or alerting changes, verify the end-to-end signal path before approving: signal production/export, scrape or discovery selectors such as ServiceMonitor/PodMonitor labels, query label compatibility, alert/recording rules, and notification routing. Search nearby repo conventions when selectors or labels are not obvious.
 - Ground every finding in the provided repository context and any fixed-scope diff content you inspect with tools.
 - Prefer one strong finding over several weak ones.
 - Use only the tools listed above.
