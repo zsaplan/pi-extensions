@@ -53,7 +53,7 @@ The tool returns a concise text summary plus structured details containing:
 
 - `/rainman` — show KB root, session status, last run metadata, and artifact mode
 - `/rainman test` — run a Rainman lookup smoke test against a synthetic question
-- `/rainman eval [suitePath] [limit]` — run the real Rainman subagent against an eval suite and write JSON/Markdown results to `~/.pi/agent/data/rainman-evals/`
+- `/rainman eval [suitePath] [limit] [--repeat=N]` — run the real Rainman subagent against an eval suite and write JSON/Markdown results to `~/.pi/agent/data/rainman-evals/`; repeat defaults to `5` so latency claims are based on at least n=5
 
 ## Skill
 

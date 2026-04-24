@@ -242,6 +242,8 @@ type EvalSuite = {
 type EvalCaseResult = {
   id: string;
   question: string;
+  repeatIndex: number;
+  repeatCount: number;
   ok: boolean;
   status: "success" | "error";
   lookupStatus?: VerificationResult["status"];
@@ -263,6 +265,8 @@ type EvalRunResult = {
   kbRoot: string;
   cases: EvalCaseResult[];
   summary: {
+    uniqueCases: number;
+    repeatCount: number;
     total: number;
     passed: number;
     failed: number;
@@ -1728,12 +1732,57 @@ function sanitizeEvalFileSegment(value: string): string {
     .slice(0, 80) || "eval";
 }
 
+function parsePositiveInteger(value: string | undefined): number | undefined {
+  if (!value || !/^\d+$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return parsed > 0 ? parsed : undefined;
+}
+
+function parseEvalArgs(input: string): { suitePath?: string; limit?: number; repeatCount: number } {
+  const parts = input.split(/\s+/).filter(Boolean).slice(1);
+  let repeatCount = 5;
+  let limit: number | undefined;
+  let suitePath: string | undefined;
+
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (part === "--repeat" || part === "-n") {
+      repeatCount = parsePositiveInteger(parts[index + 1]) ?? repeatCount;
+      index += 1;
+      continue;
+    }
+    if (part.startsWith("--repeat=")) {
+      repeatCount = parsePositiveInteger(part.slice("--repeat=".length)) ?? repeatCount;
+      continue;
+    }
+    if (part === "--limit") {
+      limit = parsePositiveInteger(parts[index + 1]) ?? limit;
+      index += 1;
+      continue;
+    }
+    if (part.startsWith("--limit=")) {
+      limit = parsePositiveInteger(part.slice("--limit=".length)) ?? limit;
+      continue;
+    }
+    if (!suitePath && !part.startsWith("-")) {
+      const numeric = parsePositiveInteger(part);
+      if (numeric !== undefined && limit === undefined) {
+        limit = numeric;
+      } else {
+        suitePath = part;
+      }
+    }
+  }
+
+  return { suitePath, limit, repeatCount };
+}
+
 function extractAnswer(result: VerificationResult): string | undefined {
   const answer = result.data.answer;
   return typeof answer === "string" ? answer : undefined;
 }
 
-function evaluateOutcome(testCase: EvalCase, outcome: LookupOutcome): EvalCaseResult {
+function evaluateOutcome(testCase: EvalCase, outcome: LookupOutcome, repeatIndex = 1, repeatCount = 1): EvalCaseResult {
   const failureReasons: string[] = [];
   const result = outcome.result;
   const answer = extractAnswer(result);
@@ -1762,6 +1811,8 @@ function evaluateOutcome(testCase: EvalCase, outcome: LookupOutcome): EvalCaseRe
   return {
     id: testCase.id,
     question: testCase.question,
+    repeatIndex,
+    repeatCount,
     ok: failureReasons.length === 0,
     status: "success",
     lookupStatus: result.status,
@@ -1775,7 +1826,7 @@ function evaluateOutcome(testCase: EvalCase, outcome: LookupOutcome): EvalCaseRe
   };
 }
 
-function evaluateError(testCase: EvalCase, error: unknown, startedAtMs: number): EvalCaseResult {
+function evaluateError(testCase: EvalCase, error: unknown, startedAtMs: number, repeatIndex = 1, repeatCount = 1): EvalCaseResult {
   const elapsedMs = Math.max(0, Date.now() - startedAtMs);
   const diagnostics = getLookupSessionDiagnostics(error);
   const usage = diagnostics?.usage ?? createEmptyLookupUsage();
@@ -1783,6 +1834,8 @@ function evaluateError(testCase: EvalCase, error: unknown, startedAtMs: number):
   return {
     id: testCase.id,
     question: testCase.question,
+    repeatIndex,
+    repeatCount,
     ok: false,
     status: "error",
     elapsedMs,
@@ -1795,7 +1848,7 @@ function evaluateError(testCase: EvalCase, error: unknown, startedAtMs: number):
   };
 }
 
-function summarizeEvalRun(suite: EvalSuite, cases: EvalCaseResult[], ctx: any, kbRoot: string): EvalRunResult {
+function summarizeEvalRun(suite: EvalSuite, cases: EvalCaseResult[], ctx: any, kbRoot: string, uniqueCases: number, repeatCount: number): EvalRunResult {
   const totalElapsedMs = cases.reduce((sum, result) => sum + result.elapsedMs, 0);
   const totalTokens = cases.reduce((sum, result) => sum + result.totalTokens, 0);
   const totalCost = cases.reduce((sum, result) => sum + result.cost, 0);
@@ -1807,6 +1860,8 @@ function summarizeEvalRun(suite: EvalSuite, cases: EvalCaseResult[], ctx: any, k
     kbRoot,
     cases,
     summary: {
+      uniqueCases,
+      repeatCount,
       total: cases.length,
       passed: cases.filter((result) => result.ok).length,
       failed: cases.filter((result) => !result.ok).length,
@@ -1826,18 +1881,20 @@ function renderEvalRunMarkdown(run: EvalRunResult): string {
     `- Thinking level: ${run.thinkingLevel}`,
     `- KB root: ${run.kbRoot}`,
     `- Passed: ${run.summary.passed}/${run.summary.total}`,
+    `- Unique cases: ${run.summary.uniqueCases}`,
+    `- Repeats per case: ${run.summary.repeatCount}`,
     `- Average elapsed: ${run.summary.averageElapsedMs}ms`,
     `- Total tokens: ${run.summary.totalTokens}`,
     `- Total cost: $${run.summary.totalCost.toFixed(6)}`,
     "",
-    "| Case | Result | Status | Elapsed | Tokens | Notes |",
-    "| --- | --- | --- | ---: | ---: | --- |",
+    "| Case | Run | Result | Status | Elapsed | Tokens | Notes |",
+    "| --- | ---: | --- | --- | ---: | ---: | --- |"
   ];
 
   for (const result of run.cases) {
     const notes = result.failureReasons.length ? result.failureReasons.join("; ") : result.citationFiles.join(", ");
     lines.push(
-      `| ${result.id} | ${result.ok ? "pass" : "fail"} | ${result.lookupStatus ?? result.status} | ${result.elapsedMs}ms | ${result.totalTokens} | ${notes.replace(/\|/g, "\\|")} |`,
+      `| ${result.id} | ${result.repeatIndex}/${result.repeatCount} | ${result.ok ? "pass" : "fail"} | ${result.lookupStatus ?? result.status} | ${result.elapsedMs}ms | ${result.totalTokens} | ${notes.replace(/\|/g, "\\|")} |`,
     );
   }
 
@@ -1845,7 +1902,7 @@ function renderEvalRunMarkdown(run: EvalRunResult): string {
   lines.push("## Case details");
   for (const result of run.cases) {
     lines.push("");
-    lines.push(`### ${result.id}`);
+    lines.push(`### ${result.id} (${result.repeatIndex}/${result.repeatCount})`);
     lines.push("");
     lines.push(`Question: ${result.question}`);
     lines.push("");
@@ -3095,13 +3152,10 @@ export function createRainmanExtension(
       if (!ctx.hasUI) return;
 
       if (subcommand === "eval") {
-        const parts = input.split(/\s+/).filter(Boolean).slice(1);
-        const limitArgIndex = parts.findIndex((part) => /^\d+$/.test(part));
-        const limit = limitArgIndex >= 0 ? Number(parts[limitArgIndex]) : undefined;
-        const suitePathArg = parts.find((part, index) => index !== limitArgIndex);
-        const suitePath = resolveEvalSuitePath(suitePathArg);
+        const evalArgs = parseEvalArgs(input);
+        const suitePath = resolveEvalSuitePath(evalArgs.suitePath);
         const suite = readEvalSuite(suitePath);
-        const selectedCases = limit ? suite.cases.slice(0, limit) : suite.cases;
+        const selectedCases = evalArgs.limit ? suite.cases.slice(0, evalArgs.limit) : suite.cases;
         const evalActivityOwner = `rainman-eval-${deps.now()}`;
         const caseResults: EvalCaseResult[] = [];
         state.activeRuns += 1;
@@ -3109,30 +3163,32 @@ export function createRainmanExtension(
 
         try {
           ctx.ui.notify(
-            `Rainman eval started: ${suite.name} (${selectedCases.length}/${suite.cases.length} cases).`,
+            `Rainman eval started: ${suite.name} (${selectedCases.length}/${suite.cases.length} cases, n=${evalArgs.repeatCount}).`,
             "info",
           );
           for (const [index, testCase] of selectedCases.entries()) {
-            setActiveActivity(
-              ctx,
-              evalActivityOwner,
-              `Rainman eval ${index + 1}/${selectedCases.length}: ${truncateStatusText(testCase.id, 32)}…`,
-              null,
-            );
-            const startedAtMs = Date.now();
-            try {
-              const outcome = await deps.executeLookupQuestion(testCase.question, ctx.signal, ctx);
-              caseResults.push(evaluateOutcome(testCase, outcome));
-            } catch (error) {
-              caseResults.push(evaluateError(testCase, error, startedAtMs));
+            for (let repeatIndex = 1; repeatIndex <= evalArgs.repeatCount; repeatIndex += 1) {
+              setActiveActivity(
+                ctx,
+                evalActivityOwner,
+                `Rainman eval ${index + 1}/${selectedCases.length} n=${repeatIndex}/${evalArgs.repeatCount}: ${truncateStatusText(testCase.id, 32)}…`,
+                null,
+              );
+              const startedAtMs = Date.now();
+              try {
+                const outcome = await deps.executeLookupQuestion(testCase.question, ctx.signal, ctx);
+                caseResults.push(evaluateOutcome(testCase, outcome, repeatIndex, evalArgs.repeatCount));
+              } catch (error) {
+                caseResults.push(evaluateError(testCase, error, startedAtMs, repeatIndex, evalArgs.repeatCount));
+              }
             }
           }
 
-          const run = summarizeEvalRun(suite, caseResults, ctx, deps.getKbRoot());
+          const run = summarizeEvalRun(suite, caseResults, ctx, deps.getKbRoot(), selectedCases.length, evalArgs.repeatCount);
           const artifacts = await writeEvalRunArtifacts(run);
           ctx.ui.notify(
             [
-              `Rainman eval finished: ${run.summary.passed}/${run.summary.total} passed.`,
+              `Rainman eval finished: ${run.summary.passed}/${run.summary.total} passed (${run.summary.uniqueCases} cases, n=${run.summary.repeatCount}).`,
               `Average elapsed: ${run.summary.averageElapsedMs}ms`,
               `Total tokens: ${run.summary.totalTokens}`,
               `Total cost: $${run.summary.totalCost.toFixed(6)}`,

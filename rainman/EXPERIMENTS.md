@@ -5,7 +5,7 @@ This file records durable plans, actions, and results for improving Rainman suba
 ## Experiment loop
 
 1. Define or update an eval suite under `rainman/evals/`.
-2. Run `/rainman eval [suitePath] [limit]` inside pi so the real Rainman subagent, active model, citation validator, and timeout behavior are exercised.
+2. Run `/rainman eval [suitePath] [limit] [--repeat=N]` inside pi so the real Rainman subagent, active model, citation validator, and timeout behavior are exercised. Use at least `--repeat=5` before making empirical latency claims; this is the default.
 3. Inspect the JSON and Markdown artifacts written to `~/.pi/agent/data/rainman-evals/`.
 4. Make one small change to the prompt, candidate selection, KB organization, timeout, or validation path.
 5. Rerun the same eval suite and compare pass rate, elapsed time, token usage, cost, citation quality, and failure modes.
@@ -17,7 +17,7 @@ The harness is intentionally inspired by the tight experiment/evaluate loop in A
 ## Metrics to watch
 
 - Pass rate: status and required answer/citation checks.
-- Latency: per-case elapsed milliseconds and average elapsed milliseconds.
+- Latency: per-case elapsed milliseconds and average elapsed milliseconds across at least n=5 repeats.
 - Tool behavior: lookup artifacts should show fewer broad grep/find loops over time.
 - Token/cost: total tokens and cost should trend down as navigation improves.
 - Citation validity: successful runs must preserve exact citation validation.
@@ -54,7 +54,7 @@ Add a real Rainman eval harness that runs inside pi against the real subagent, r
 
 ### Action
 
-- Added `/rainman eval [suitePath] [limit]`.
+- Added `/rainman eval [suitePath] [limit] [--repeat=N]`; repeat defaults to 5.
 - Added `rainman/evals/default.json`.
 - Eval artifacts are written as JSON and Markdown under `~/.pi/agent/data/rainman-evals/`.
 - Added prompt guidance:
@@ -121,7 +121,7 @@ After fixing tokenizer/ranking to preserve `BriteCore` as `britecore` instead of
 - Cost: $0.022789.
 - Artifact: `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-24T23-48-18-345Z_what-is-britecore-in-the-context-of-this-workspace-company_413ed331-508b-4f86-8f73-ca170cb0e516.jsonl`
 
-Measured against the 45,231ms baseline, the best current inner Rainman run is about 76.9% faster.
+Measured against the 45,231ms baseline, the best current inner Rainman run is about 76.9% faster. This is a promising single-run result, not yet a reproducibility claim; future reported speedups should use at least n=5 through the eval harness.
 
 ### Decision
 
