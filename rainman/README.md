@@ -17,6 +17,7 @@ A pi extension that turns Raincatcher into a local knowledge-cache lookup tool f
 - Includes polish-style elapsed-time and token-usage summaries when the isolated lookup session reports usage
 - Writes JSONL debug artifacts in failure-only mode by default, with always/off modes controlled by configuration
 - Ships a checked-in `rainman` skill that teaches when to use cached knowledge versus normal live investigation
+- Ships `rainman/evals/default.json` for recurring latency and accuracy experiments
 - Targets `~/.pi/agent/data/raincatcher` by default
 - Skips malformed fact files and surfaces warnings when malformed KB content is present
 
@@ -52,6 +53,7 @@ The tool returns a concise text summary plus structured details containing:
 
 - `/rainman` — show KB root, session status, last run metadata, and artifact mode
 - `/rainman test` — run a Rainman lookup smoke test against a synthetic question
+- `/rainman eval [suitePath] [limit]` — run the real Rainman subagent against an eval suite and write JSON/Markdown results to `~/.pi/agent/data/rainman-evals/`
 
 ## Skill
 

@@ -1,0 +1,33 @@
+{
+  "name": "rainman-default-latency-accuracy",
+  "description": "Small recurring eval suite for measuring Rainman subagent answer quality, citation behavior, and latency on stable project-knowledge questions.",
+  "cases": [
+    {
+      "id": "britecore-workspace-definition",
+      "question": "What is BriteCore in the context of this workspace/company?",
+      "expectedStatus": "answered",
+      "requiredAnswerSubstrings": ["BriteCore"],
+      "maxElapsedMs": 30000
+    },
+    {
+      "id": "rainman-source-location",
+      "question": "Where is Rainman source code located?",
+      "expectedStatus": "answered",
+      "requiredAnswerSubstrings": ["rainman"],
+      "maxElapsedMs": 20000
+    },
+    {
+      "id": "package-verification-workflow",
+      "question": "What is the package verification workflow in this repository?",
+      "expectedStatus": "answered",
+      "requiredAnswerSubstrings": ["verify"],
+      "maxElapsedMs": 25000
+    },
+    {
+      "id": "unknown-self-test",
+      "question": "__rainman_eval_unknown__ What durable fact answers this exact nonce?",
+      "expectedStatus": "insufficient_evidence",
+      "maxElapsedMs": 15000
+    }
+  ]
+}
