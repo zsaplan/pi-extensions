@@ -33,9 +33,8 @@
     ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-ai": "^0.69.0",
-    "@mariozechner/pi-coding-agent": "^0.69.0",
-    "@sinclair/typebox": "*"
+    "@mariozechner/pi-ai": "^0.70.0",
+    "@mariozechner/pi-coding-agent": "^0.70.0"
   },
   "scripts": {
     "lint": "gts lint",
@@ -47,5 +46,8 @@
     "@types/node": "^24.12.2",
     "gts": "^7.0.0",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "typebox": "^1.1.24"
   }
 }

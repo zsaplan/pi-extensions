@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { Type, type Static } from "@sinclair/typebox";
+import { Type, type Static } from "typebox";
 import {
   DefaultResourceLoader,
   SessionManager,
@@ -1026,6 +1026,7 @@ function createCustomTools(
           return {
             content: [{ type: "text", text: "submit_result accepted. Stop now." }],
             details: submittedResultState.value,
+            terminate: true,
           };
         } catch (error) {
           throw new Error(toToolErrorMessage(error));
@@ -1119,9 +1120,7 @@ async function runVerification(
   });
   await resourceLoader.reload();
 
-  const createLookupSessionWithTools = async (
-    tools: NonNullable<Parameters<typeof createAgentSession>[0]>["tools"],
-  ) => {
+  const createLookupSession = async () => {
     const { session } = await createAgentSession({
       cwd: kbRoot,
       agentDir: getAgentDir(),
@@ -1130,7 +1129,7 @@ async function runVerification(
       // settings make it more likely to roleplay tool syntax.
       thinkingLevel,
       modelRegistry,
-      tools,
+      noTools: "builtin",
       customTools: lookupTools,
       resourceLoader,
       sessionManager: SessionManager.inMemory(),
@@ -1146,15 +1145,8 @@ async function runVerification(
     };
   };
 
-  // Prefer the runtime allowlist shape, but fall back to the older
-  // customTools-only path when the expected tools do not register.
-  const lookupToolAllowlist = lookupToolNames as unknown as NonNullable<
-    Parameters<typeof createAgentSession>[0]
-  >["tools"];
-  let { session, lookupToolAccess } = await createLookupSessionWithTools(
-    lookupToolAllowlist,
-  );
-  let toolActivationSource: "active" | "configured" = "active";
+  const { session, lookupToolAccess: initialLookupToolAccess } = await createLookupSession();
+  let lookupToolAccess = initialLookupToolAccess;
 
   try {
     const missingConfiguredToolNames = getMissingToolNames(
@@ -1162,9 +1154,9 @@ async function runVerification(
       lookupToolAccess.configuredToolNames,
     );
     if (missingConfiguredToolNames.length > 0) {
-      session.dispose();
-      ({ session, lookupToolAccess } = await createLookupSessionWithTools([]));
-      toolActivationSource = "configured";
+      // Keep going: some runtime paths expose custom tools only after the first
+      // prompt. The active-tool check below will fail with diagnostics if the
+      // lookup tools were not registered.
     }
 
     const maxAttempts = MAX_REPAIR_ATTEMPTS + 1;
@@ -1205,12 +1197,9 @@ async function runVerification(
       if (submittedResultState.value) return submittedResultState.value;
 
       lookupToolAccess = buildLookupToolAccessRecord(session);
-      const activatedToolNames = toolActivationSource === "active"
-        ? lookupToolAccess.activeToolNames
-        : lookupToolAccess.configuredToolNames;
       const missingActiveToolNames = getMissingToolNames(
         lookupToolNames,
-        activatedToolNames,
+        lookupToolAccess.activeToolNames,
       );
       const sessionMessages = getSessionMessages(session);
       const pseudoToolCallToolNames = getLookupPseudoToolCallToolNames(
@@ -1223,7 +1212,7 @@ async function runVerification(
       ) {
         throw new Error(
           "Rainman lookup session did not activate the expected tools after prompting. " +
-            `Missing ${toolActivationSource} tools: ${missingActiveToolNames.join(", ")}. ` +
+            `Missing active tools: ${missingActiveToolNames.join(", ")}. ` +
             `Active tools: ${lookupToolAccess.activeToolNames.join(", ") || "(none)"}. ` +
             `Configured tools: ${lookupToolAccess.configuredToolNames.join(", ") || "(none)"}.`,
         );

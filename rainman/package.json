@@ -28,9 +28,8 @@
     ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-ai": "^0.69.0",
-    "@mariozechner/pi-coding-agent": "^0.69.0",
-    "@sinclair/typebox": "*"
+    "@mariozechner/pi-ai": "^0.70.0",
+    "@mariozechner/pi-coding-agent": "^0.70.0"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -43,6 +42,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@zsaplan/rain-core": "file:../rain-core"
+    "@zsaplan/rain-core": "file:../rain-core",
+    "typebox": "^1.1.24"
   }
 }

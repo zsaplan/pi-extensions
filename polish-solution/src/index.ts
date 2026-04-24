@@ -29,7 +29,7 @@ import {
   type ExtensionContext,
   type ToolDefinition,
 } from '@mariozechner/pi-coding-agent';
-import {Type, type Static} from '@sinclair/typebox';
+import {Type, type Static} from 'typebox';
 import {
   buildReviewerToolAccessRecord,
   createReviewerPseudoToolCallError,
@@ -2716,6 +2716,7 @@ function createReviewerTools(
         return {
           content: [{type: 'text', text: 'submit_review accepted. Stop now.'}],
           details: validated,
+          terminate: true,
         };
       },
     },
@@ -2828,9 +2829,7 @@ async function runReviewerSession(
       return !availableToolNames.includes(toolName);
     });
   };
-  const createReviewerSessionWithTools = async (
-    tools: NonNullable<Parameters<typeof createAgentSession>[0]>['tools'],
-  ) => {
+  const createReviewerSession = async () => {
     const {session} = await createAgentSession({
       cwd: scope.repoRoot,
       agentDir: getAgentDir(),
@@ -2839,7 +2838,7 @@ async function runReviewerSession(
       // Keep the isolated reviewer at low reasoning effort; higher settings
       // make it more likely to roleplay tool syntax instead of invoking tools.
       thinkingLevel: DEFAULT_THINKING_LEVEL,
-      tools,
+      noTools: 'builtin',
       customTools: reviewerTools,
       resourceLoader,
       sessionManager: SessionManager.inMemory(),
@@ -2866,14 +2865,9 @@ async function runReviewerSession(
     );
   };
 
-  // Try the runtime allowlist path first, but fall back to the older
-  // customTools-only shape when the expected tools do not register.
-  const reviewerToolAllowlist = reviewerToolNames as unknown as NonNullable<
-    Parameters<typeof createAgentSession>[0]
-  >['tools'];
-  let {session, reviewerToolAccess} = await createReviewerSessionWithTools(
-    reviewerToolAllowlist,
-  );
+  const {session, reviewerToolAccess: initialReviewerToolAccess} =
+    await createReviewerSession();
+  let reviewerToolAccess = initialReviewerToolAccess;
   reportReviewerToolAccess(reviewerToolAccess);
 
   const fallbackModel = describeModel(model);
@@ -2883,32 +2877,12 @@ async function runReviewerSession(
   let thrownError: unknown;
 
   try {
-    let missingConfiguredToolNames = getMissingReviewerToolNames(
+    const missingConfiguredToolNames = getMissingReviewerToolNames(
       reviewerToolAccess.configuredToolNames,
     );
     if (missingConfiguredToolNames.length > 0) {
       progress?.update(
-        'Reviewer allowlist session did not register the expected tools. Retrying with customTools-only setup…',
-        {
-          phase: 'reviewer-tool-access-retry',
-          missingConfiguredToolNames,
-          reviewerToolAccess,
-        },
-      );
-      session.dispose();
-
-      ({session, reviewerToolAccess} = await createReviewerSessionWithTools(
-        [],
-      ));
-      reportReviewerToolAccess(reviewerToolAccess);
-      missingConfiguredToolNames = getMissingReviewerToolNames(
-        reviewerToolAccess.configuredToolNames,
-      );
-    }
-
-    if (missingConfiguredToolNames.length > 0) {
-      progress?.update(
-        'Reviewer session tool introspection is incomplete after setup fallback. Proceeding and waiting for concrete tool-use evidence…',
+        'Reviewer session tool introspection is incomplete after noTools=builtin setup. Proceeding and waiting for concrete tool-use evidence…',
         {
           phase: 'reviewer-tool-access-warning',
           missingConfiguredToolNames,
