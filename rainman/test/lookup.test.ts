@@ -7,9 +7,14 @@ import {
   ResultValidationError,
   ToolInputError,
   buildFactFileIndex,
+  buildLookupActionOutput,
+  buildLookupUsage,
   ensureKnowledgeMarkdownPath,
   ensureWithinKbRoot,
   findTool,
+  formatActionOutputTail,
+  formatUsageSummary,
+  getLookupArtifactMode,
   grepTool,
   readCitationLines,
   readTool,
@@ -263,4 +268,72 @@ test("lookup nudging targets stable knowledge questions and skips live-state/cur
   assert.equal(shouldNudgeRainmanLookup("What is failing right now in production?"), false);
   assert.equal(shouldNudgeRainmanLookup("Check Grafana logs for this traceback"), false);
   assert.equal(shouldNudgeRainmanLookup("run the tests"), false);
+});
+
+test("lookup usage summaries aggregate assistant message token usage", () => {
+  const usage = buildLookupUsage([
+    {
+      role: "assistant",
+      provider: "test-provider",
+      model: "test-model",
+      usage: {
+        input: 400,
+        output: 50,
+        cacheRead: 600,
+        cacheWrite: 10,
+        totalTokens: 1060,
+        cost: { total: 0.01 },
+      },
+    },
+    {
+      role: "assistant",
+      usage: {
+        input: 100,
+        output: 25,
+      },
+    },
+    { role: "user", usage: { input: 999 } },
+  ], "fallback/model");
+
+  assert.equal(usage.model, "fallback/model");
+  assert.equal(usage.turns, 2);
+  assert.equal(usage.input, 500);
+  assert.equal(usage.output, 75);
+  assert.equal(usage.cacheRead, 600);
+  assert.equal(usage.cacheWrite, 10);
+  assert.equal(usage.totalTokens, 1185);
+  assert.equal(formatUsageSummary(usage), "1.2k tokens · 2 turns · ↑500 · ↓75 · R600 · W10");
+});
+
+test("lookup action output formatting tail-truncates streamed tool results", () => {
+  const text = Array.from({ length: 20 }, (_value, index) => `line ${index + 1}`).join("\n");
+  assert.equal(
+    formatActionOutputTail(text, 3, 1000),
+    "line 18\nline 19\nline 20\n\n[showing lines 18-20 of 20]",
+  );
+
+  const output = buildLookupActionOutput("read", {
+    content: [{ type: "text", text: "first\nsecond" }],
+  });
+  assert.equal(output, "Current action output (read):\n\n    first\n    second");
+});
+
+test("lookup artifact mode defaults to failure-only and honors env overrides", () => {
+  const previous = process.env.PI_RAINMAN_DEBUG_ARTIFACTS;
+  try {
+    delete process.env.PI_RAINMAN_DEBUG_ARTIFACTS;
+    assert.equal(getLookupArtifactMode(), "failure");
+    process.env.PI_RAINMAN_DEBUG_ARTIFACTS = "always";
+    assert.equal(getLookupArtifactMode(), "always");
+    process.env.PI_RAINMAN_DEBUG_ARTIFACTS = "off";
+    assert.equal(getLookupArtifactMode(), "off");
+    process.env.PI_RAINMAN_DEBUG_ARTIFACTS = "unexpected";
+    assert.equal(getLookupArtifactMode(), "failure");
+  } finally {
+    if (previous === undefined) {
+      delete process.env.PI_RAINMAN_DEBUG_ARTIFACTS;
+    } else {
+      process.env.PI_RAINMAN_DEBUG_ARTIFACTS = previous;
+    }
+  }
 });

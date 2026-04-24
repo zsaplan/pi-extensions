@@ -36,8 +36,9 @@ This package owns:
 - building a lint-aware view of the knowledge base
 - running an isolated lookup sub-session with a very small tool surface
 - validating citations and result structure before returning an answer
-- reporting session-local lookup metrics, in-flight progress feedback, and self-test status
+- reporting session-local lookup metrics, in-flight progress feedback, retained diagnostics, and self-test status
 - exposing a small `/rainman` command surface
+- shipping a companion skill that teaches the intended lookup/pivot workflow
 
 This package does **not** own:
 
@@ -83,7 +84,7 @@ Primary tool:
 The tool returns:
 
 - concise visible text
-- structured details containing status, data, citations, warnings, and meta
+- structured details containing the evidence result plus separate execution metadata, diagnostics, and retained artifact references when available
 - concise progress feedback while a lookup is running, including working/status updates for long-running isolated lookup turns
 - completion summaries that include elapsed time and token usage when the isolated lookup session reports usage
 
@@ -108,11 +109,15 @@ The package exposes:
 
 The command surface exists for status inspection and smoke testing, not for broad interactive query mode.
 
+## Skill
+
+The package ships a checked-in `rainman` skill that teaches when to consult cached stable knowledge, how to use each lookup status, and when to pivot to normal investigation.
+
 ---
 
 ## Runtime architecture
 
-`rainman` has four main layers.
+`rainman` has five main layers.
 
 ## 1. Routing and nudge layer
 
@@ -150,6 +155,18 @@ This layer ensures the final returned answer is acceptable before exposing it:
 - normalization of failures into safe fallback statuses when necessary
 
 This layer is essential because the package promise is evidence-backed lookup, not just model-generated summary.
+
+## 5. Reporting and diagnostics layer
+
+This layer turns isolated lookup activity into operator-usable feedback and later debugging evidence:
+
+- streamed progress updates and status-only activity messages
+- working/status UI updates
+- execution metadata such as elapsed time and token usage
+- failure diagnostics including session messages and tool-access state
+- JSONL run artifacts under the agent data directory when artifact mode retains them, including retained raw lookup tool output for later debugging
+
+Artifacts are diagnostic infrastructure. The default mode keeps failed lookup trails and discards successful trails; `PI_RAINMAN_DEBUG_ARTIFACTS=always` keeps every trail, while `off` disables artifact retention.
 
 ---
 
@@ -202,13 +219,13 @@ The package tracks transient state for:
 - session-local query counts
 - hit counts
 - error counts
-- most recent run metadata
+- most recent run metadata, warning counts, malformed-file counts, token usage, and artifact path
 
 ## Session persistence
 
-Lookup summaries are appended as custom session entries so session-local metrics survive resume and branch navigation.
+Lookup summaries and retained artifact references are appended as custom session entries so session-local metrics survive resume and branch navigation.
 
-The KB itself remains the durable source of evidence; the session entries are only operational telemetry.
+The KB itself remains the durable source of evidence; the session entries and artifacts are operational telemetry and diagnostics.
 
 ---
 
@@ -245,7 +262,7 @@ Expected behavior:
 
 - no configured/available model should fail clearly
 - missing or malformed KB content should reduce confidence rather than be hidden
-- tool-scaffolding failures in the isolated agent should surface as warnings or explicit errors
+- tool-scaffolding failures in the isolated agent should surface as explicit errors with retained diagnostics when artifact mode allows it
 - an unanswered lookup should return `insufficient_evidence`, not a fabricated answer
 - conflicting evidence should return `conflict`
 
@@ -261,7 +278,7 @@ That contract will likely center on:
 
 - linting
 - typechecking
-- targeted deterministic tests for routing heuristics, citation validation, and KB indexing behavior where worthwhile
+- targeted deterministic tests for routing heuristics, citation validation, KB indexing, streamed tool-output formatting, usage aggregation, and artifact-mode behavior where worthwhile
 - package-local smoke validation such as the built-in self-test path
 
 The root should orchestrate those checks rather than reimplement them.
