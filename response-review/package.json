@@ -44,8 +44,8 @@
     "glimpseui": "^0.6.0"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.69.0",
-    "@mariozechner/pi-tui": "^0.69.0"
+    "@mariozechner/pi-coding-agent": "^0.70.0",
+    "@mariozechner/pi-tui": "^0.70.0"
   },
   "devDependencies": {
     "@types/node": "^24.12.2",

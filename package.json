@@ -50,15 +50,18 @@
   },
   "dependencies": {
     "@zsaplan/rain-core": "file:./rain-core",
-    "glimpseui": "^0.6.0"
+    "glimpseui": "^0.6.0",
+    "typebox": "^1.1.24"
   },
   "peerDependencies": {
-    "@mariozechner/pi-ai": "^0.69.0",
-    "@mariozechner/pi-coding-agent": "^0.69.0",
-    "@mariozechner/pi-tui": "^0.69.0",
-    "@sinclair/typebox": "*"
+    "@mariozechner/pi-ai": "^0.70.0",
+    "@mariozechner/pi-coding-agent": "^0.70.0",
+    "@mariozechner/pi-tui": "^0.70.0"
   },
   "devDependencies": {
+    "@mariozechner/pi-ai": "^0.70.0",
+    "@mariozechner/pi-coding-agent": "^0.70.0",
+    "@mariozechner/pi-tui": "^0.70.0",
     "@types/node": "^24.12.2",
     "gts": "^7.0.0",
     "knip": "^5.88.1",
