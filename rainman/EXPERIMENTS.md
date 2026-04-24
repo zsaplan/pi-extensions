@@ -121,8 +121,46 @@ After fixing tokenizer/ranking to preserve `BriteCore` as `britecore` instead of
 - Cost: $0.022789.
 - Artifact: `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-24T23-48-18-345Z_what-is-britecore-in-the-context-of-this-workspace-company_413ed331-508b-4f86-8f73-ca170cb0e516.jsonl`
 
-Measured against the 45,231ms baseline, the best current inner Rainman run is about 76.9% faster. This is a promising single-run result, not yet a reproducibility claim; future reported speedups should use at least n=5 through the eval harness.
+Measured against the 45,231ms baseline, the best current inner Rainman run is about 76.9% faster. This was a promising single-run result; reproducible claims require at least n=5 through the eval harness.
+
+### Follow-up n=5 reproducibility run
+
+After adding the n=5 requirement, reran the same BriteCore workspace question five times through the real `rainman_lookup` tool with the local extension under test and `PI_RAINMAN_DEBUG_ARTIFACTS=always`.
+
+Command shape:
+
+```sh
+PI_RAINMAN_DEBUG_ARTIFACTS=always pi -p --no-session --thinking off --no-extensions --extension ./rainman/src/index.ts --no-builtin-tools --tools rainman_lookup "Use rainman_lookup to answer exactly this question and then summarize only the tool result: What is BriteCore in the context of this workspace/company?"
+```
+
+Artifacts:
+
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-24T23-55-50-441Z_what-is-britecore-in-the-context-of-this-workspace-company_3ea1fef3-d03e-441f-bc63-3c5675f3866a.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-24T23-56-04-611Z_what-is-britecore-in-the-context-of-this-workspace-company_d33eb20e-241b-40c1-a456-16665d9e6667.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-24T23-56-16-550Z_what-is-britecore-in-the-context-of-this-workspace-company_098dd94f-831d-4cd2-be86-a6df295f7986.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-24T23-56-24-550Z_what-is-britecore-in-the-context-of-this-workspace-company_1718a823-0c39-4468-9428-538c4b42dfad.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-24T23-56-36-972Z_what-is-britecore-in-the-context-of-this-workspace-company_650c0bea-c032-4eed-b67d-a669a2996301.jsonl`
+
+Results against the 45,231ms baseline:
+
+| Run | Status | Inner elapsed | Speedup | Tokens | Tool calls |
+| ---: | --- | ---: | ---: | ---: | ---: |
+| 1 | answered | 10,123ms | 77.6% | 6,957 | 4 |
+| 2 | answered | 6,597ms | 85.4% | 4,643 | 3 |
+| 3 | answered | 4,315ms | 90.5% | 3,599 | 3 |
+| 4 | answered | 7,072ms | 84.4% | 4,643 | 3 |
+| 5 | answered | 12,094ms | 73.3% | 9,587 | 5 |
+
+Aggregate:
+
+- n=5.
+- All 5 runs answered successfully.
+- Mean inner elapsed: 8,040.2ms.
+- Median inner elapsed: 7,072ms.
+- Min/max inner elapsed: 4,315ms / 12,094ms.
+- Standard deviation: 3,068.7ms.
+- Mean speedup vs baseline: 82.2%.
 
 ### Decision
 
-Keep deterministic candidate preselection. It exceeds the 50% speedup target on the motivating BriteCore question while also reducing token use and cost substantially. The next experiment should target avoiding the extra submit repair by making quote formatting expectations clearer in the prompt.
+Keep deterministic candidate preselection. The improvement exceeds the 50% speedup target reproducibly at n=5 on the motivating BriteCore question while also reducing token use and cost substantially. The next experiment should target avoiding extra submit repairs by making quote formatting expectations clearer in the prompt.
