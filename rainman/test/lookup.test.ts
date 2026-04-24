@@ -9,6 +9,7 @@ import {
   buildFactFileIndex,
   buildLookupActionOutput,
   buildLookupUsage,
+  createRainmanExtension,
   ensureKnowledgeMarkdownPath,
   ensureWithinKbRoot,
   findTool,
@@ -27,6 +28,189 @@ import {
 } from "../src/index.ts";
 
 type CodedError = Error & { code?: string };
+
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+};
+
+type TestUI = {
+  theme: { fg: (_color: string, value: string) => string };
+  statusCalls: Array<{ key: string; value: string | undefined }>;
+  workingMessageCalls: Array<string | undefined>;
+  notifications: Array<{ message: string; level: string }>;
+  currentStatus: string | undefined;
+  currentWorkingMessage: string | undefined;
+  setStatus: (key: string, value: string | undefined) => void;
+  setWorkingMessage: (message?: string) => void;
+  notify: (message: string, level: string) => void;
+};
+
+type TestPi = {
+  events: Map<string, Array<(...args: any[]) => unknown>>;
+  tools: Map<string, any>;
+  commands: Map<string, any>;
+  entries: Array<{ customType: string; data: unknown }>;
+  on: (event: string, handler: (...args: any[]) => unknown) => void;
+  registerTool: (tool: any) => void;
+  registerCommand: (name: string, command: any) => void;
+  appendEntry: <T>(customType: string, data: T) => void;
+};
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function createTestUi(): TestUI {
+  return {
+    theme: { fg: (_color: string, value: string) => value },
+    statusCalls: [],
+    workingMessageCalls: [],
+    notifications: [],
+    currentStatus: undefined,
+    currentWorkingMessage: undefined,
+    setStatus(key: string, value: string | undefined): void {
+      this.statusCalls.push({ key, value });
+      this.currentStatus = value;
+    },
+    setWorkingMessage(message?: string): void {
+      this.workingMessageCalls.push(message);
+      this.currentWorkingMessage = message;
+    },
+    notify(message: string, level: string): void {
+      this.notifications.push({ message, level });
+    },
+  };
+}
+
+function createTestPi(): TestPi {
+  return {
+    events: new Map(),
+    tools: new Map(),
+    commands: new Map(),
+    entries: [],
+    on(event: string, handler: (...args: any[]) => unknown): void {
+      const list = this.events.get(event) ?? [];
+      list.push(handler);
+      this.events.set(event, list);
+    },
+    registerTool(tool: any): void {
+      this.tools.set(tool.name, tool);
+    },
+    registerCommand(name: string, command: any): void {
+      this.commands.set(name, command);
+    },
+    appendEntry<T>(customType: string, data: T): void {
+      this.entries.push({ customType, data });
+    },
+  };
+}
+
+function createTestContext(ui: TestUI) {
+  const model = { provider: "test-provider", id: "test-model" };
+  return {
+    hasUI: true,
+    ui,
+    model,
+    modelRegistry: {
+      getAvailable(): Array<typeof model> {
+        return [model];
+      },
+    },
+    sessionManager: {
+      getBranch(): unknown[] {
+        return [];
+      },
+    },
+    signal: undefined,
+    cwd: process.cwd(),
+  };
+}
+
+function createLookupUsageSummary() {
+  return {
+    model: "test-provider/test-model",
+    turns: 1,
+    input: 10,
+    output: 5,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 15,
+    cost: 0,
+  };
+}
+
+function createLookupOutcome(question: string, kbRoot: string) {
+  const usage = createLookupUsageSummary();
+  return {
+    result: {
+      status: "answered" as const,
+      data: { answer: `Answer for ${question}` },
+      citations: [],
+      missingInformation: [],
+      warnings: [],
+      meta: {
+        model: usage.model!,
+        kbRoot,
+      },
+    },
+    execution: {
+      model: usage.model!,
+      kbRoot,
+      startedAt: "2026-04-24T00:00:00.000Z",
+      completedAt: "2026-04-24T00:00:01.000Z",
+      elapsedMs: 1000,
+      elapsed: "0:01",
+      usage,
+    },
+    diagnostics: {
+      usage,
+      messages: [{ role: "assistant", content: [{ type: "text", text: "ok" }] }],
+      toolAccess: {
+        activeToolNames: ["read"],
+        configuredToolNames: ["read", "submit_result"],
+        systemPromptHasAvailableTools: true,
+        systemPromptHasSubmitResult: true,
+      },
+    },
+  };
+}
+
+function createMockArtifactWriter(mode: "off" | "failure" | "always", ref?: { id: string; path: string }) {
+  return {
+    mode,
+    ref,
+    appended: [] as unknown[],
+    flushCalls: 0,
+    discardCalls: 0,
+    append(entry: unknown): Promise<void> {
+      this.appended.push(entry);
+      return Promise.resolve();
+    },
+    appendBestEffort(entry: unknown): void {
+      this.appended.push(entry);
+    },
+    flush(): Promise<void> {
+      this.flushCalls += 1;
+      return Promise.resolve();
+    },
+    discard(): Promise<void> {
+      this.discardCalls += 1;
+      this.ref = undefined;
+      return Promise.resolve();
+    },
+    getWarning(): string | undefined {
+      return undefined;
+    },
+  };
+}
 
 function writeFact(kbRoot: string, file: string, lines: string[]): void {
   fs.writeFileSync(path.join(kbRoot, file), `${lines.join("\n")}\n`);
@@ -336,4 +520,137 @@ test("lookup artifact mode defaults to failure-only and honors env overrides", (
       process.env.PI_RAINMAN_DEBUG_ARTIFACTS = previous;
     }
   }
+});
+
+test("rainman tool integration discards failure-only artifacts on success", async (t) => {
+  const kbRoot = createKb(t);
+  const ui = createTestUi();
+  const pi = createTestPi();
+  const artifactWriter = createMockArtifactWriter("failure", {
+    id: "artifact-1",
+    path: path.join(kbRoot, "artifact-1.jsonl"),
+  });
+  createRainmanExtension({
+    getKbRoot: () => kbRoot,
+    createLookupArtifactWriter: async () => artifactWriter as any,
+    executeLookupQuestion: async (question) => createLookupOutcome(question, kbRoot) as any,
+    now: (() => {
+      let value = 1;
+      return () => value++;
+    })(),
+  })(pi as any);
+
+  const ctx = createTestContext(ui);
+  const updates: Array<any> = [];
+  const tool = pi.tools.get("rainman_lookup");
+  assert.ok(tool);
+
+  const response = await tool.execute(
+    "tool-call-1",
+    { question: "Where is the workflow?" },
+    undefined,
+    (update: unknown) => updates.push(update),
+    ctx,
+  );
+
+  assert.equal(artifactWriter.flushCalls, 1);
+  assert.equal(artifactWriter.discardCalls, 1);
+  assert.equal(response.details.artifact, undefined);
+  assert.equal(response.details.artifactFormat, undefined);
+  assert.equal(pi.entries.some((entry) => entry.customType === "rainman-lookup-run"), false);
+  assert.ok(updates.some((update) => update.details?.phase === "artifact-created"));
+  assert.ok(updates.some((update) => update.details?.phase === "artifact-discarded"));
+});
+
+test("rainman tool integration retains diagnostics and artifact on failure", async (t) => {
+  const kbRoot = createKb(t);
+  const ui = createTestUi();
+  const pi = createTestPi();
+  const artifactWriter = createMockArtifactWriter("failure", {
+    id: "artifact-2",
+    path: path.join(kbRoot, "artifact-2.jsonl"),
+  });
+  const diagnosticError = new Error("lookup exploded") as Error & Record<string, unknown>;
+  diagnosticError.lookupMessages = [{ role: "assistant", content: [{ type: "text", text: "bad" }] }];
+  diagnosticError.lookupToolAccess = {
+    activeToolNames: ["read"],
+    configuredToolNames: ["read", "submit_result"],
+    systemPromptHasAvailableTools: true,
+    systemPromptHasSubmitResult: true,
+  };
+  diagnosticError.lookupUsage = createLookupUsageSummary();
+
+  createRainmanExtension({
+    getKbRoot: () => kbRoot,
+    createLookupArtifactWriter: async () => artifactWriter as any,
+    executeLookupQuestion: async () => {
+      throw diagnosticError;
+    },
+    now: (() => {
+      let value = 10;
+      return () => value++;
+    })(),
+  })(pi as any);
+
+  const ctx = createTestContext(ui);
+  const updates: Array<any> = [];
+  const tool = pi.tools.get("rainman_lookup");
+  assert.ok(tool);
+
+  await assert.rejects(
+    () => tool.execute("tool-call-2", { question: "Why failed?" }, undefined, (update: unknown) => updates.push(update), ctx),
+    /lookup exploded/,
+  );
+
+  assert.equal(artifactWriter.discardCalls, 0);
+  assert.ok(pi.entries.some((entry) => entry.customType === "rainman-lookup-run"));
+  assert.ok(updates.some((update) => update.details?.phase === "artifact-finalized"));
+  const runFinishedEntry = artifactWriter.appended.find((entry: any) => entry.entryType === "run-finished") as any;
+  assert.ok(runFinishedEntry);
+  assert.equal(runFinishedEntry.record.status, "error");
+  assert.equal(runFinishedEntry.record.diagnostics?.usage?.totalTokens, 15);
+  assert.deepEqual(runFinishedEntry.record.diagnostics?.toolAccess?.activeToolNames, ["read"]);
+});
+
+test("rainman tool integration preserves remaining activity when lookups overlap", async (t) => {
+  const kbRoot = createKb(t);
+  const ui = createTestUi();
+  const pi = createTestPi();
+  const first = createDeferred<void>();
+  const second = createDeferred<void>();
+  const waits = new Map<string, Deferred<void>>([
+    ["first", first],
+    ["second", second],
+  ]);
+
+  createRainmanExtension({
+    getKbRoot: () => kbRoot,
+    createLookupArtifactWriter: async () => createMockArtifactWriter("off") as any,
+    executeLookupQuestion: async (question, _signal, _ctx, progress) => {
+      progress?.update(`running ${question}`, { phase: "integration-test" }, { includeContent: false });
+      await waits.get(question)!.promise;
+      return createLookupOutcome(question, kbRoot) as any;
+    },
+    now: (() => {
+      let value = 100;
+      return () => value++;
+    })(),
+  })(pi as any);
+
+  const ctx = createTestContext(ui);
+  const tool = pi.tools.get("rainman_lookup");
+  assert.ok(tool);
+
+  const firstRun = tool.execute("call-first", { question: "first" }, undefined, undefined, ctx);
+  await Promise.resolve();
+  const secondRun = tool.execute("call-second", { question: "second" }, undefined, undefined, ctx);
+  await Promise.resolve();
+
+  assert.match(ui.currentWorkingMessage ?? "", /running second/);
+  second.resolve();
+  await secondRun;
+  assert.match(ui.currentWorkingMessage ?? "", /running first/);
+  first.resolve();
+  await firstRun;
+  assert.equal(ui.currentWorkingMessage, undefined);
 });

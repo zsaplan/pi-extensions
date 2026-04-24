@@ -2251,10 +2251,13 @@ function buildLookupRunRecord(options: {
   };
 }
 
-function safeBuildFactFileIndex(kbRoot: string): FactFileIndex | null {
+function safeBuildFactFileIndex(
+  kbRoot: string,
+  buildIndex: typeof buildFactFileIndex = buildFactFileIndex,
+): FactFileIndex | null {
   try {
     if (!fs.existsSync(kbRoot) || !fs.statSync(kbRoot).isDirectory()) return null;
-    return buildFactFileIndex(kbRoot);
+    return buildIndex(kbRoot);
   } catch {
     return null;
   }
@@ -2317,7 +2320,31 @@ async function executeLookupQuestion(
   );
 }
 
-export default function rainman(pi: ExtensionAPI): void {
+type RainmanExtensionDeps = {
+  executeLookupQuestion: typeof executeLookupQuestion;
+  createLookupArtifactWriter: typeof createLookupArtifactWriter;
+  getKbRoot: typeof getKbRoot;
+  buildFactFileIndex: typeof buildFactFileIndex;
+  listMarkdownFiles: typeof listMarkdownFiles;
+  getLookupArtifactMode: typeof getLookupArtifactMode;
+  now: () => number;
+};
+
+export function createRainmanExtension(
+  overrides: Partial<RainmanExtensionDeps> = {},
+): (pi: ExtensionAPI) => void {
+  const deps: RainmanExtensionDeps = {
+    executeLookupQuestion,
+    createLookupArtifactWriter,
+    getKbRoot,
+    buildFactFileIndex,
+    listMarkdownFiles,
+    getLookupArtifactMode,
+    now: () => Date.now(),
+    ...overrides,
+  };
+
+  return function rainman(pi: ExtensionAPI): void {
   const state: RuntimeState = {
     activeRuns: 0,
     activeActivities: new Map(),
@@ -2474,15 +2501,15 @@ export default function rainman(pi: ExtensionAPI): void {
     ],
     parameters: LOOKUP_TOOL_PARAMS,
     async execute(toolCallId, params: Static<typeof LOOKUP_TOOL_PARAMS>, signal, onUpdate, ctx) {
-      const startedAtMs = Date.now();
+      const startedAtMs = deps.now();
       const runId = randomUUID();
-      const kbRoot = getKbRoot();
+      const kbRoot = deps.getKbRoot();
       const fallbackModel = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(unknown model)";
-      const artifactWriter = await createLookupArtifactWriter({
+      const artifactWriter = await deps.createLookupArtifactWriter({
         toolCallId,
         runId,
         question: params.question,
-        mode: getLookupArtifactMode(),
+        mode: deps.getLookupArtifactMode(),
       });
       const artifactContext = {
         writer: artifactWriter,
@@ -2500,7 +2527,7 @@ export default function rainman(pi: ExtensionAPI): void {
       let finalError: unknown;
       let executionForRecord: LookupExecutionMeta | undefined;
       let diagnosticsForRecord: LookupDiagnostics | undefined;
-      const fileIndexForRecord = safeBuildFactFileIndex(kbRoot);
+      const fileIndexForRecord = safeBuildFactFileIndex(kbRoot, deps.buildFactFileIndex);
 
       if (artifactWriter.ref) {
         onUpdate?.({
@@ -2526,11 +2553,11 @@ export default function rainman(pi: ExtensionAPI): void {
       );
 
       try {
-        outcome = await executeLookupQuestion(params.question, signal, ctx, progress, artifactContext);
+        outcome = await deps.executeLookupQuestion(params.question, signal, ctx, progress, artifactContext);
         executionForRecord = outcome.execution;
         diagnosticsForRecord = outcome.diagnostics;
         recordQuery({
-          ranAt: Date.now(),
+          ranAt: deps.now(),
           status: outcome.result.status,
           hit: outcome.result.status === "answered",
           isError: false,
@@ -2561,7 +2588,7 @@ export default function rainman(pi: ExtensionAPI): void {
           kbRoot,
         });
         recordQuery({
-          ranAt: Date.now(),
+          ranAt: deps.now(),
           hit: false,
           isError: true,
           elapsedMs: executionForRecord.elapsedMs,
@@ -2688,7 +2715,7 @@ export default function rainman(pi: ExtensionAPI): void {
       if (!ctx.hasUI) return;
 
       if (subcommand === "test") {
-        const selfTestActivityOwner = `rainman-test-${Date.now()}`;
+        const selfTestActivityOwner = `rainman-test-${deps.now()}`;
         const progress = createLookupProgressReporter(
           undefined,
           ctx,
@@ -2706,7 +2733,7 @@ export default function rainman(pi: ExtensionAPI): void {
         );
 
         try {
-          const outcome = await executeLookupQuestion(
+          const outcome = await deps.executeLookupQuestion(
             RAINMAN_SELF_TEST_QUESTION,
             ctx.signal,
             ctx,
@@ -2752,10 +2779,10 @@ export default function rainman(pi: ExtensionAPI): void {
         return;
       }
 
-      const kbRoot = getKbRoot();
+      const kbRoot = deps.getKbRoot();
       const exists = fs.existsSync(kbRoot);
-      const fileIndex = exists ? buildFactFileIndex(kbRoot) : null;
-      const fileCount = exists ? listMarkdownFiles(kbRoot).length : 0;
+      const fileIndex = exists ? deps.buildFactFileIndex(kbRoot) : null;
+      const fileCount = exists ? deps.listMarkdownFiles(kbRoot).length : 0;
       const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(uses first available model)";
       const lastRun = state.lastRunAt ? new Date(state.lastRunAt).toLocaleString() : "never";
       const lastElapsed = state.lastElapsedMs === null ? "none" : formatElapsed(state.lastElapsedMs);
@@ -2780,7 +2807,7 @@ export default function rainman(pi: ExtensionAPI): void {
           `Last warnings: ${state.lastWarningCount ?? "none"}`,
           `Last malformed files: ${state.lastMalformedFileCount ?? "none"}`,
           `Last artifact: ${state.lastArtifactPath ?? "none"}`,
-          `Artifact mode: ${getLookupArtifactMode()} (${DEBUG_ARTIFACTS_ENV_VAR})`,
+          `Artifact mode: ${deps.getLookupArtifactMode()} (${DEBUG_ARTIFACTS_ENV_VAR})`,
           `KB root override env: ${KB_ROOT_ENV_VAR}`,
           ...(fileIndex?.warnings ?? []).map((warning) => `Warning: ${warning}`),
         ].join("\n"),
@@ -2788,4 +2815,9 @@ export default function rainman(pi: ExtensionAPI): void {
       );
     },
   });
+  };
+}
+
+export default function rainman(pi: ExtensionAPI): void {
+  return createRainmanExtension()(pi);
 }
