@@ -1261,13 +1261,111 @@ function formatGrepResult(matches: GrepHit[]): string {
   return matches.map((match) => `${match.file}:${match.lineNumber} | ${match.line}`).join("\n");
 }
 
+const CANDIDATE_STOPWORDS = new Set([
+  "about",
+  "company",
+  "context",
+  "could",
+  "does",
+  "exact",
+  "from",
+  "have",
+  "into",
+  "located",
+  "location",
+  "should",
+  "source",
+  "that",
+  "this",
+  "what",
+  "when",
+  "where",
+  "which",
+  "with",
+  "work",
+  "workspace",
+  "would",
+]);
+
+const CANDIDATE_SUFFIX_BOOSTS = new Map([
+  ["DEFINITION", 80],
+  ["REPOSITORY", 60],
+  ["LOCATION", 50],
+  ["WORKFLOW", 35],
+  ["CONFIGURATION", 25],
+  ["DEPLOYMENT", 20],
+  ["TROUBLESHOOTING", -20],
+]);
+
+function tokenizeForCandidateRanking(value: string): string[] {
+  const tokens: string[] = [];
+  for (const rawPart of value.split(/[^a-zA-Z0-9]+/)) {
+    const compact = rawPart.toLowerCase().trim();
+    if (!compact) continue;
+    tokens.push(compact);
+    tokens.push(...rawPart
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .toLowerCase()
+      .split(/\s+/));
+  }
+
+  return [...new Set(tokens
+    .map((token) => token.trim())
+    .filter((token) => token.length > 2 && !CANDIDATE_STOPWORDS.has(token)))];
+}
+
+function scoreCandidateFile(questionTokens: string[], file: string, questionCompact: string): number {
+  const baseName = file.replace(/\.md$/i, "");
+  const [subject = "", topic = ""] = baseName.split("__");
+  const subjectTokens = tokenizeForCandidateRanking(subject);
+  const topicTokens = tokenizeForCandidateRanking(topic);
+  const allFileTokens = new Set([...subjectTokens, ...topicTokens]);
+  let score = 0;
+  const compactSubject = subject.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (compactSubject && questionCompact.includes(compactSubject)) score += 120;
+
+  for (const token of questionTokens) {
+    if (subjectTokens.includes(token)) score += 100;
+    else if (allFileTokens.has(token)) score += 35;
+  }
+
+  score += CANDIDATE_SUFFIX_BOOSTS.get(topic) ?? 0;
+  if (questionTokens.length > 0 && questionTokens.every((token) => allFileTokens.has(token))) {
+    score += 40;
+  }
+  return score;
+}
+
+export function rankCandidateFactFiles(question: string, fileIndex: FactFileIndex, limit = 12): string[] {
+  const questionTokens = tokenizeForCandidateRanking(question);
+  if (questionTokens.length === 0) return [];
+
+  const questionCompact = question.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return fileIndex.validFiles
+    .map((file) => ({ file, score: scoreCandidateFile(questionTokens, file, questionCompact) }))
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => right.score - left.score || left.file.localeCompare(right.file))
+    .slice(0, limit)
+    .map((candidate) => candidate.file);
+}
+
 function buildPrompt(question: string, fileIndex: FactFileIndex): string {
+  const candidateFiles = rankCandidateFactFiles(question, fileIndex);
+  const candidateSection = candidateFiles.length > 0
+    ? [
+      "Ranked candidate files from deterministic filename matching:",
+      ...candidateFiles.map((file, index) => `${index + 1}. ${file}`),
+      "Start by reading the best candidate files directly. Do not run broad grep unless these candidates fail.",
+    ].join("\n")
+    : "No deterministic candidate files were found; use find with the question's key nouns first.";
+
   return [
     "Answer the question using only markdown evidence from the knowledge root.",
     "Use grep and find only for navigation.",
     "Use read to gather exact evidence from lint-clean structured fact files.",
     `Available structured fact files: ${fileIndex.validFiles.length}`,
     `Malformed fact files unavailable as evidence: ${fileIndex.invalidFiles.length}`,
+    candidateSection,
     "Prefer the smallest valid data payload.",
     "For a normal direct answer, use data.answer and cite /data/answer.",
     "When you are ready, call submit_result.",

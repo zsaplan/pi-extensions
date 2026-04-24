@@ -77,3 +77,52 @@ A live `/rainman eval` run still needs to be launched from pi because the harnes
 ### Decision
 
 Keep this as the first measurable harness/prompt experiment. If the BriteCore case still times out, the next likely experiment is deterministic candidate-file preselection before launching the subagent.
+
+## 2026-04-24 — deterministic candidate preselection experiment
+
+### Plan
+
+Reduce subagent wandering by precomputing likely fact files from filename overlap before the model starts. Put those ranked candidates directly in the first prompt so the subagent can read first instead of running broad `grep`/`find` loops.
+
+### Action
+
+- Added deterministic candidate ranking based on question tokens and fact filenames.
+- Boosted direct topic files such as `__DEFINITION`, `__REPOSITORY`, `__LOCATION`, and `__WORKFLOW`.
+- Added the ranked candidate list to the first subagent prompt.
+- Added a regression test that ensures `BRITECORE__DEFINITION.md` and `BRITECORE__REPOSITORY.md` outrank noisy `RAIN_CORE__DEFINITION.md` / troubleshooting-style files for the BriteCore workspace question.
+
+### Results
+
+Baseline retained artifact for the BriteCore workspace question:
+
+- Status: timeout/error.
+- Inner Rainman elapsed: 45,231ms.
+- Tool behavior: 21 tool calls before attempted submit.
+- Total tokens: 233,269.
+- Cost: $0.252367.
+
+First live prompt-bound run after harness/prompt changes but before candidate tokenizer fix:
+
+- Outer `pi -p` wall time: ~23.33s.
+- Inner Rainman elapsed: 14,563ms.
+- Status: answered.
+- Tool behavior: still read several wrong `*CORE*` candidate files before finding `BRITECORE__DEFINITION.md`.
+- Total tokens: 15,164.
+- Cost: $0.048644.
+- Artifact: `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-24T23-47-13-302Z_what-is-britecore-in-the-context-of-this-workspace-company_31011698-1e6a-453d-8801-09502f4ed4df.jsonl`
+
+After fixing tokenizer/ranking to preserve `BriteCore` as `britecore` instead of only `brite`/`core`:
+
+- Outer `pi -p` wall time: ~15.70s.
+- Inner Rainman elapsed: 10,436ms.
+- Status: answered.
+- Tool behavior: `read BRITECORE__DEFINITION.md`, then `submit_result` repair, then accepted `submit_result`.
+- Total tokens: 4,586.
+- Cost: $0.022789.
+- Artifact: `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-24T23-48-18-345Z_what-is-britecore-in-the-context-of-this-workspace-company_413ed331-508b-4f86-8f73-ca170cb0e516.jsonl`
+
+Measured against the 45,231ms baseline, the best current inner Rainman run is about 76.9% faster.
+
+### Decision
+
+Keep deterministic candidate preselection. It exceeds the 50% speedup target on the motivating BriteCore question while also reducing token use and cost substantially. The next experiment should target avoiding the extra submit repair by making quote formatting expectations clearer in the prompt.
