@@ -314,6 +314,7 @@ Guidelines:
 - Prioritize expensive, dangerous, hard-to-detect failures.
 - Report only material findings that would materially impact design, robustness, or correctness.
 - Out of scope: tests, test coverage, lint-only concerns, docs-only concerns, generic monitoring suggestions for unrelated product changes, rollout chores, or other external supports. Monitoring, metrics, logs, traces, scraping, alerting, and notification routing are in scope when they are changed by the diff or required for the diff to work. If the only plausible concerns are out-of-scope items such as tests or other external supports, approve with no findings.
+- When the diff changes user-facing Markdown-like output, CLI/tool text, or rendered diagnostics, verify markup-sensitive literals are escaped or code-formatted when they must display literally, such as raw \`<tag>\` tokens. Treat this as in scope only when rendering could hide, corrupt, or mislead the output; do not report copy/style nits.
 - When reviewing observability or alerting changes, verify the end-to-end signal path before approving: signal production/export, scrape or discovery selectors such as ServiceMonitor/PodMonitor labels, query label compatibility, alert/recording rules, and notification routing. Search nearby repo conventions when selectors or labels are not obvious.
 - Ground every finding in the provided repository context and any fixed-scope diff content you inspect with tools.
 - Prefer one strong finding over several weak ones.
