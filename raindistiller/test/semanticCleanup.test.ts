@@ -3,13 +3,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { distillKnowledgeFiles } from "../src/distill.ts";
+import {
+  distillKnowledgeFiles,
+  type DuplicateGroup,
+} from "../src/distill.ts";
 import {
   extractRaincatcherFilesWritten,
   getConfiguredSemanticCleanupMode,
   isSemanticCleanupEnabled,
   parseDistillArgs,
   parseDuplicateGroupDecision,
+  resolveDuplicateGroupDecision,
   tokenizeArgs,
 } from "../src/index.ts";
 import {
@@ -25,6 +29,58 @@ function writeKbFile(kbRoot: string, filePath: string, content: string): void {
   const absolutePath = path.join(kbRoot, filePath);
   fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
   fs.writeFileSync(absolutePath, content, "utf8");
+}
+
+function makeDuplicateGroup(): DuplicateGroup {
+  return {
+    id: "group-1",
+    kind: "exact",
+    representativeFact: "- USES | deterministic duplicate fixture",
+    occurrences: [
+      {
+        id: "occ-1",
+        filePath: "CANONICAL__TARGET.md",
+        heading: "CANONICAL / TARGET",
+        selected: false,
+        lineIndex: 2,
+        lineNumber: 3,
+        text: "- USES | deterministic duplicate fixture",
+        normalized: "uses deterministic duplicate fixture",
+        headingNormalized: "canonical target",
+        tokens: ["uses", "deterministic", "duplicate", "fixture"],
+        tokenSet: ["uses", "deterministic", "duplicate", "fixture"],
+        trigrams: ["det", "dup", "fix"],
+      },
+      {
+        id: "occ-2",
+        filePath: "DUP__TARGET.md",
+        heading: "DUP / TARGET",
+        selected: true,
+        lineIndex: 2,
+        lineNumber: 3,
+        text: "- USES | deterministic duplicate fixture",
+        normalized: "uses deterministic duplicate fixture",
+        headingNormalized: "dup target",
+        tokens: ["uses", "deterministic", "duplicate", "fixture"],
+        tokenSet: ["uses", "deterministic", "duplicate", "fixture"],
+        trigrams: ["det", "dup", "fix"],
+      },
+    ],
+    strongestPairs: [{
+      leftId: "occ-1",
+      rightId: "occ-2",
+      similarity: {
+        exactNormalized: true,
+        sharedTokenCount: 4,
+        tokenJaccard: 1,
+        trigramJaccard: 1,
+        levenshteinSimilarity: 1,
+        headingJaccard: 0.5,
+        composite: 1,
+      },
+    }],
+    maxComposite: 1,
+  };
 }
 
 test("tokenizeArgs preserves quoted paths and parseDistillArgs classifies command targets", () => {
@@ -106,6 +162,54 @@ test("parseDuplicateGroupDecision accepts JSON decisions and rejects malformed r
   assert.throws(() => parseDuplicateGroupDecision("{\"action\":\"merge\"}"), /invalid action/);
   assert.throws(() => parseDuplicateGroupDecision("{\"action\":\"dedupe\"}"), /without keepOccurrenceId/);
   assert.throws(() => parseDuplicateGroupDecision("{\"action\":\"keep_all\",\"reason\":5}"), /non-string reason/);
+});
+
+test("resolveDuplicateGroupDecision repairs truncated adjudication responses", async () => {
+  const calls: string[] = [];
+  const decision = await resolveDuplicateGroupDecision(
+    makeDuplicateGroup(),
+    async (request) => {
+      calls.push(request.kind);
+      if (request.kind === "adjudicate") {
+        return '{"action":"dedupe","keepOccurrenceId":"occ-1"';
+      }
+
+      assert.match(request.parseError, /JSON|property value|Unexpected end/i);
+      assert.match(request.invalidResponse, /keepOccurrenceId/);
+      return '{"action":"dedupe","keepOccurrenceId":"occ-1","reason":"same fact"}';
+    },
+  );
+
+  assert.deepEqual(decision, {
+    action: "dedupe",
+    keepOccurrenceId: "occ-1",
+    reason: "same fact",
+  });
+  assert.deepEqual(calls, ["adjudicate", "repair"]);
+});
+
+test("resolveDuplicateGroupDecision retries adjudication after a failed repair attempt", async () => {
+  let step = 0;
+  const calls: string[] = [];
+  const decision = await resolveDuplicateGroupDecision(
+    makeDuplicateGroup(),
+    async (request) => {
+      calls.push(request.kind);
+      step += 1;
+
+      if (step === 1) return '{"action":"keep_all"';
+      if (step === 2) return "still not json";
+      if (step === 3) return '{"action":"keep_all","reason":"different scope"}';
+
+      throw new Error(`Unexpected request at step ${step}: ${request.kind}`);
+    },
+  );
+
+  assert.deepEqual(decision, {
+    action: "keep_all",
+    reason: "different scope",
+  });
+  assert.deepEqual(calls, ["adjudicate", "repair", "adjudicate"]);
 });
 
 test("parseSemanticCleanupProposal accepts fenced JSON responses", () => {
