@@ -95,6 +95,7 @@ const MANUAL_THINKING_LEVEL = "xhigh" as const;
 const AUTO_THINKING_LEVEL = "medium" as const;
 const DEFAULT_SEMANTIC_CLEANUP_MODE = "manual_only" as const;
 const SEMANTIC_CLEANUP_MODE_ENV_VAR = "RAINDISTILLER_SEMANTIC_CLEANUP_MODE";
+const MAX_ADJUDICATION_ATTEMPTS = 2;
 
 const ADJUDICATION_SYSTEM_PROMPT = `You are Raindistiller, a conservative knowledge-base dedupe reviewer.
 
@@ -115,6 +116,20 @@ Rules:
 - Prefer keeping a non-selected existing KB occurrence over a selected occurrence when equally canonical.
 - Prefer valid structured occurrences over malformed or legacy occurrences when the fact is otherwise the same.
 - Prefer more specific and authoritative-looking file context over generic context.
+- Never invent an occurrenceId.`;
+
+const ADJUDICATION_REPAIR_SYSTEM_PROMPT = `You repair malformed Raindistiller duplicate-group adjudication outputs.
+
+Return JSON only. No markdown. No code fences.
+Use exactly one of these shapes:
+{"action":"dedupe","keepOccurrenceId":"OCCURRENCE_ID","reason":"one short sentence"}
+{"action":"keep_all","reason":"one short sentence"}
+
+Rules:
+- Preserve the prior answer when it is recoverable.
+- If the prior answer is empty, truncated, or unusable, make a fresh conservative decision from the supplied group context.
+- keepOccurrenceId must exactly match one provided occurrenceId.
+- Prefer keep_all over guessing.
 - Never invent an occurrenceId.`;
 
 function getSessionKbRoot(): string {
@@ -265,6 +280,75 @@ export function parseDuplicateGroupDecision(text: string): DuplicateGroupDecisio
   }
 
   return parsed;
+}
+
+type DuplicateDecisionRequest =
+  | {
+    kind: "adjudicate";
+    group: DuplicateGroup;
+  }
+  | {
+    kind: "repair";
+    group: DuplicateGroup;
+    invalidResponse: string;
+    parseError: string;
+  };
+
+type DuplicateDecisionResponder = (request: DuplicateDecisionRequest) => Promise<string>;
+
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function buildAdjudicationRepairPrompt(request: Extract<DuplicateDecisionRequest, { kind: "repair" }>): string {
+  const invalidResponse = request.invalidResponse.trim();
+  const occurrenceIds = request.group.occurrences.map((occurrence) => occurrence.id);
+
+  return [
+    "Repair or regenerate a valid duplicate-group decision.",
+    `Previous parse error: ${request.parseError}`,
+    `Allowed occurrenceIds: ${occurrenceIds.length > 0 ? occurrenceIds.join(", ") : "(none)"}`,
+    "",
+    "Malformed response:",
+    "<response>",
+    invalidResponse.length > 0 ? invalidResponse : "(empty)",
+    "</response>",
+    "",
+    "Candidate group context:",
+    buildAdjudicationPrompt(request.group),
+  ].join("\n");
+}
+
+export async function resolveDuplicateGroupDecision(
+  group: DuplicateGroup,
+  responder: DuplicateDecisionResponder,
+): Promise<DuplicateGroupDecision> {
+  let lastError: unknown = new Error("No duplicate-group adjudication response received.");
+
+  for (let attempt = 0; attempt < MAX_ADJUDICATION_ATTEMPTS; attempt += 1) {
+    const responseText = await responder({ kind: "adjudicate", group });
+    try {
+      return parseDuplicateGroupDecision(responseText);
+    } catch (error) {
+      lastError = error;
+    }
+
+    try {
+      const repairedText = await responder({
+        kind: "repair",
+        group,
+        invalidResponse: responseText,
+        parseError: formatErrorMessage(lastError),
+      });
+      return parseDuplicateGroupDecision(repairedText);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(formatErrorMessage(lastError));
 }
 
 function describeStructuredOccurrence(text: string): {
@@ -429,19 +513,26 @@ async function resolveModel(ctx: any): Promise<ResolvedModel | null> {
   };
 }
 
-async function adjudicateGroup(
-  group: DuplicateGroup,
+async function completeDuplicateDecisionRequest(
+  request: DuplicateDecisionRequest,
   resolvedModel: ResolvedModel,
   thinkingLevel: ThinkingLevel,
   signal?: AbortSignal,
-): Promise<DuplicateGroupDecision> {
+): Promise<string> {
+  const systemPrompt = request.kind === "repair"
+    ? ADJUDICATION_REPAIR_SYSTEM_PROMPT
+    : ADJUDICATION_SYSTEM_PROMPT;
+  const promptText = request.kind === "repair"
+    ? buildAdjudicationRepairPrompt(request)
+    : buildAdjudicationPrompt(request.group);
+
   const response = await completeSimple(
     resolvedModel.model,
     {
-      systemPrompt: ADJUDICATION_SYSTEM_PROMPT,
+      systemPrompt,
       messages: [{
         role: "user",
-        content: [{ type: "text", text: buildAdjudicationPrompt(group) }],
+        content: [{ type: "text", text: promptText }],
         timestamp: Date.now(),
       }],
     },
@@ -453,7 +544,19 @@ async function adjudicateGroup(
     },
   );
 
-  return parseDuplicateGroupDecision(extractMessageText(response));
+  return extractMessageText(response);
+}
+
+async function adjudicateGroup(
+  group: DuplicateGroup,
+  resolvedModel: ResolvedModel,
+  thinkingLevel: ThinkingLevel,
+  signal?: AbortSignal,
+): Promise<DuplicateGroupDecision> {
+  return resolveDuplicateGroupDecision(
+    group,
+    async (request) => completeDuplicateDecisionRequest(request, resolvedModel, thinkingLevel, signal),
+  );
 }
 
 async function proposeSemanticCleanupForFile(

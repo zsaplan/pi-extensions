@@ -10,6 +10,7 @@ A pi extension that distills Raincatcher knowledge files using model-reviewed du
 - Uses a lightweight lexical dedupe core to generate exact and near-duplicate candidate groups
 - Augments candidate review with canonical structured-fact parsing when occurrences are valid structured bullets
 - Uses the active pi model to adjudicate each candidate group conservatively before removal
+- Retries and repairs malformed duplicate-adjudication JSON responses before surfacing a warning
 - Defaults to `medium` reasoning for automatic post-capture distillation
 - Defaults to `xhigh` reasoning for manual `/raindistiller distill` runs
 - Prefers keeping existing KB copies over newly captured duplicates when possible
