@@ -2,7 +2,7 @@
 
 This file captures the current accepted Rainman performance baseline for future experiments. Update it only after an experiment is kept and validated.
 
-## 2026-04-25 — post candidate-ranking and citation-prompt baseline
+## 2026-04-25 — candidate limit 5 baseline
 
 ### Scope
 
@@ -38,30 +38,34 @@ Current accepted implementation includes:
 - deterministic candidate-file preselection
 - n=5 eval sampling requirement
 - clearer raw citation quote instructions
+- deterministic rubric accuracy checks
+- single-best-file prompt discipline
+- ranked candidate list capped at 5 files
 
 Current n=5 artifact set:
 
-- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-24T23-59-48-993Z_what-is-britecore-in-the-context-of-this-workspace-company_ebeff3ef-c0be-4497-af3c-d66394918dd0.jsonl`
-- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-00-01-464Z_what-is-britecore-in-the-context-of-this-workspace-company_47edfd8b-7673-4690-be07-ec88ab322532.jsonl`
-- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-00-09-839Z_what-is-britecore-in-the-context-of-this-workspace-company_f067922f-f8c5-46a0-bba1-af8ba99c36e9.jsonl`
-- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-00-24-624Z_what-is-britecore-in-the-context-of-this-workspace-company_fda408a5-df35-4754-a3b1-2aad2cdef885.jsonl`
-- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-00-35-034Z_what-is-britecore-in-the-context-of-this-workspace-company_213bac15-1d6c-4da8-b418-5b6e6f57fcc6.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-32-40-261Z_what-is-britecore-in-the-context-of-this-workspace-company_8d0983af-3fae-49ca-a0b2-e96cb833f405.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-32-49-870Z_what-is-britecore-in-the-context-of-this-workspace-company_1b9aefb0-8b40-49bc-ab52-e0f9afa1d9e7.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-32-58-374Z_what-is-britecore-in-the-context-of-this-workspace-company_2304be92-81e7-47e0-a76f-bc3aa3d54e81.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-33-06-002Z_what-is-britecore-in-the-context-of-this-workspace-company_21154408-a886-4e25-9092-21a2c7b634ed.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-33-14-757Z_what-is-britecore-in-the-context-of-this-workspace-company_5086f3d5-2471-4795-93f3-dedb55d482bd.jsonl`
 
 | Metric | Current baseline |
 | --- | ---: |
 | n | 5 |
 | Success rate | 5/5 answered |
-| Mean inner elapsed | 6,124.4ms |
-| Median inner elapsed | 6,353ms |
-| Min inner elapsed | 4,350ms |
-| Max inner elapsed | 7,513ms |
-| Std dev | 1,450.7ms |
-| Mean speedup vs original baseline | 86.5% |
-| Mean tokens | 3,513 |
-| Mean submit calls | 1.2 |
+| Mean inner elapsed | 4,132.2ms |
+| Median inner elapsed | 3,850ms |
+| Min inner elapsed | 3,794ms |
+| Max inner elapsed | 5,142ms |
+| Std dev | 571.9ms |
+| Mean speedup vs original baseline | 90.9% |
+| Mean tokens | 2,799.2 |
+| Mean tool calls | 2.0 |
+| Mean submit calls | 1.0 |
 
 ### Future comparison rule
 
 Future speed experiments should compare against this current accepted baseline unless the experiment targets a different question class or suite. Use at least n=5 before making reproducibility claims.
 
-For this BriteCore case, a future change should normally be considered materially faster only if it improves mean inner elapsed below 6,124.4ms without reducing the 5/5 success rate or citation validity.
+For this BriteCore case, a future change should normally be considered materially faster only if it improves mean inner elapsed below 4,132.2ms without reducing the 5/5 rubric pass rate or citation validity.

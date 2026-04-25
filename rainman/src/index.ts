@@ -1349,7 +1349,7 @@ function scoreCandidateFile(questionTokens: string[], file: string, questionComp
   return score;
 }
 
-export function rankCandidateFactFiles(question: string, fileIndex: FactFileIndex, limit = 12): string[] {
+export function rankCandidateFactFiles(question: string, fileIndex: FactFileIndex, limit = 5): string[] {
   const questionTokens = tokenizeForCandidateRanking(question);
   if (questionTokens.length === 0) return [];
 

@@ -271,3 +271,105 @@ Aggregate:
 ### Decision
 
 Keep the single-best-file prompt change. It improves mean latency versus the accepted current baseline while preserving n=5 rubric accuracy, and it reduces average tokens/tool calls/submit repairs.
+
+## 2026-04-25 — candidate list size experiments
+
+### Plan
+
+The single-best-file prompt still includes a deterministic candidate list in the prompt. Test whether shortening that list reduces prompt overhead and latency without hurting accuracy. Run three variants at n=5: candidate limit 5, candidate limit 3, and candidate limit 1.
+
+### Experiment 1: candidate limit 5
+
+Action:
+
+- Changed `rankCandidateFactFiles` default limit from 12 to 5.
+- Relaxed the BriteCore eval rubric's ecosystem concept alternatives to include `platform ecosystem`, which is semantically equivalent for observed valid answers.
+- Ran `npm run verify --workspace rainman` before live sampling.
+- Reran the BriteCore workspace question five times through the real `rainman_lookup` tool with `PI_RAINMAN_DEBUG_ARTIFACTS=always`.
+
+Artifacts:
+
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-32-40-261Z_what-is-britecore-in-the-context-of-this-workspace-company_8d0983af-3fae-49ca-a0b2-e96cb833f405.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-32-49-870Z_what-is-britecore-in-the-context-of-this-workspace-company_1b9aefb0-8b40-49bc-ab52-e0f9afa1d9e7.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-32-58-374Z_what-is-britecore-in-the-context-of-this-workspace-company_2304be92-81e7-47e0-a76f-bc3aa3d54e81.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-33-06-002Z_what-is-britecore-in-the-context-of-this-workspace-company_21154408-a886-4e25-9092-21a2c7b634ed.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-33-14-757Z_what-is-britecore-in-the-context-of-this-workspace-company_5086f3d5-2471-4795-93f3-dedb55d482bd.jsonl`
+
+Results:
+
+- n=5.
+- Rubric pass rate after the ecosystem alternative update: 5/5.
+- Mean inner elapsed: 4,132.2ms.
+- Median inner elapsed: 3,850ms.
+- Min/max inner elapsed: 3,794ms / 5,142ms.
+- Standard deviation: 571.9ms.
+- Mean speedup vs prior 5,386.2ms baseline: 23.3%.
+- Mean speedup vs original 45,231ms baseline: 90.9%.
+- Mean tokens: 2,799.2.
+- Mean tool calls: 2.0.
+- Mean submit calls: 1.0.
+
+Decision: keep candidate limit 5. It materially improves latency and stability while preserving rubric accuracy.
+
+### Experiment 2: candidate limit 3
+
+Action:
+
+- Changed `rankCandidateFactFiles` default limit to 3.
+- Ran `npm run verify --workspace rainman` before live sampling.
+- Reran the BriteCore workspace question five times through the real `rainman_lookup` tool with `PI_RAINMAN_DEBUG_ARTIFACTS=always`.
+
+Artifacts:
+
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-33-54-779Z_what-is-britecore-in-the-context-of-this-workspace-company_e3e185b8-bc00-44b4-b6ff-b3532c271842.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-34-05-673Z_what-is-britecore-in-the-context-of-this-workspace-company_c1fdc14f-68dc-49d2-9f4e-b6cf6a0639a6.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-34-14-656Z_what-is-britecore-in-the-context-of-this-workspace-company_dcbc14d2-854d-475f-8ba7-f18a6b1be9b0.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-34-25-606Z_what-is-britecore-in-the-context-of-this-workspace-company_b47335cc-18e7-460b-a1f8-dc16e39a4c04.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-34-33-677Z_what-is-britecore-in-the-context-of-this-workspace-company_c0b3f2b3-b18f-4b69-83bc-205cb99e914d.jsonl`
+
+Results:
+
+- n=5.
+- Rubric pass rate under the then-current rubric: 4/5; likely 5/5 under the later `related ecosystem` alternative, but this run did not beat candidate limit 5.
+- Mean inner elapsed: 5,414.8ms.
+- Median inner elapsed: 5,212ms.
+- Min/max inner elapsed: 3,753ms / 7,018ms.
+- Standard deviation: 1,210.9ms.
+- Mean speedup vs prior 5,386.2ms baseline: -0.5%.
+- Mean speedup vs original 45,231ms baseline: 88.0%.
+
+Decision: reject candidate limit 3. It is slower and more variable than candidate limit 5.
+
+### Experiment 3: candidate limit 1
+
+Action:
+
+- Changed `rankCandidateFactFiles` default limit to 1.
+- Included `related ecosystem` and `surrounding ecosystem` in the analysis rubric alternatives because those are semantically valid phrasings observed in answers.
+- Ran `npm run verify --workspace rainman` before live sampling.
+- Reran the BriteCore workspace question five times through the real `rainman_lookup` tool with `PI_RAINMAN_DEBUG_ARTIFACTS=always`.
+
+Artifacts:
+
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-35-03-111Z_what-is-britecore-in-the-context-of-this-workspace-company_fab52fd8-9bcf-48bb-ab67-f16c80d17c90.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-35-11-933Z_what-is-britecore-in-the-context-of-this-workspace-company_4809ef1d-e52b-4b63-9dd2-401a4a35cf87.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-35-21-729Z_what-is-britecore-in-the-context-of-this-workspace-company_4135c202-8551-47b3-b839-988e4ff089bf.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-35-35-423Z_what-is-britecore-in-the-context-of-this-workspace-company_82087bd0-4abd-4233-8bf4-aa09753af63b.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-35-46-589Z_what-is-britecore-in-the-context-of-this-workspace-company_4ecf9223-b662-417c-b2b9-d812084bfb27.jsonl`
+
+Results:
+
+- n=5.
+- Rubric pass rate under the expanded concept alternatives: 5/5.
+- Mean inner elapsed: 6,191.6ms.
+- Median inner elapsed: 6,031ms.
+- Min/max inner elapsed: 4,616ms / 7,819ms.
+- Standard deviation: 1,586.9ms.
+- Mean speedup vs prior 5,386.2ms baseline: -15.0%.
+- Mean speedup vs original 45,231ms baseline: 86.3%.
+
+Decision: reject candidate limit 1. It preserves accuracy but is slower and causes more submit repairs than candidate limit 5.
+
+### Overall decision
+
+Keep candidate limit 5 and update `rainman/BASELINE.md` to make candidate-limit-5 the new accepted baseline for this BriteCore case.

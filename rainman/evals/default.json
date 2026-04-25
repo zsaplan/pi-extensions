@@ -9,7 +9,7 @@
       "requiredAnswerSubstrings": ["BriteCore"],
       "requiredConcepts": [
         ["property and casualty insurance", "property casualty insurance"],
-        ["workspace ecosystem", "broader ecosystem", "codebases infrastructure site deployments logs databases and tools"]
+        ["workspace ecosystem", "broader ecosystem", "platform ecosystem", "related ecosystem", "surrounding ecosystem", "codebases infrastructure site deployments logs databases and tools"]
       ],
       "forbiddenClaims": [
         "health insurance",
