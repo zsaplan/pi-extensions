@@ -460,6 +460,7 @@ Guidelines:
 - Only read output counts as evidence.
 - The read tool returns raw line-numbered content plus parsed structured fact summaries for the requested range.
 - Every populated field in data must have one or more exact citations.
+- Citation quote values must match the raw file text exactly and must omit the read tool's display-only line-number prefixes like "3 | ".
 - Submit as soon as you have 1-3 cited facts that answer the question.
 - If no direct evidence is available after six tool calls, return status insufficient_evidence so the caller can continue with normal investigation.
 - If relevant knowledge files conflict, return status conflict so the caller can investigate further.
@@ -475,7 +476,7 @@ Use these response shapes:
 - answered: data = {"answer":"..."}, citations = [{"path":"/data/answer", ...}], missingInformation = [], warnings = []
 - insufficient_evidence: data = {}, citations = [], missingInformation = ["..."] if helpful, warnings = []
 - conflict: data = {"conflicts":["...","..."]}, citations = [{"path":"/data/conflicts/0", ...}], missingInformation = [], warnings = []
-For citations, quote must exactly match the cited file lines.`;
+For citations, quote must exactly match the cited raw file lines without read-output line-number prefixes.`;
 
 export class ToolInputError extends Error {
   readonly code: string;
@@ -1372,6 +1373,7 @@ function buildPrompt(question: string, fileIndex: FactFileIndex): string {
     candidateSection,
     "Prefer the smallest valid data payload.",
     "For a normal direct answer, use data.answer and cite /data/answer.",
+    "For citation.quote, copy the raw fact text only; omit display line prefixes such as '3 | '.",
     "When you are ready, call submit_result.",
     "After submit_result succeeds, stop immediately.",
     "Question:",
@@ -1518,7 +1520,7 @@ function createCustomTools(
       label: "Submit Result",
       description: "Submit the final structured response. This is the only valid completion path.",
       promptSnippet:
-        "submit_result(status, data, citations, missingInformation, warnings) - finalize only when every populated data field is fully supported",
+        "submit_result(status, data, citations, missingInformation, warnings) - finalize only when every populated data field is fully supported; citation.quote must be raw file text without read line-number prefixes",
       promptGuidelines: [
         "Call submit_result exactly once when the final payload is ready.",
         "If submit_result returns an error, repair the payload and try again.",

@@ -164,3 +164,56 @@ Aggregate:
 ### Decision
 
 Keep deterministic candidate preselection. The improvement exceeds the 50% speedup target reproducibly at n=5 on the motivating BriteCore question while also reducing token use and cost substantially. The next experiment should target avoiding extra submit repairs by making quote formatting expectations clearer in the prompt.
+
+## 2026-04-25 — citation quote prompt clarity experiment
+
+### Plan
+
+The candidate-ranking experiment still often required a repair because the subagent sometimes put display line prefixes such as `3 | ` into `citation.quote`. Add explicit prompt guidance that citation quotes must be raw file text without read-output line-number prefixes, then rerun the BriteCore question at n=5.
+
+### Action
+
+- Updated the system prompt, first user prompt, and `submit_result` tool prompt snippet to say citation quotes must omit read-output line-number prefixes.
+- Ran `npm run verify --workspace rainman` before live sampling.
+- Reran the BriteCore workspace question five times through the real `rainman_lookup` tool with `PI_RAINMAN_DEBUG_ARTIFACTS=always`.
+
+Artifacts:
+
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-24T23-59-48-993Z_what-is-britecore-in-the-context-of-this-workspace-company_ebeff3ef-c0be-4497-af3c-d66394918dd0.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-00-01-464Z_what-is-britecore-in-the-context-of-this-workspace-company_47edfd8b-7673-4690-be07-ec88ab322532.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-00-09-839Z_what-is-britecore-in-the-context-of-this-workspace-company_f067922f-f8c5-46a0-bba1-af8ba99c36e9.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-00-24-624Z_what-is-britecore-in-the-context-of-this-workspace-company_fda408a5-df35-4754-a3b1-2aad2cdef885.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-00-35-034Z_what-is-britecore-in-the-context-of-this-workspace-company_213bac15-1d6c-4da8-b418-5b6e6f57fcc6.jsonl`
+
+Results against the 45,231ms baseline:
+
+| Run | Status | Inner elapsed | Speedup | Tokens | Tool calls | Submit calls |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | answered | 7,513ms | 83.4% | 4,740 | 3 | 2 |
+| 2 | answered | 4,350ms | 90.4% | 2,828 | 2 | 1 |
+| 3 | answered | 7,483ms | 83.5% | 3,076 | 3 | 1 |
+| 4 | answered | 4,923ms | 89.1% | 3,824 | 4 | 1 |
+| 5 | answered | 6,353ms | 86.0% | 3,097 | 3 | 1 |
+
+Aggregate:
+
+- n=5.
+- All 5 runs answered successfully.
+- Mean inner elapsed: 6,124.4ms.
+- Median inner elapsed: 6,353ms.
+- Min/max inner elapsed: 4,350ms / 7,513ms.
+- Standard deviation: 1,450.7ms.
+- Mean speedup vs baseline: 86.5%.
+- Mean tokens: 3,513.
+- Mean submit calls: 1.2.
+
+Compared with the previous n=5 candidate-ranking run:
+
+- Mean elapsed improved from 8,040.2ms to 6,124.4ms.
+- Mean speedup improved from 82.2% to 86.5%.
+- Variability dropped from 3,068.7ms stdev to 1,450.7ms stdev.
+- Mean submit calls dropped materially; 4 of 5 runs submitted successfully without repair.
+
+### Decision
+
+Keep the quote-format prompt clarification. It improves the n=5 mean latency and substantially reduces repair behavior without reducing answer success on the motivating question.
