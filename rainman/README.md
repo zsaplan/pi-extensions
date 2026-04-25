@@ -18,7 +18,6 @@ A pi extension that turns Raincatcher into a local knowledge-cache lookup tool f
 - Writes JSONL debug artifacts in failure-only mode by default, with always/off modes controlled by configuration
 - Ships a checked-in `rainman` skill that teaches when to use cached knowledge versus normal live investigation
 - Ships `rainman/evals/default.json` for recurring latency and accuracy experiments
-- Tracks the accepted experimental baseline in `rainman/BASELINE.md`
 - Targets `~/.pi/agent/data/raincatcher` by default
 - Skips malformed fact files and surfaces warnings when malformed KB content is present
 
