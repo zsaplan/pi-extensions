@@ -19,6 +19,7 @@
   "files": [
     "src",
     "skills",
+    "evals",
     "DESIGN.md",
     "README.md",
     "package.json"

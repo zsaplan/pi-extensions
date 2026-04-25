@@ -224,6 +224,65 @@ type LookupRunRecord = {
   };
 };
 
+type EvalCase = {
+  id: string;
+  question: string;
+  expectedStatus?: VerificationResult["status"];
+  requiredAnswerSubstrings?: string[];
+  forbiddenAnswerSubstrings?: string[];
+  requiredClaims?: string[];
+  requiredConcepts?: string[][];
+  forbiddenClaims?: string[];
+  expectedCitationFiles?: string[];
+  requiredCitationQuoteSubstrings?: string[];
+  minCitationCount?: number;
+  maxCitationCount?: number;
+  maxElapsedMs?: number;
+};
+
+type EvalSuite = {
+  name: string;
+  description?: string;
+  cases: EvalCase[];
+};
+
+type EvalCaseResult = {
+  id: string;
+  question: string;
+  repeatIndex: number;
+  repeatCount: number;
+  ok: boolean;
+  status: "success" | "error";
+  lookupStatus?: VerificationResult["status"];
+  elapsedMs: number;
+  elapsed: string;
+  totalTokens: number;
+  cost: number;
+  failureReasons: string[];
+  answer?: string;
+  citationFiles: string[];
+  error?: string;
+};
+
+type EvalRunResult = {
+  suite: string;
+  createdAt: string;
+  model: string;
+  thinkingLevel: typeof RAINMAN_THINKING_LEVEL;
+  kbRoot: string;
+  cases: EvalCaseResult[];
+  summary: {
+    uniqueCases: number;
+    repeatCount: number;
+    total: number;
+    passed: number;
+    failed: number;
+    averageElapsedMs: number;
+    totalTokens: number;
+    totalCost: number;
+  };
+};
+
 type LookupArtifactEntryBase = {
   version: 1;
   toolName: "rainman_lookup";
@@ -323,7 +382,7 @@ const DEBUG_ARTIFACTS_ENV_VAR = "PI_RAINMAN_DEBUG_ARTIFACTS";
 const DEFAULT_READ_LIMIT = 200;
 const DEFAULT_FIND_LIMIT = 20;
 const DEFAULT_GREP_LIMIT = 20;
-const RAINMAN_THINKING_LEVEL = "low" as const;
+const RAINMAN_THINKING_LEVEL = "off" as const;
 const MAX_REPAIR_ATTEMPTS = 1;
 const MAX_AGENT_EXECUTION_MS = 45_000;
 const STATUS_KEY = "rainman";
@@ -331,6 +390,7 @@ const HEARTBEAT_INTERVAL_MS = 2_000;
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const RAINMAN_SELF_TEST_QUESTION =
   "__rainman_self_test__ Return insufficient_evidence unless a lint-clean knowledge file literally answers this exact string.";
+const EVAL_RESULTS_DIRNAME = "rainman-evals";
 const LOOKUP_DIRECTIVE_PATTERNS = [
   /\brainman\b/,
   /\braincatcher\b/,
@@ -398,13 +458,19 @@ Available tools:
 - submit_result: Submit the final structured response. This is the only valid completion path.
 
 Guidelines:
+- Rainman is a fast citation lookup agent, not a researcher.
 - Rainman is a knowledge cache of stable, previously-derived project understanding captured in Raincatcher markdown files.
 - Answer only from lint-clean markdown files inside the configured knowledge root.
+- Default strategy: find with 1-3 key nouns, prefer __DEFINITION/__REPOSITORY/__WORKFLOW files, read the single best file first, and submit if it contains enough evidence.
+- Read additional files only when the first read lacks direct evidence for the question.
+- Use grep only when find returns no plausible topic file or when you need one narrow phrase.
 - Use find and grep only for navigation.
 - Only read output counts as evidence.
 - The read tool returns raw line-numbered content plus parsed structured fact summaries for the requested range.
 - Every populated field in data must have one or more exact citations.
-- If the knowledge base cannot safely answer, return status insufficient_evidence so the caller can continue with normal investigation.
+- Citation quote values must match the raw file text exactly and must omit the read tool's display-only line-number prefixes like "3 | ".
+- Submit as soon as you have 1-3 cited facts that answer the question.
+- If no direct evidence is available after six tool calls, return status insufficient_evidence so the caller can continue with normal investigation.
 - If relevant knowledge files conflict, return status conflict so the caller can investigate further.
 - Use only the tools listed above.
 - The only valid completion path is submit_result.
@@ -418,7 +484,7 @@ Use these response shapes:
 - answered: data = {"answer":"..."}, citations = [{"path":"/data/answer", ...}], missingInformation = [], warnings = []
 - insufficient_evidence: data = {}, citations = [], missingInformation = ["..."] if helpful, warnings = []
 - conflict: data = {"conflicts":["...","..."]}, citations = [{"path":"/data/conflicts/0", ...}], missingInformation = [], warnings = []
-For citations, quote must exactly match the cited file lines.`;
+For citations, quote must exactly match the cited raw file lines without read-output line-number prefixes.`;
 
 export class ToolInputError extends Error {
   readonly code: string;
@@ -1208,15 +1274,115 @@ function formatGrepResult(matches: GrepHit[]): string {
   return matches.map((match) => `${match.file}:${match.lineNumber} | ${match.line}`).join("\n");
 }
 
+const CANDIDATE_STOPWORDS = new Set([
+  "about",
+  "company",
+  "context",
+  "could",
+  "does",
+  "exact",
+  "from",
+  "have",
+  "into",
+  "located",
+  "location",
+  "should",
+  "source",
+  "that",
+  "this",
+  "what",
+  "when",
+  "where",
+  "which",
+  "with",
+  "work",
+  "workspace",
+  "would",
+]);
+
+const CANDIDATE_SUFFIX_BOOSTS = new Map([
+  ["DEFINITION", 80],
+  ["REPOSITORY", 60],
+  ["LOCATION", 50],
+  ["WORKFLOW", 35],
+  ["CONFIGURATION", 25],
+  ["DEPLOYMENT", 20],
+  ["TROUBLESHOOTING", -20],
+]);
+
+function tokenizeForCandidateRanking(value: string): string[] {
+  const tokens: string[] = [];
+  for (const rawPart of value.split(/[^a-zA-Z0-9]+/)) {
+    const compact = rawPart.toLowerCase().trim();
+    if (!compact) continue;
+    tokens.push(compact);
+    tokens.push(...rawPart
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .toLowerCase()
+      .split(/\s+/));
+  }
+
+  return [...new Set(tokens
+    .map((token) => token.trim())
+    .filter((token) => token.length > 2 && !CANDIDATE_STOPWORDS.has(token)))];
+}
+
+function scoreCandidateFile(questionTokens: string[], file: string, questionCompact: string): number {
+  const baseName = file.replace(/\.md$/i, "");
+  const [subject = "", topic = ""] = baseName.split("__");
+  const subjectTokens = tokenizeForCandidateRanking(subject);
+  const topicTokens = tokenizeForCandidateRanking(topic);
+  const allFileTokens = new Set([...subjectTokens, ...topicTokens]);
+  let score = 0;
+  const compactSubject = subject.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  if (compactSubject && questionCompact.includes(compactSubject)) score += 120;
+
+  for (const token of questionTokens) {
+    if (subjectTokens.includes(token)) score += 100;
+    else if (allFileTokens.has(token)) score += 35;
+  }
+
+  score += CANDIDATE_SUFFIX_BOOSTS.get(topic) ?? 0;
+  if (questionTokens.length > 0 && questionTokens.every((token) => allFileTokens.has(token))) {
+    score += 40;
+  }
+  return score;
+}
+
+export function rankCandidateFactFiles(question: string, fileIndex: FactFileIndex, limit = 5): string[] {
+  const questionTokens = tokenizeForCandidateRanking(question);
+  if (questionTokens.length === 0) return [];
+
+  const questionCompact = question.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  return fileIndex.validFiles
+    .map((file) => ({ file, score: scoreCandidateFile(questionTokens, file, questionCompact) }))
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => right.score - left.score || left.file.localeCompare(right.file))
+    .slice(0, limit)
+    .map((candidate) => candidate.file);
+}
+
 function buildPrompt(question: string, fileIndex: FactFileIndex): string {
+  const candidateFiles = rankCandidateFactFiles(question, fileIndex);
+  const candidateSection = candidateFiles.length > 0
+    ? [
+      "Ranked candidate files from deterministic filename matching:",
+      ...candidateFiles.map((file, index) => `${index + 1}. ${file}`),
+      "Start by reading candidate #1 directly with a small limit such as 20. If it contains enough evidence, submit immediately.",
+      "Read candidate #2 or run narrow grep only if candidate #1 lacks direct evidence.",
+    ].join("\n")
+    : "No deterministic candidate files were found; use find with the question's key nouns first.";
+
   return [
     "Answer the question using only markdown evidence from the knowledge root.",
     "Use grep and find only for navigation.",
     "Use read to gather exact evidence from lint-clean structured fact files.",
     `Available structured fact files: ${fileIndex.validFiles.length}`,
     `Malformed fact files unavailable as evidence: ${fileIndex.invalidFiles.length}`,
-    "Prefer the smallest valid data payload.",
+    candidateSection,
+    "Prefer the smallest valid data payload and the fewest tool calls that preserve citation correctness.",
     "For a normal direct answer, use data.answer and cite /data/answer.",
+    "For citation.quote, copy the raw fact text only; omit display line prefixes such as '3 | '.",
     "When you are ready, call submit_result.",
     "After submit_result succeeds, stop immediately.",
     "Question:",
@@ -1363,7 +1529,7 @@ function createCustomTools(
       label: "Submit Result",
       description: "Submit the final structured response. This is the only valid completion path.",
       promptSnippet:
-        "submit_result(status, data, citations, missingInformation, warnings) - finalize only when every populated data field is fully supported",
+        "submit_result(status, data, citations, missingInformation, warnings) - finalize only when every populated data field is fully supported; citation.quote must be raw file text without read line-number prefixes",
       promptGuidelines: [
         "Call submit_result exactly once when the final payload is ready.",
         "If submit_result returns an error, repair the payload and try again.",
@@ -1494,6 +1660,363 @@ export function buildLookupUsage(messages: unknown[], fallbackModel?: string): L
   }
 
   return usage;
+}
+
+function validateEvalSuite(input: unknown, source: string): EvalSuite {
+  if (!input || typeof input !== "object") {
+    throw new Error(`Rainman eval suite ${source} must be a JSON object.`);
+  }
+
+  const suite = input as Record<string, unknown>;
+  if (typeof suite.name !== "string" || !suite.name.trim()) {
+    throw new Error(`Rainman eval suite ${source} must include a non-empty name.`);
+  }
+  if (!Array.isArray(suite.cases) || suite.cases.length === 0) {
+    throw new Error(`Rainman eval suite ${source} must include one or more cases.`);
+  }
+
+  return {
+    name: suite.name.trim(),
+    description: typeof suite.description === "string" ? suite.description : undefined,
+    cases: suite.cases.map((caseInput, index) => {
+      if (!caseInput || typeof caseInput !== "object") {
+        throw new Error(`Rainman eval case ${index + 1} in ${source} must be an object.`);
+      }
+      const record = caseInput as Record<string, unknown>;
+      const id = typeof record.id === "string" && record.id.trim()
+        ? record.id.trim()
+        : `case-${index + 1}`;
+      if (typeof record.question !== "string" || !record.question.trim()) {
+        throw new Error(`Rainman eval case ${id} in ${source} must include a non-empty question.`);
+      }
+      const expectedStatus = record.expectedStatus;
+      if (
+        expectedStatus !== undefined &&
+        expectedStatus !== "answered" &&
+        expectedStatus !== "insufficient_evidence" &&
+        expectedStatus !== "conflict"
+      ) {
+        throw new Error(`Rainman eval case ${id} in ${source} has invalid expectedStatus.`);
+      }
+
+      return {
+        id,
+        question: record.question.trim(),
+        expectedStatus: expectedStatus as EvalCase["expectedStatus"],
+        requiredAnswerSubstrings: getStringArray(record.requiredAnswerSubstrings),
+        forbiddenAnswerSubstrings: getStringArray(record.forbiddenAnswerSubstrings),
+        requiredClaims: getStringArray(record.requiredClaims),
+        requiredConcepts: getStringArrayArray(record.requiredConcepts),
+        forbiddenClaims: getStringArray(record.forbiddenClaims),
+        expectedCitationFiles: getStringArray(record.expectedCitationFiles),
+        requiredCitationQuoteSubstrings: getStringArray(record.requiredCitationQuoteSubstrings),
+        minCitationCount: getNonNegativeInteger(record.minCitationCount),
+        maxCitationCount: getNonNegativeInteger(record.maxCitationCount),
+        maxElapsedMs: typeof record.maxElapsedMs === "number" && Number.isFinite(record.maxElapsedMs)
+          ? record.maxElapsedMs
+          : undefined,
+      };
+    }),
+  };
+}
+
+function getDefaultEvalSuitePath(): string {
+  return path.join(path.dirname(new URL(import.meta.url).pathname), "..", "evals", "default.json");
+}
+
+function resolveEvalSuitePath(rawPath?: string): string {
+  if (!rawPath) return getDefaultEvalSuitePath();
+  return path.isAbsolute(rawPath) ? rawPath : path.resolve(process.cwd(), rawPath);
+}
+
+function readEvalSuite(suitePath: string): EvalSuite {
+  const content = fs.readFileSync(suitePath, "utf8");
+  return validateEvalSuite(JSON.parse(content) as unknown, suitePath);
+}
+
+function getEvalResultsDir(): string {
+  return path.join(getAgentDir(), "data", EVAL_RESULTS_DIRNAME);
+}
+
+function sanitizeEvalFileSegment(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "eval";
+}
+
+function getStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const strings = value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  return strings.length > 0 ? strings : undefined;
+}
+
+function getStringArrayArray(value: unknown): string[][] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const groups = value
+    .map(getStringArray)
+    .filter((group): group is string[] => Array.isArray(group) && group.length > 0);
+  return groups.length > 0 ? groups : undefined;
+}
+
+function normalizeRubricText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function includesRubricText(haystack: string, needle: string): boolean {
+  return normalizeRubricText(haystack).includes(normalizeRubricText(needle));
+}
+
+function getNonNegativeInteger(value: unknown): number | undefined {
+  return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : undefined;
+}
+
+function parsePositiveInteger(value: string | undefined): number | undefined {
+  if (!value || !/^\d+$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return parsed > 0 ? parsed : undefined;
+}
+
+function parseEvalArgs(input: string): { suitePath?: string; limit?: number; repeatCount: number } {
+  const parts = input.split(/\s+/).filter(Boolean).slice(1);
+  let repeatCount = 5;
+  let limit: number | undefined;
+  let suitePath: string | undefined;
+
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (part === "--repeat" || part === "-n") {
+      repeatCount = parsePositiveInteger(parts[index + 1]) ?? repeatCount;
+      index += 1;
+      continue;
+    }
+    if (part.startsWith("--repeat=")) {
+      repeatCount = parsePositiveInteger(part.slice("--repeat=".length)) ?? repeatCount;
+      continue;
+    }
+    if (part === "--limit") {
+      limit = parsePositiveInteger(parts[index + 1]) ?? limit;
+      index += 1;
+      continue;
+    }
+    if (part.startsWith("--limit=")) {
+      limit = parsePositiveInteger(part.slice("--limit=".length)) ?? limit;
+      continue;
+    }
+    if (!suitePath && !part.startsWith("-")) {
+      const numeric = parsePositiveInteger(part);
+      if (numeric !== undefined && limit === undefined) {
+        limit = numeric;
+      } else {
+        suitePath = part;
+      }
+    }
+  }
+
+  return { suitePath, limit, repeatCount };
+}
+
+function extractAnswer(result: VerificationResult): string | undefined {
+  const answer = result.data.answer;
+  return typeof answer === "string" ? answer : undefined;
+}
+
+function evaluateOutcome(testCase: EvalCase, outcome: LookupOutcome, repeatIndex = 1, repeatCount = 1): EvalCaseResult {
+  const failureReasons: string[] = [];
+  const result = outcome.result;
+  const answer = extractAnswer(result);
+  const answerText = answer ?? "";
+  const normalizedAnswer = answerText.toLowerCase();
+  const citationFiles = [...new Set(result.citations.map((citation) => citation.file))].sort();
+  const citationText = result.citations.map((citation) => citation.quote).join("\n");
+  const normalizedCitationText = citationText.toLowerCase();
+
+  if (testCase.expectedStatus && result.status !== testCase.expectedStatus) {
+    failureReasons.push(`expected status ${testCase.expectedStatus}, got ${result.status}`);
+  }
+
+  for (const substring of testCase.requiredAnswerSubstrings ?? []) {
+    if (!includesRubricText(answerText, substring)) {
+      failureReasons.push(`answer missing substring ${JSON.stringify(substring)}`);
+    }
+  }
+
+  for (const substring of testCase.forbiddenAnswerSubstrings ?? []) {
+    if (includesRubricText(answerText, substring)) {
+      failureReasons.push(`answer contains forbidden substring ${JSON.stringify(substring)}`);
+    }
+  }
+
+  for (const claim of testCase.requiredClaims ?? []) {
+    if (!includesRubricText(answerText, claim)) {
+      failureReasons.push(`answer missing required claim ${JSON.stringify(claim)}`);
+    }
+  }
+
+  for (const concept of testCase.requiredConcepts ?? []) {
+    if (!concept.some((alternative) => includesRubricText(answerText, alternative))) {
+      failureReasons.push(`answer missing required concept ${JSON.stringify(concept)}`);
+    }
+  }
+
+  for (const claim of testCase.forbiddenClaims ?? []) {
+    if (includesRubricText(answerText, claim)) {
+      failureReasons.push(`answer contains forbidden claim ${JSON.stringify(claim)}`);
+    }
+  }
+
+  for (const expectedFile of testCase.expectedCitationFiles ?? []) {
+    if (!citationFiles.includes(expectedFile)) {
+      failureReasons.push(`missing citation file ${expectedFile}`);
+    }
+  }
+
+  for (const substring of testCase.requiredCitationQuoteSubstrings ?? []) {
+    if (!includesRubricText(citationText, substring)) {
+      failureReasons.push(`citations missing quote substring ${JSON.stringify(substring)}`);
+    }
+  }
+
+  if (testCase.minCitationCount !== undefined && result.citations.length < testCase.minCitationCount) {
+    failureReasons.push(`citation count ${result.citations.length} below minimum ${testCase.minCitationCount}`);
+  }
+
+  if (testCase.maxCitationCount !== undefined && result.citations.length > testCase.maxCitationCount) {
+    failureReasons.push(`citation count ${result.citations.length} above maximum ${testCase.maxCitationCount}`);
+  }
+
+  if (testCase.maxElapsedMs !== undefined && outcome.execution.elapsedMs > testCase.maxElapsedMs) {
+    failureReasons.push(`elapsed ${outcome.execution.elapsedMs}ms exceeded ${testCase.maxElapsedMs}ms`);
+  }
+
+  return {
+    id: testCase.id,
+    question: testCase.question,
+    repeatIndex,
+    repeatCount,
+    ok: failureReasons.length === 0,
+    status: "success",
+    lookupStatus: result.status,
+    elapsedMs: outcome.execution.elapsedMs,
+    elapsed: outcome.execution.elapsed,
+    totalTokens: outcome.execution.usage.totalTokens,
+    cost: outcome.execution.usage.cost,
+    failureReasons,
+    answer,
+    citationFiles,
+  };
+}
+
+function evaluateError(testCase: EvalCase, error: unknown, startedAtMs: number, repeatIndex = 1, repeatCount = 1): EvalCaseResult {
+  const elapsedMs = Math.max(0, Date.now() - startedAtMs);
+  const diagnostics = getLookupSessionDiagnostics(error);
+  const usage = diagnostics?.usage ?? createEmptyLookupUsage();
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    id: testCase.id,
+    question: testCase.question,
+    repeatIndex,
+    repeatCount,
+    ok: false,
+    status: "error",
+    elapsedMs,
+    elapsed: formatElapsed(elapsedMs),
+    totalTokens: usage.totalTokens,
+    cost: usage.cost,
+    failureReasons: [message],
+    citationFiles: [],
+    error: message,
+  };
+}
+
+function summarizeEvalRun(suite: EvalSuite, cases: EvalCaseResult[], ctx: any, kbRoot: string, uniqueCases: number, repeatCount: number): EvalRunResult {
+  const totalElapsedMs = cases.reduce((sum, result) => sum + result.elapsedMs, 0);
+  const totalTokens = cases.reduce((sum, result) => sum + result.totalTokens, 0);
+  const totalCost = cases.reduce((sum, result) => sum + result.cost, 0);
+  return {
+    suite: suite.name,
+    createdAt: new Date().toISOString(),
+    model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(uses first available model)",
+    thinkingLevel: RAINMAN_THINKING_LEVEL,
+    kbRoot,
+    cases,
+    summary: {
+      uniqueCases,
+      repeatCount,
+      total: cases.length,
+      passed: cases.filter((result) => result.ok).length,
+      failed: cases.filter((result) => !result.ok).length,
+      averageElapsedMs: cases.length ? Math.round(totalElapsedMs / cases.length) : 0,
+      totalTokens,
+      totalCost,
+    },
+  };
+}
+
+function renderEvalRunMarkdown(run: EvalRunResult): string {
+  const lines = [
+    `# Rainman eval run ${run.createdAt}`,
+    "",
+    `- Suite: ${run.suite}`,
+    `- Model: ${run.model}`,
+    `- Thinking level: ${run.thinkingLevel}`,
+    `- KB root: ${run.kbRoot}`,
+    `- Passed: ${run.summary.passed}/${run.summary.total}`,
+    `- Unique cases: ${run.summary.uniqueCases}`,
+    `- Repeats per case: ${run.summary.repeatCount}`,
+    `- Average elapsed: ${run.summary.averageElapsedMs}ms`,
+    `- Total tokens: ${run.summary.totalTokens}`,
+    `- Total cost: $${run.summary.totalCost.toFixed(6)}`,
+    "",
+    "| Case | Run | Result | Status | Elapsed | Tokens | Notes |",
+    "| --- | ---: | --- | --- | ---: | ---: | --- |"
+  ];
+
+  for (const result of run.cases) {
+    const notes = result.failureReasons.length ? result.failureReasons.join("; ") : result.citationFiles.join(", ");
+    lines.push(
+      `| ${result.id} | ${result.repeatIndex}/${result.repeatCount} | ${result.ok ? "pass" : "fail"} | ${result.lookupStatus ?? result.status} | ${result.elapsedMs}ms | ${result.totalTokens} | ${notes.replace(/\|/g, "\\|")} |`,
+    );
+  }
+
+  lines.push("");
+  lines.push("## Case details");
+  for (const result of run.cases) {
+    lines.push("");
+    lines.push(`### ${result.id} (${result.repeatIndex}/${result.repeatCount})`);
+    lines.push("");
+    lines.push(`Question: ${result.question}`);
+    lines.push("");
+    if (result.answer) {
+      lines.push("Answer:");
+      lines.push("");
+      lines.push(result.answer);
+      lines.push("");
+    }
+    if (result.failureReasons.length) {
+      lines.push("Failures:");
+      lines.push(...result.failureReasons.map((reason) => `- ${reason}`));
+    }
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
+async function writeEvalRunArtifacts(run: EvalRunResult): Promise<{ jsonPath: string; markdownPath: string }> {
+  const resultsDir = getEvalResultsDir();
+  await mkdir(resultsDir, { recursive: true });
+  const stamp = run.createdAt.replace(/[:.]/g, "-");
+  const stem = `${stamp}_${sanitizeEvalFileSegment(run.suite)}`;
+  const jsonPath = path.join(resultsDir, `${stem}.json`);
+  const markdownPath = path.join(resultsDir, `${stem}.md`);
+  fs.writeFileSync(jsonPath, `${JSON.stringify(run, null, 2)}\n`);
+  fs.writeFileSync(markdownPath, renderEvalRunMarkdown(run));
+  return { jsonPath, markdownPath };
 }
 
 function truncateStatusText(value: string, maxLength = 80): string {
@@ -2026,8 +2549,8 @@ async function runVerification(
       cwd: kbRoot,
       agentDir: getAgentDir(),
       model,
-      // Keep the isolated lookup agent at low reasoning effort; higher
-      // settings make it more likely to roleplay tool syntax.
+      // Keep the isolated lookup agent's reasoning disabled for speed.
+      // Rainman returns validated citations; the caller can do any higher-level reasoning.
       thinkingLevel,
       modelRegistry,
       noTools: "builtin",
@@ -2714,6 +3237,63 @@ export function createRainmanExtension(
 
       if (!ctx.hasUI) return;
 
+      if (subcommand === "eval") {
+        const evalArgs = parseEvalArgs(input);
+        const suitePath = resolveEvalSuitePath(evalArgs.suitePath);
+        const suite = readEvalSuite(suitePath);
+        const selectedCases = evalArgs.limit ? suite.cases.slice(0, evalArgs.limit) : suite.cases;
+        const evalActivityOwner = `rainman-eval-${deps.now()}`;
+        const caseResults: EvalCaseResult[] = [];
+        state.activeRuns += 1;
+        syncStatus(ctx);
+
+        try {
+          ctx.ui.notify(
+            `Rainman eval started: ${suite.name} (${selectedCases.length}/${suite.cases.length} cases, n=${evalArgs.repeatCount}).`,
+            "info",
+          );
+          for (const [index, testCase] of selectedCases.entries()) {
+            for (let repeatIndex = 1; repeatIndex <= evalArgs.repeatCount; repeatIndex += 1) {
+              setActiveActivity(
+                ctx,
+                evalActivityOwner,
+                `Rainman eval ${index + 1}/${selectedCases.length} n=${repeatIndex}/${evalArgs.repeatCount}: ${truncateStatusText(testCase.id, 32)}…`,
+                null,
+              );
+              const startedAtMs = Date.now();
+              try {
+                const outcome = await deps.executeLookupQuestion(testCase.question, ctx.signal, ctx);
+                caseResults.push(evaluateOutcome(testCase, outcome, repeatIndex, evalArgs.repeatCount));
+              } catch (error) {
+                caseResults.push(evaluateError(testCase, error, startedAtMs, repeatIndex, evalArgs.repeatCount));
+              }
+            }
+          }
+
+          const run = summarizeEvalRun(suite, caseResults, ctx, deps.getKbRoot(), selectedCases.length, evalArgs.repeatCount);
+          const artifacts = await writeEvalRunArtifacts(run);
+          ctx.ui.notify(
+            [
+              `Rainman eval finished: ${run.summary.passed}/${run.summary.total} passed (${run.summary.uniqueCases} cases, n=${run.summary.repeatCount}).`,
+              `Average elapsed: ${run.summary.averageElapsedMs}ms`,
+              `Total tokens: ${run.summary.totalTokens}`,
+              `Total cost: $${run.summary.totalCost.toFixed(6)}`,
+              `JSON: ${artifacts.jsonPath}`,
+              `Markdown: ${artifacts.markdownPath}`,
+            ].join("\n"),
+            run.summary.failed ? "warning" : "info",
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          ctx.ui.notify(`Rainman eval failed: ${message}`, "warning");
+        } finally {
+          state.activeRuns = Math.max(0, state.activeRuns - 1);
+          setActiveActivity(ctx, evalActivityOwner, null);
+          syncStatus(ctx);
+        }
+        return;
+      }
+
       if (subcommand === "test") {
         const selfTestActivityOwner = `rainman-test-${deps.now()}`;
         const progress = createLookupProgressReporter(
@@ -2775,7 +3355,7 @@ export function createRainmanExtension(
       }
 
       if (subcommand) {
-        ctx.ui.notify(`Unknown rainman subcommand: ${subcommand}. Supported: test`, "warning");
+        ctx.ui.notify(`Unknown rainman subcommand: ${subcommand}. Supported: test, eval`, "warning");
         return;
       }
 

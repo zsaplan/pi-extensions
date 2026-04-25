@@ -17,6 +17,7 @@ import {
   formatUsageSummary,
   getLookupArtifactMode,
   grepTool,
+  rankCandidateFactFiles,
   readCitationLines,
   readTool,
   shouldNudgeRainmanLookup,
@@ -452,6 +453,41 @@ test("lookup nudging targets stable knowledge questions and skips live-state/cur
   assert.equal(shouldNudgeRainmanLookup("What is failing right now in production?"), false);
   assert.equal(shouldNudgeRainmanLookup("Check Grafana logs for this traceback"), false);
   assert.equal(shouldNudgeRainmanLookup("run the tests"), false);
+});
+
+test("candidate file ranking prefers direct definition and repository files", (t) => {
+  const kbRoot = createKb(t);
+  writeFact(kbRoot, "BRITECORE__DEFINITION.md", [
+    "# BRITECORE / DEFINITION",
+    "",
+    "- DEFINES | BriteCore | role=core platform",
+  ]);
+  writeFact(kbRoot, "BRITECORE__REPOSITORY.md", [
+    "# BRITECORE / REPOSITORY",
+    "",
+    "- LOCATED_AT | /Users/zach/BriteCore/BriteCore | repo=IntuitiveWebSolutions/BriteCore",
+  ]);
+  writeFact(kbRoot, "BRITECORE_POLICY_WIZARD__TROUBLESHOOTING.md", [
+    "# BRITECORE_POLICY_WIZARD / TROUBLESHOOTING",
+    "",
+    "- CAUSES | noisy related result | scope=test",
+  ]);
+  writeFact(kbRoot, "RAIN_CORE__DEFINITION.md", [
+    "# RAIN_CORE / DEFINITION",
+    "",
+    "- DEFINES | Rain core | scope=related_but_not_britecore",
+  ]);
+
+  const candidates = rankCandidateFactFiles(
+    "What is BriteCore in the context of this workspace/company?",
+    buildFactFileIndex(kbRoot),
+    3,
+  );
+
+  assert.deepEqual(candidates.slice(0, 2), [
+    "BRITECORE__DEFINITION.md",
+    "BRITECORE__REPOSITORY.md",
+  ]);
 });
 
 test("lookup usage summaries aggregate assistant message token usage", () => {
