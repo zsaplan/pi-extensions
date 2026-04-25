@@ -17,6 +17,7 @@ The harness is intentionally inspired by the tight experiment/evaluate loop in A
 ## Metrics to watch
 
 - Pass rate: status and required answer/citation checks.
+- Rubric accuracy: required/forbidden answer claims, required concepts with acceptable alternatives, expected citation files, required citation quote substrings, and citation count bounds.
 - Latency: per-case elapsed milliseconds and average elapsed milliseconds across at least n=5 repeats.
 - Tool behavior: lookup artifacts should show fewer broad grep/find loops over time.
 - Token/cost: total tokens and cost should trend down as navigation improves.
@@ -165,14 +166,16 @@ Aggregate:
 
 Keep deterministic candidate preselection. The improvement exceeds the 50% speedup target reproducibly at n=5 on the motivating BriteCore question while also reducing token use and cost substantially. The next experiment should target avoiding extra submit repairs by making quote formatting expectations clearer in the prompt.
 
-## 2026-04-25 — citation quote prompt clarity experiment
+## 2026-04-25 — eval rubric hardening and citation quote prompt clarity experiment
 
 ### Plan
 
-The candidate-ranking experiment still often required a repair because the subagent sometimes put display line prefixes such as `3 | ` into `citation.quote`. Add explicit prompt guidance that citation quotes must be raw file text without read-output line-number prefixes, then rerun the BriteCore question at n=5.
+First harden the eval harness so accuracy checks can express required concepts with acceptable alternatives instead of brittle exact substrings. Then address the candidate-ranking experiment's remaining repair behavior: the subagent sometimes put display line prefixes such as `3 | ` into `citation.quote`. Add explicit prompt guidance that citation quotes must be raw file text without read-output line-number prefixes, then rerun the BriteCore question at n=5.
 
 ### Action
 
+- Added deterministic rubric fields for required concepts with acceptable alternatives, forbidden claims, required citation quote substrings, and citation count bounds.
+- Updated the default eval suite to use a richer BriteCore accuracy rubric.
 - Updated the system prompt, first user prompt, and `submit_result` tool prompt snippet to say citation quotes must omit read-output line-number prefixes.
 - Ran `npm run verify --workspace rainman` before live sampling.
 - Reran the BriteCore workspace question five times through the real `rainman_lookup` tool with `PI_RAINMAN_DEBUG_ARTIFACTS=always`.
@@ -217,3 +220,54 @@ Compared with the previous n=5 candidate-ranking run:
 ### Decision
 
 Keep the quote-format prompt clarification. It improves the n=5 mean latency and substantially reduces repair behavior without reducing answer success on the motivating question.
+
+## 2026-04-25 — single-best-file prompt experiment
+
+### Plan
+
+The quote-clarity baseline still sometimes read extra candidate files. Try a small prompt change that tells the subagent to read only candidate #1 first with a small limit and submit immediately if it has enough evidence. Keep the change only if n=5 preserves rubric accuracy and improves mean latency versus the current 6,124.4ms baseline.
+
+### Action
+
+- Updated the system prompt default strategy from "read the best 1-3 files" to "read the single best file first, and submit if it contains enough evidence."
+- Updated the candidate section in the first prompt to instruct reading candidate #1 directly with a small limit such as 20, then reading candidate #2 or using narrow grep only if candidate #1 lacks direct evidence.
+- Updated the prompt to prefer the fewest tool calls that preserve citation correctness.
+- Ran `npm run verify --workspace rainman` before live sampling.
+- Reran the BriteCore workspace question five times through the real `rainman_lookup` tool with `PI_RAINMAN_DEBUG_ARTIFACTS=always`.
+
+Artifacts:
+
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-21-32-872Z_what-is-britecore-in-the-context-of-this-workspace-company_32006d0d-5ab8-44d0-9073-0a31099c682f.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-21-49-370Z_what-is-britecore-in-the-context-of-this-workspace-company_826378e7-dc98-4d41-947d-a605125f2352.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-22-02-170Z_what-is-britecore-in-the-context-of-this-workspace-company_3e1bcbe2-6920-4ca5-bd4b-2d4a859fecd0.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-22-12-111Z_what-is-britecore-in-the-context-of-this-workspace-company_647a01c2-e8c4-462c-ad1a-72604bec8f97.jsonl`
+- `/Users/zach/.pi/agent/data/rainman-lookup/2026-04-25T00-22-20-732Z_what-is-britecore-in-the-context-of-this-workspace-company_0c0815ed-222b-43a0-83fa-8fd71ce5fddc.jsonl`
+
+Results against the current 6,124.4ms baseline and original 45,231ms baseline:
+
+| Run | Status | Inner elapsed | vs current baseline | vs original baseline | Tokens | Tool calls | Submit calls |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | answered | 7,901ms | -29.0% | 82.5% | 2,926 | 2 | 1 |
+| 2 | answered | 6,627ms | -8.2% | 85.3% | 2,926 | 2 | 1 |
+| 3 | answered | 3,973ms | 35.1% | 91.2% | 2,933 | 2 | 1 |
+| 4 | answered | 4,916ms | 19.7% | 89.1% | 2,996 | 2 | 1 |
+| 5 | answered | 3,514ms | 42.6% | 92.2% | 2,934 | 2 | 1 |
+
+Aggregate:
+
+- n=5.
+- All 5 runs answered successfully.
+- The richer concept-based BriteCore rubric passes for all 5 runs.
+- Mean inner elapsed: 5,386.2ms.
+- Median inner elapsed: 4,916ms.
+- Min/max inner elapsed: 3,514ms / 7,901ms.
+- Standard deviation: 1,843.0ms.
+- Mean speedup vs current baseline: 12.1%.
+- Mean speedup vs original baseline: 88.1%.
+- Mean tokens: 2,943.
+- Mean tool calls: 2.0.
+- Mean submit calls: 1.0.
+
+### Decision
+
+Keep the single-best-file prompt change. It improves mean latency versus the accepted current baseline while preserving n=5 rubric accuracy, and it reduces average tokens/tool calls/submit repairs.

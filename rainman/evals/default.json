@@ -7,6 +7,20 @@
       "question": "What is BriteCore in the context of this workspace/company?",
       "expectedStatus": "answered",
       "requiredAnswerSubstrings": ["BriteCore"],
+      "requiredConcepts": [
+        ["property and casualty insurance", "property casualty insurance"],
+        ["workspace ecosystem", "broader ecosystem", "codebases infrastructure site deployments logs databases and tools"]
+      ],
+      "forbiddenClaims": [
+        "health insurance",
+        "banking platform"
+      ],
+      "expectedCitationFiles": ["BRITECORE__DEFINITION.md"],
+      "requiredCitationQuoteSubstrings": [
+        "software platform for property and casualty insurance companies",
+        "workspace ecosystem including codebases infrastructure site deployments logs databases and tools"
+      ],
+      "minCitationCount": 1,
       "maxElapsedMs": 30000
     },
     {
@@ -14,6 +28,7 @@
       "question": "Where is Rainman source code located?",
       "expectedStatus": "answered",
       "requiredAnswerSubstrings": ["rainman"],
+      "requiredConcepts": [["/Users/zach/zsaplan/pi-extensions/rainman"]],
       "maxElapsedMs": 20000
     },
     {
@@ -21,12 +36,14 @@
       "question": "What is the package verification workflow in this repository?",
       "expectedStatus": "answered",
       "requiredAnswerSubstrings": ["verify"],
+      "requiredConcepts": [["npm run verify"]],
       "maxElapsedMs": 25000
     },
     {
       "id": "unknown-self-test",
       "question": "__rainman_eval_unknown__ What durable fact answers this exact nonce?",
       "expectedStatus": "insufficient_evidence",
+      "maxCitationCount": 0,
       "maxElapsedMs": 15000
     }
   ]

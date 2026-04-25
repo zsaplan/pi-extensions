@@ -229,7 +229,14 @@ type EvalCase = {
   question: string;
   expectedStatus?: VerificationResult["status"];
   requiredAnswerSubstrings?: string[];
+  forbiddenAnswerSubstrings?: string[];
+  requiredClaims?: string[];
+  requiredConcepts?: string[][];
+  forbiddenClaims?: string[];
   expectedCitationFiles?: string[];
+  requiredCitationQuoteSubstrings?: string[];
+  minCitationCount?: number;
+  maxCitationCount?: number;
   maxElapsedMs?: number;
 };
 
@@ -454,7 +461,8 @@ Guidelines:
 - Rainman is a fast citation lookup agent, not a researcher.
 - Rainman is a knowledge cache of stable, previously-derived project understanding captured in Raincatcher markdown files.
 - Answer only from lint-clean markdown files inside the configured knowledge root.
-- Default strategy: find with 1-3 key nouns, prefer __DEFINITION/__REPOSITORY/__WORKFLOW files, read the best 1-3 files, then submit.
+- Default strategy: find with 1-3 key nouns, prefer __DEFINITION/__REPOSITORY/__WORKFLOW files, read the single best file first, and submit if it contains enough evidence.
+- Read additional files only when the first read lacks direct evidence for the question.
 - Use grep only when find returns no plausible topic file or when you need one narrow phrase.
 - Use find and grep only for navigation.
 - Only read output counts as evidence.
@@ -1360,7 +1368,8 @@ function buildPrompt(question: string, fileIndex: FactFileIndex): string {
     ? [
       "Ranked candidate files from deterministic filename matching:",
       ...candidateFiles.map((file, index) => `${index + 1}. ${file}`),
-      "Start by reading the best candidate files directly. Do not run broad grep unless these candidates fail.",
+      "Start by reading candidate #1 directly with a small limit such as 20. If it contains enough evidence, submit immediately.",
+      "Read candidate #2 or run narrow grep only if candidate #1 lacks direct evidence.",
     ].join("\n")
     : "No deterministic candidate files were found; use find with the question's key nouns first.";
 
@@ -1371,7 +1380,7 @@ function buildPrompt(question: string, fileIndex: FactFileIndex): string {
     `Available structured fact files: ${fileIndex.validFiles.length}`,
     `Malformed fact files unavailable as evidence: ${fileIndex.invalidFiles.length}`,
     candidateSection,
-    "Prefer the smallest valid data payload.",
+    "Prefer the smallest valid data payload and the fewest tool calls that preserve citation correctness.",
     "For a normal direct answer, use data.answer and cite /data/answer.",
     "For citation.quote, copy the raw fact text only; omit display line prefixes such as '3 | '.",
     "When you are ready, call submit_result.",
@@ -1694,12 +1703,15 @@ function validateEvalSuite(input: unknown, source: string): EvalSuite {
         id,
         question: record.question.trim(),
         expectedStatus: expectedStatus as EvalCase["expectedStatus"],
-        requiredAnswerSubstrings: Array.isArray(record.requiredAnswerSubstrings)
-          ? record.requiredAnswerSubstrings.filter((value): value is string => typeof value === "string" && value.length > 0)
-          : undefined,
-        expectedCitationFiles: Array.isArray(record.expectedCitationFiles)
-          ? record.expectedCitationFiles.filter((value): value is string => typeof value === "string" && value.length > 0)
-          : undefined,
+        requiredAnswerSubstrings: getStringArray(record.requiredAnswerSubstrings),
+        forbiddenAnswerSubstrings: getStringArray(record.forbiddenAnswerSubstrings),
+        requiredClaims: getStringArray(record.requiredClaims),
+        requiredConcepts: getStringArrayArray(record.requiredConcepts),
+        forbiddenClaims: getStringArray(record.forbiddenClaims),
+        expectedCitationFiles: getStringArray(record.expectedCitationFiles),
+        requiredCitationQuoteSubstrings: getStringArray(record.requiredCitationQuoteSubstrings),
+        minCitationCount: getNonNegativeInteger(record.minCitationCount),
+        maxCitationCount: getNonNegativeInteger(record.maxCitationCount),
         maxElapsedMs: typeof record.maxElapsedMs === "number" && Number.isFinite(record.maxElapsedMs)
           ? record.maxElapsedMs
           : undefined,
@@ -1732,6 +1744,36 @@ function sanitizeEvalFileSegment(value: string): string {
     .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 80) || "eval";
+}
+
+function getStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const strings = value.filter((item): item is string => typeof item === "string" && item.length > 0);
+  return strings.length > 0 ? strings : undefined;
+}
+
+function getStringArrayArray(value: unknown): string[][] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const groups = value
+    .map(getStringArray)
+    .filter((group): group is string[] => Array.isArray(group) && group.length > 0);
+  return groups.length > 0 ? groups : undefined;
+}
+
+function normalizeRubricText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function includesRubricText(haystack: string, needle: string): boolean {
+  return normalizeRubricText(haystack).includes(normalizeRubricText(needle));
+}
+
+function getNonNegativeInteger(value: unknown): number | undefined {
+  return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : undefined;
 }
 
 function parsePositiveInteger(value: string | undefined): number | undefined {
@@ -1788,15 +1830,43 @@ function evaluateOutcome(testCase: EvalCase, outcome: LookupOutcome, repeatIndex
   const failureReasons: string[] = [];
   const result = outcome.result;
   const answer = extractAnswer(result);
+  const answerText = answer ?? "";
+  const normalizedAnswer = answerText.toLowerCase();
   const citationFiles = [...new Set(result.citations.map((citation) => citation.file))].sort();
+  const citationText = result.citations.map((citation) => citation.quote).join("\n");
+  const normalizedCitationText = citationText.toLowerCase();
 
   if (testCase.expectedStatus && result.status !== testCase.expectedStatus) {
     failureReasons.push(`expected status ${testCase.expectedStatus}, got ${result.status}`);
   }
 
   for (const substring of testCase.requiredAnswerSubstrings ?? []) {
-    if (!answer?.toLowerCase().includes(substring.toLowerCase())) {
+    if (!includesRubricText(answerText, substring)) {
       failureReasons.push(`answer missing substring ${JSON.stringify(substring)}`);
+    }
+  }
+
+  for (const substring of testCase.forbiddenAnswerSubstrings ?? []) {
+    if (includesRubricText(answerText, substring)) {
+      failureReasons.push(`answer contains forbidden substring ${JSON.stringify(substring)}`);
+    }
+  }
+
+  for (const claim of testCase.requiredClaims ?? []) {
+    if (!includesRubricText(answerText, claim)) {
+      failureReasons.push(`answer missing required claim ${JSON.stringify(claim)}`);
+    }
+  }
+
+  for (const concept of testCase.requiredConcepts ?? []) {
+    if (!concept.some((alternative) => includesRubricText(answerText, alternative))) {
+      failureReasons.push(`answer missing required concept ${JSON.stringify(concept)}`);
+    }
+  }
+
+  for (const claim of testCase.forbiddenClaims ?? []) {
+    if (includesRubricText(answerText, claim)) {
+      failureReasons.push(`answer contains forbidden claim ${JSON.stringify(claim)}`);
     }
   }
 
@@ -1804,6 +1874,20 @@ function evaluateOutcome(testCase: EvalCase, outcome: LookupOutcome, repeatIndex
     if (!citationFiles.includes(expectedFile)) {
       failureReasons.push(`missing citation file ${expectedFile}`);
     }
+  }
+
+  for (const substring of testCase.requiredCitationQuoteSubstrings ?? []) {
+    if (!includesRubricText(citationText, substring)) {
+      failureReasons.push(`citations missing quote substring ${JSON.stringify(substring)}`);
+    }
+  }
+
+  if (testCase.minCitationCount !== undefined && result.citations.length < testCase.minCitationCount) {
+    failureReasons.push(`citation count ${result.citations.length} below minimum ${testCase.minCitationCount}`);
+  }
+
+  if (testCase.maxCitationCount !== undefined && result.citations.length > testCase.maxCitationCount) {
+    failureReasons.push(`citation count ${result.citations.length} above maximum ${testCase.maxCitationCount}`);
   }
 
   if (testCase.maxElapsedMs !== undefined && outcome.execution.elapsedMs > testCase.maxElapsedMs) {
