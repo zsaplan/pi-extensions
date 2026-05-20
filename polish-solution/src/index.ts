@@ -72,6 +72,12 @@ import {
   type ReviewSuiteResult,
   type ReviewUsage,
 } from './review-core.js';
+import {
+  buildCategoryFinishedArtifactEntry,
+  buildCategoryStartedArtifactEntry,
+  buildConflictAnalysisArtifactEntry,
+  buildReviewerEventArtifactEntry,
+} from './review-artifacts.js';
 import {buildReviewerSystemPrompt} from './review-prompts.js';
 import {REVIEW_TOOL_PARAMS} from './review-tool-contract.js';
 
@@ -1237,15 +1243,16 @@ function subscribeToReviewerSessionEvents(
       maxAttempts,
     );
     if (artifactEvent && artifactContext) {
-      artifactContext.writer.appendBestEffort({
-        ...buildReviewArtifactEntryBase(
-          artifactContext.toolCallId,
-          artifactContext.runId,
+      artifactContext.writer.appendBestEffort(
+        buildReviewerEventArtifactEntry(
+          buildReviewArtifactEntryBase(
+            artifactContext.toolCallId,
+            artifactContext.runId,
+          ),
+          artifactEvent,
+          categoryContext,
         ),
-        entryType: 'reviewer-event',
-        ...(categoryContext ?? {}),
-        event: artifactEvent,
-      });
+      );
     }
 
     switch (eventRecord.type) {
@@ -3104,17 +3111,17 @@ async function runReviewSuite(
         },
         {notify: true},
       );
-      artifactContext?.writer.appendBestEffort({
-        ...buildReviewArtifactEntryBase(
-          artifactContext.toolCallId,
-          artifactContext.runId,
+      artifactContext?.writer.appendBestEffort(
+        buildCategoryStartedArtifactEntry(
+          buildReviewArtifactEntryBase(
+            artifactContext.toolCallId,
+            artifactContext.runId,
+          ),
+          categoryConfig,
+          ordinal,
+          totalCategories,
         ),
-        entryType: 'category-started',
-        category: categoryConfig.category,
-        ordinal,
-        totalCategories,
-        label: categoryConfig.label,
-      });
+      );
 
       let sessionResult: ReviewerSessionResult;
       try {
@@ -3135,19 +3142,22 @@ async function runReviewSuite(
           timeoutMs,
         );
       } catch (error) {
-        artifactContext?.writer.appendBestEffort({
-          ...buildReviewArtifactEntryBase(
-            artifactContext.toolCallId,
-            artifactContext.runId,
+        artifactContext?.writer.appendBestEffort(
+          buildCategoryFinishedArtifactEntry(
+            buildReviewArtifactEntryBase(
+              artifactContext.toolCallId,
+              artifactContext.runId,
+            ),
+            {
+              category: categoryConfig.category,
+              ordinal,
+              totalCategories,
+              status: 'error',
+              error: buildErrorRecord(error),
+              completedCategoryResults: categoryResults,
+            },
           ),
-          entryType: 'category-finished',
-          category: categoryConfig.category,
-          ordinal,
-          totalCategories,
-          status: 'error',
-          error: buildErrorRecord(error),
-          completedCategoryResults: categoryResults,
-        });
+        );
         throw error;
       }
       reviewerUsages.push(sessionResult.usage);
@@ -3174,18 +3184,21 @@ async function runReviewSuite(
           findings: categoryResult.findings.length,
         },
       );
-      artifactContext?.writer.appendBestEffort({
-        ...buildReviewArtifactEntryBase(
-          artifactContext.toolCallId,
-          artifactContext.runId,
+      artifactContext?.writer.appendBestEffort(
+        buildCategoryFinishedArtifactEntry(
+          buildReviewArtifactEntryBase(
+            artifactContext.toolCallId,
+            artifactContext.runId,
+          ),
+          {
+            category: categoryConfig.category,
+            ordinal,
+            totalCategories,
+            status: 'success',
+            result: categoryResult,
+          },
         ),
-        entryType: 'category-finished',
-        category: categoryConfig.category,
-        ordinal,
-        totalCategories,
-        status: 'success',
-        result: categoryResult,
-      });
+      );
     }
   } catch (error) {
     const suiteError: ReviewSuiteError =
@@ -3231,15 +3244,16 @@ async function runReviewSuite(
     phase: 'conflict-analysis',
     conflicts: conflictAnalysis.conflicts.length,
   });
-  artifactContext?.writer.appendBestEffort({
-    ...buildReviewArtifactEntryBase(
-      artifactContext.toolCallId,
-      artifactContext.runId,
+  artifactContext?.writer.appendBestEffort(
+    buildConflictAnalysisArtifactEntry(
+      buildReviewArtifactEntryBase(
+        artifactContext.toolCallId,
+        artifactContext.runId,
+      ),
+      conflictAnalysis.categoryResults,
+      conflictAnalysis.conflicts,
     ),
-    entryType: 'conflict-analysis',
-    categoryResults: conflictAnalysis.categoryResults,
-    conflicts: conflictAnalysis.conflicts,
-  });
+  );
   const review = buildReviewSuiteResult(
     conflictAnalysis.categoryResults,
     suiteMeta,
