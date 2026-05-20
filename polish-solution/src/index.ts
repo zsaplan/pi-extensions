@@ -202,7 +202,6 @@ type ReviewerSessionError = Error & {
 type ReviewSuiteRunResult = {
   review: ReviewSuiteResult;
   categoryResults: CategoryReviewResult[];
-  usage: ReviewUsage;
   reviewerMessages: unknown[];
   reviewerToolAccess?: ReviewerToolAccessRecord;
 };
@@ -3186,7 +3185,6 @@ async function runReviewSuite(
     return {
       review,
       categoryResults: sequenceResult.categoryResults,
-      usage: suiteUsage,
       reviewerMessages,
       reviewerToolAccess,
     };

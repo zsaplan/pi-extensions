@@ -657,71 +657,63 @@ export function buildCategoryReviewResult(
   };
 }
 
+type ConflictAction = 'remove' | 'keep' | 'extract' | 'inline';
+
 type OpposingActionPair = 'remove-keep' | 'remove-extract' | 'inline-extract';
 
 type DetectedOpposingActionPair = {
   pair: OpposingActionPair;
-  leftAction: string;
-  rightAction: string;
+  leftAction: ConflictAction;
+  rightAction: ConflictAction;
 };
 
-const REMOVE_ACTION_PATTERN = /\b(?:remove|delete|drop|prune)\b/i;
-const KEEP_ACTION_PATTERN = /\b(?:keep|retain|preserve)\b/i;
-const EXTRACT_ACTION_PATTERN = /\b(?:extract|share|abstract|dedupe)\b/i;
-const INLINE_ACTION_PATTERN = /\b(?:inline|simplify)\b/i;
+const CONFLICT_ACTION_PATTERNS: Record<ConflictAction, RegExp> = {
+  remove: /\b(?:remove|delete|drop|prune)\b/i,
+  keep: /\b(?:keep|retain|preserve)\b/i,
+  extract: /\b(?:extract|share|abstract|dedupe)\b/i,
+  inline: /\b(?:inline|simplify)\b/i,
+};
 
-function textMatches(pattern: RegExp, value: string): boolean {
-  return pattern.test(value);
+const OPPOSING_ACTION_PAIRS: ReadonlyArray<{
+  pair: OpposingActionPair;
+  leftAction: ConflictAction;
+  rightAction: ConflictAction;
+}> = [
+  {pair: 'remove-keep', leftAction: 'remove', rightAction: 'keep'},
+  {pair: 'remove-extract', leftAction: 'remove', rightAction: 'extract'},
+  {pair: 'inline-extract', leftAction: 'inline', rightAction: 'extract'},
+];
+
+function findingTextHasAction(
+  finding: ReviewFinding,
+  action: ConflictAction,
+): boolean {
+  return CONFLICT_ACTION_PATTERNS[action].test(
+    `${finding.title} ${finding.recommendation}`,
+  );
 }
 
 function detectOpposingActionPair(
   left: ReviewFinding,
   right: ReviewFinding,
 ): DetectedOpposingActionPair | undefined {
-  const leftText = `${left.title} ${left.recommendation}`;
-  const rightText = `${right.title} ${right.recommendation}`;
-  const leftRemove = textMatches(REMOVE_ACTION_PATTERN, leftText);
-  const rightRemove = textMatches(REMOVE_ACTION_PATTERN, rightText);
-  const leftKeep = textMatches(KEEP_ACTION_PATTERN, leftText);
-  const rightKeep = textMatches(KEEP_ACTION_PATTERN, rightText);
-  const leftExtract = textMatches(EXTRACT_ACTION_PATTERN, leftText);
-  const rightExtract = textMatches(EXTRACT_ACTION_PATTERN, rightText);
-  const leftInline = textMatches(INLINE_ACTION_PATTERN, leftText);
-  const rightInline = textMatches(INLINE_ACTION_PATTERN, rightText);
-
-  if (leftRemove && rightKeep) {
-    return {pair: 'remove-keep', leftAction: 'remove', rightAction: 'keep'};
-  }
-  if (leftKeep && rightRemove) {
-    return {pair: 'remove-keep', leftAction: 'keep', rightAction: 'remove'};
-  }
-  if (leftRemove && rightExtract) {
-    return {
-      pair: 'remove-extract',
-      leftAction: 'remove',
-      rightAction: 'extract',
-    };
-  }
-  if (leftExtract && rightRemove) {
-    return {
-      pair: 'remove-extract',
-      leftAction: 'extract',
-      rightAction: 'remove',
-    };
-  }
-  if (leftInline && rightExtract) {
-    return {
-      pair: 'inline-extract',
-      leftAction: 'inline',
-      rightAction: 'extract',
-    };
-  }
-  if (leftExtract && rightInline) {
-    return {
-      pair: 'inline-extract',
-      leftAction: 'extract',
-      rightAction: 'inline',
-    };
+  for (const actionPair of OPPOSING_ACTION_PAIRS) {
+    if (
+      findingTextHasAction(left, actionPair.leftAction) &&
+      findingTextHasAction(right, actionPair.rightAction)
+    ) {
+      return actionPair;
+    }
+    if (
+      findingTextHasAction(left, actionPair.rightAction) &&
+      findingTextHasAction(right, actionPair.leftAction)
+    ) {
+      return {
+        pair: actionPair.pair,
+        leftAction: actionPair.rightAction,
+        rightAction: actionPair.leftAction,
+      };
+    }
   }
 
   return undefined;
