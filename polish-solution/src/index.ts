@@ -84,6 +84,7 @@ import {
   type ReviewArtifactEntryBaseFields,
   type ReviewArtifactErrorRecord,
 } from './review-artifacts.js';
+import {promptWithTimeout} from './prompt-timeout.js';
 import {
   SUBMIT_REVIEW_SCHEMA,
   buildReviewerSystemPrompt,
@@ -266,6 +267,7 @@ const GREP_REPO_SCHEMA = Type.Object({
 const DEFAULT_THINKING_LEVEL = 'low' as const;
 const MAX_REPAIR_ATTEMPTS = 3;
 const MAX_AGENT_EXECUTION_MS = 900_000;
+const MAX_REVIEWER_STALL_MS = 90_000;
 const REVIEW_DIFF_BUDGET_MULTIPLIER = 3;
 const MAX_DIFF_BYTES = DEFAULT_MAX_BYTES * REVIEW_DIFF_BUDGET_MULTIPLIER;
 const MAX_DIFF_LINES = DEFAULT_MAX_LINES * REVIEW_DIFF_BUDGET_MULTIPLIER;
@@ -2692,58 +2694,6 @@ function createReviewerTools(
   ];
 }
 
-async function promptWithTimeout(
-  operation: Promise<void>,
-  session: Awaited<ReturnType<typeof createAgentSession>>['session'],
-  timeoutMs: number,
-  signal?: AbortSignal,
-): Promise<void> {
-  let timeoutId: NodeJS.Timeout | undefined;
-  let abortListener: (() => void) | undefined;
-
-  const timeoutPromise = new Promise<never>((_resolve, reject) => {
-    timeoutId = setTimeout(async () => {
-      try {
-        await session.abort();
-      } catch {
-        // Ignore abort failures when timing out.
-      }
-      reject(
-        new Error(`polish_solution_review timed out after ${timeoutMs}ms`),
-      );
-    }, timeoutMs);
-  });
-
-  const abortPromise = signal
-    ? new Promise<never>((_resolve, reject) => {
-        abortListener = () => {
-          void session.abort().catch(() => {
-            // Ignore abort failures when canceling.
-          });
-          reject(new Error('Operation aborted'));
-        };
-
-        if (signal.aborted) {
-          abortListener();
-          return;
-        }
-
-        signal.addEventListener('abort', abortListener, {once: true});
-      })
-    : undefined;
-
-  try {
-    await Promise.race(
-      [operation, timeoutPromise].concat(abortPromise ? [abortPromise] : []),
-    );
-  } finally {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
-    if (signal && abortListener) {
-      signal.removeEventListener('abort', abortListener);
-    }
-  }
-}
-
 async function runReviewerSession(
   scope: ReviewScope,
   categoryConfig: ReviewCategoryConfig,
@@ -2912,12 +2862,13 @@ async function runReviewerSession(
       });
       const messageCountBeforePrompt = session.messages.length;
       try {
-        await promptWithTimeout(
-          session.prompt(prompt),
+        await promptWithTimeout({
+          operation: session.prompt(prompt),
           session,
-          remainingTimeoutMs,
+          timeoutMs: remainingTimeoutMs,
           signal,
-        );
+          stallTimeoutMs: Math.min(MAX_REVIEWER_STALL_MS, remainingTimeoutMs),
+        });
       } finally {
         unsubscribeReviewerEvents?.();
         progress?.stopHeartbeat();
