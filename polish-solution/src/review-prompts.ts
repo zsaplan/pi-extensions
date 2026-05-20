@@ -18,15 +18,27 @@ export const REVIEWER_SHARED_SAFETY_INSTRUCTIONS = `Shared safety and scope rule
 - When the diff changes user-facing Markdown-like output, CLI/tool text, or rendered diagnostics, verify markup-sensitive literals are escaped or code-formatted when they must display literally, such as raw \`<tag>\` tokens. Treat this as in scope only when rendering could hide, corrupt, or mislead the output; do not report copy/style nits.
 - When reviewing observability or alerting changes, verify the end-to-end signal path before approving: signal production/export, scrape or discovery selectors such as ServiceMonitor/PodMonitor labels, query label compatibility, alert/recording rules, and notification routing. Search nearby repo conventions when selectors or labels are not obvious.`;
 
+const REVIEW_STATUS_VALUES = ['needs-attention', 'approve'] as const;
+const REVIEW_CONFIDENCE_VALUES = ['low', 'medium', 'high'] as const;
+const REVIEW_FINDING_FIELD_PROMPTS = [
+  ['title', 'string'],
+  ['body', 'string'],
+  ['file', 'string'],
+  ['line_start', 'number'],
+  ['line_end', 'number'],
+  ['confidence', formatPromptEnum(REVIEW_CONFIDENCE_VALUES)],
+  ['recommendation', 'string'],
+] as const;
+
 export const REVIEW_STATUS_ENUM = Type.Union(
-  [Type.Literal('needs-attention'), Type.Literal('approve')],
+  REVIEW_STATUS_VALUES.map(value => Type.Literal(value)),
   {
     description: 'Review status.',
   },
 );
 
 export const REVIEW_CONFIDENCE_ENUM = Type.Union(
-  [Type.Literal('low'), Type.Literal('medium'), Type.Literal('high')],
+  REVIEW_CONFIDENCE_VALUES.map(value => Type.Literal(value)),
   {
     description: 'Finding confidence.',
   },
@@ -48,19 +60,22 @@ export const SUBMIT_REVIEW_SCHEMA = Type.Object({
   findings: Type.Array(REVIEW_FINDING_SCHEMA),
 });
 
-export const REVIEWER_OUTPUT_SCHEMA_INSTRUCTIONS = `When you are ready, call submit_review with this exact JSON shape:
+function formatPromptEnum(values: readonly string[]): string {
+  return values.map(value => `"${value}"`).join(' | ');
+}
+
+function formatPromptField([name, type]: readonly [string, string]): string {
+  return `      "${name}": ${type}`;
+}
+
+function buildSubmitReviewPromptContract(): string {
+  return `When you are ready, call submit_review with this exact JSON shape:
 {
-  "status": "needs-attention" | "approve",
+  "status": ${formatPromptEnum(REVIEW_STATUS_VALUES)},
   "summary": string,
   "findings": [
     {
-      "title": string,
-      "body": string,
-      "file": string,
-      "line_start": number,
-      "line_end": number,
-      "confidence": "low" | "medium" | "high",
-      "recommendation": string
+${REVIEW_FINDING_FIELD_PROMPTS.map(formatPromptField).join(',\n')}
     }
   ]
 }
@@ -74,6 +89,10 @@ Rules:
 - Use the most relevant file and line range for each finding.
 - Do not output markdown or extra prose outside submit_review.
 - The only valid completion path is submit_review. After submit_review succeeds, stop immediately.`;
+}
+
+export const REVIEWER_OUTPUT_SCHEMA_INSTRUCTIONS =
+  buildSubmitReviewPromptContract();
 
 export function buildReviewerSystemPrompt(
   categoryConfig: ReviewCategoryConfig,
