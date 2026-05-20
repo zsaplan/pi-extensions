@@ -7,6 +7,7 @@ import {
   appendScopedDiffPart,
   appendTextAccumulator,
   buildCategoryReviewerFailureMessage,
+  buildCategoryReviewResult,
   buildChangedFileDetails,
   buildPackageSelfReviewBlockConfig,
   createTextAccumulator,
@@ -14,15 +15,18 @@ import {
   getAccumulatedLineCount,
   getRemainingBudget,
   getRemainingCategoryBudgetMs,
+  buildReviewSuiteResult,
   isSameOrNestedPath,
   normalizeGitDiffPath,
   normalizeRepoPath,
   parseDiffHeaderPaths,
   parseNewHunkRange,
+  formatReviewFindingId,
   rangesIntersect,
   sanitizeArtifactPathSegment,
   validateReviewerSubmitReadiness,
   validateReviewResult,
+  type ReviewMeta,
   type ReviewScope,
 } from '../src/review-core.ts';
 
@@ -50,6 +54,26 @@ test('review category registry exposes stable first-slice order and objectives',
     /duplicated logic/i,
   );
 });
+
+function makeMeta(overrides: Partial<ReviewMeta> = {}): ReviewMeta {
+  return {
+    startedAt: '2026-01-01T00:00:00.000Z',
+    completedAt: '2026-01-01T00:00:01.000Z',
+    elapsedMs: 1000,
+    elapsed: '0:01',
+    usage: {
+      model: 'test/model',
+      turns: 1,
+      input: 2,
+      output: 3,
+      cacheRead: 4,
+      cacheWrite: 5,
+      totalTokens: 14,
+      cost: 0.01,
+    },
+    ...overrides,
+  };
+}
 
 function makeScope(overrides: Partial<ReviewScope> = {}): ReviewScope {
   return {
@@ -281,6 +305,83 @@ test('category reviewer budget and failure helpers are deterministic', () => {
     ),
     'simplify review failed: timed out',
   );
+});
+
+test('category aggregation assigns visible finding ids and preserves compatibility fields', () => {
+  assert.equal(formatReviewFindingId('adversarial', 1), 'adversarial-01');
+
+  const categoryResult = buildCategoryReviewResult(
+    'adversarial',
+    {
+      status: 'needs-attention',
+      summary: 'found one',
+      findings: [
+        {
+          title: 'Guard matters',
+          body: 'The changed guard prevents bad input.',
+          file: 'src/changed.ts',
+          line_start: 10,
+          line_end: 10,
+          confidence: 'high',
+          recommendation: 'Keep the guard.',
+        },
+      ],
+    },
+    makeMeta(),
+  );
+
+  assert.deepEqual(categoryResult.findings[0], {
+    id: 'adversarial-01',
+    category: 'adversarial',
+    title: 'Guard matters',
+    body: 'The changed guard prevents bad input.',
+    file: 'src/changed.ts',
+    line_start: 10,
+    line_end: 10,
+    confidence: 'high',
+    recommendation: 'Keep the guard.',
+  });
+
+  const suiteResult = buildReviewSuiteResult([categoryResult], makeMeta());
+
+  assert.equal(suiteResult.status, 'needs-attention');
+  assert.equal(suiteResult.findings[0].id, 'adversarial-01');
+  assert.equal(suiteResult.category_results[0], categoryResult);
+  assert.deepEqual(suiteResult.conflicts, []);
+  assert.match(suiteResult.summary, /1 finding across 1 review category/);
+});
+
+test('suite aggregation approves only when all categories approve and no conflicts exist', () => {
+  const approvedCategoryResults = REVIEW_CATEGORY_ORDER.map(category =>
+    buildCategoryReviewResult(
+      category,
+      {status: 'approve', summary: `${category} ok`, findings: []},
+      makeMeta(),
+    ),
+  );
+
+  const approvedSuite = buildReviewSuiteResult(
+    approvedCategoryResults,
+    makeMeta(),
+  );
+  assert.equal(approvedSuite.status, 'approve');
+  assert.deepEqual(approvedSuite.findings, []);
+  assert.match(approvedSuite.summary, /All 5 review categories approved/);
+
+  const conflictedSuite = buildReviewSuiteResult(
+    approvedCategoryResults,
+    makeMeta(),
+    [
+      {
+        finding_ids: ['adversarial-01', 'prune-01'],
+        summary: 'test conflict',
+        resolution: 'needs-user-direction',
+        rationale: 'test rationale',
+      },
+    ],
+  );
+  assert.equal(conflictedSuite.status, 'needs-attention');
+  assert.match(conflictedSuite.summary, /user direction is needed/);
 });
 
 test('validateReviewResult trims accepted findings and enforces changed-file/hunk invariants', () => {

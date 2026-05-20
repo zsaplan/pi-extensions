@@ -40,9 +40,11 @@ import {
 import {
   appendScopedDiffPart,
   appendTextAccumulator,
+  buildCategoryReviewResult,
   buildChangedFileDetails,
   buildPackageSelfReviewBlockConfig,
   buildCategoryReviewerFailureMessage,
+  buildReviewSuiteResult,
   createDiffTooLargeError,
   createTextAccumulator,
   createToolOutputTooLargeError,
@@ -57,6 +59,7 @@ import {
   REVIEW_CATEGORY_CONFIGS,
   validateReviewerSubmitReadiness,
   validateReviewResult,
+  type CategoryReviewResult,
   type OutputBudget,
   type ReviewCategory,
   type ReviewCategoryConfig,
@@ -64,14 +67,13 @@ import {
   type ReviewResult,
   type ReviewerToolInspectionState,
   type ReviewScope,
+  type ReviewSuiteResult,
   type ReviewUsage,
 } from './review-core.js';
 import {buildReviewerSystemPrompt} from './review-prompts.js';
 import {REVIEW_TOOL_PARAMS} from './review-tool-contract.js';
 
-type ReviewToolResult = ReviewResult & {
-  meta: ReviewMeta;
-};
+type ReviewToolResult = ReviewSuiteResult;
 
 type ReviewArtifactRef = {
   id: string;
@@ -108,7 +110,7 @@ type ReviewRunRecord = {
   thinkingLevel: ReturnType<ExtensionAPI['getThinkingLevel']>;
   status: 'success' | 'error';
   meta: ReviewMeta;
-  review?: ReviewResult;
+  review?: ReviewSuiteResult;
   error?: ReviewErrorRecord;
   scope?: ReviewScopeRecord;
   reviewerMessages?: unknown[];
@@ -183,6 +185,21 @@ type ReviewerSessionError = Error & {
   category?: ReviewCategory;
   reviewerUsage?: ReviewUsage;
   reviewerMeta?: ReviewMeta;
+  reviewerMessages?: unknown[];
+  reviewerToolAccess?: ReviewerToolAccessRecord;
+};
+
+type ReviewSuiteRunResult = {
+  review: ReviewSuiteResult;
+  categoryResults: CategoryReviewResult[];
+  usage: ReviewUsage;
+  reviewerMessages: unknown[];
+  reviewerToolAccess?: ReviewerToolAccessRecord;
+};
+
+type ReviewSuiteError = Error & {
+  categoryResults?: CategoryReviewResult[];
+  reviewerUsage?: ReviewUsage;
   reviewerMessages?: unknown[];
   reviewerToolAccess?: ReviewerToolAccessRecord;
 };
@@ -292,8 +309,6 @@ type SelfReviewBlockConfig = {
   prefixes: string[];
   dirtyExternalReviewerBlocked?: boolean;
 };
-
-const DEFAULT_REVIEW_CATEGORY_CONFIG = REVIEW_CATEGORY_CONFIGS[0];
 
 function uniqueSorted(values: string[]): string[] {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right));
@@ -444,6 +459,31 @@ function normalizeReviewerUsage(
   return normalizedUsage;
 }
 
+function aggregateReviewUsage(
+  usages: ReviewUsage[],
+  fallbackModel?: string,
+): ReviewUsage {
+  const aggregate = createEmptyReviewUsage(fallbackModel);
+  for (const usage of usages) {
+    aggregate.model ??= usage.model;
+    aggregate.turns += usage.turns;
+    aggregate.input += usage.input;
+    aggregate.output += usage.output;
+    aggregate.cacheRead += usage.cacheRead;
+    aggregate.cacheWrite += usage.cacheWrite;
+    aggregate.totalTokens += usage.totalTokens;
+    aggregate.cost += usage.cost;
+  }
+  if (!aggregate.totalTokens) {
+    aggregate.totalTokens =
+      aggregate.input +
+      aggregate.output +
+      aggregate.cacheRead +
+      aggregate.cacheWrite;
+  }
+  return aggregate;
+}
+
 function buildReviewMeta(
   startedAtMs: number,
   completedAtMs: number,
@@ -458,14 +498,8 @@ function buildReviewMeta(
   };
 }
 
-function buildReviewToolResult(
-  review: ReviewResult,
-  meta: ReviewMeta,
-): ReviewToolResult {
-  return {
-    ...review,
-    meta,
-  };
+function buildReviewToolResult(review: ReviewSuiteResult): ReviewToolResult {
+  return review;
 }
 
 function buildReviewScopeRecord(scope: ReviewScope): ReviewScopeRecord {
@@ -2992,6 +3026,124 @@ async function runReviewerSession(
   throw reviewerError;
 }
 
+async function runReviewSuite(
+  scope: ReviewScope,
+  categoryConfigs: readonly ReviewCategoryConfig[],
+  model: NonNullable<ExtensionContext['model']>,
+  modelRegistry: ExtensionContext['modelRegistry'],
+  signal?: AbortSignal,
+  progress?: ReturnType<typeof createProgressReporter>,
+  artifactContext?: {
+    writer: ReviewArtifactWriter;
+    toolCallId: string;
+    runId: string;
+  },
+  timeoutMs = MAX_AGENT_EXECUTION_MS,
+): Promise<ReviewSuiteRunResult> {
+  const suiteStartedAtMs = Date.now();
+  const categoryResults: CategoryReviewResult[] = [];
+  const reviewerMessages: unknown[] = [];
+  const reviewerUsages: ReviewUsage[] = [];
+  let reviewerToolAccess: ReviewerToolAccessRecord | undefined;
+
+  try {
+    for (const [index, categoryConfig] of categoryConfigs.entries()) {
+      progress?.update(
+        `Running ${categoryConfig.category} review (${index + 1}/${categoryConfigs.length})…`,
+        {
+          phase: 'category-started',
+          category: categoryConfig.category,
+          ordinal: index + 1,
+          totalCategories: categoryConfigs.length,
+        },
+        {notify: true},
+      );
+
+      const sessionResult = await runReviewerSession(
+        scope,
+        categoryConfig,
+        model,
+        modelRegistry,
+        signal,
+        progress,
+        artifactContext,
+        timeoutMs,
+      );
+      reviewerUsages.push(sessionResult.usage);
+      reviewerMessages.push({
+        category: categoryConfig.category,
+        messages: sessionResult.reviewerMessages,
+      });
+      reviewerToolAccess = sessionResult.reviewerToolAccess;
+      const categoryResult = buildCategoryReviewResult(
+        sessionResult.category,
+        sessionResult.review,
+        sessionResult.meta,
+      );
+      categoryResults.push(categoryResult);
+
+      progress?.update(
+        `${categoryConfig.label} completed: ${categoryResult.status}.`,
+        {
+          phase: 'category-finished',
+          category: categoryConfig.category,
+          ordinal: index + 1,
+          totalCategories: categoryConfigs.length,
+          reviewStatus: categoryResult.status,
+          findings: categoryResult.findings.length,
+        },
+      );
+    }
+  } catch (error) {
+    const suiteError: ReviewSuiteError =
+      error instanceof Error
+        ? (error as ReviewSuiteError)
+        : (new Error(String(error)) as ReviewSuiteError);
+    const diagnostics = getReviewerSessionDiagnostics(error);
+    const failedUsage = normalizeReviewerUsage(
+      diagnostics?.reviewerUsage,
+      describeModel(model),
+    );
+    const aggregateUsage = aggregateReviewUsage(
+      [...reviewerUsages, failedUsage],
+      describeModel(model),
+    );
+    suiteError.categoryResults = categoryResults;
+    suiteError.reviewerUsage = aggregateUsage;
+    suiteError.reviewerMessages = [
+      ...reviewerMessages,
+      ...(diagnostics?.reviewerMessages
+        ? [
+            {
+              category: (error as ReviewerSessionError).category,
+              messages: diagnostics.reviewerMessages,
+            },
+          ]
+        : []),
+    ];
+    suiteError.reviewerToolAccess =
+      diagnostics?.reviewerToolAccess ?? reviewerToolAccess;
+    throw suiteError;
+  }
+
+  const suiteCompletedAtMs = Date.now();
+  const suiteUsage = aggregateReviewUsage(reviewerUsages, describeModel(model));
+  const suiteMeta = buildReviewMeta(
+    suiteStartedAtMs,
+    suiteCompletedAtMs,
+    suiteUsage,
+  );
+  const review = buildReviewSuiteResult(categoryResults, suiteMeta, []);
+
+  return {
+    review,
+    categoryResults,
+    usage: suiteUsage,
+    reviewerMessages,
+    reviewerToolAccess,
+  };
+}
+
 export default function polishSolution(pi: ExtensionAPI): void {
   pi.registerTool({
     name: 'polish_solution_review',
@@ -3033,7 +3185,7 @@ export default function polishSolution(pi: ExtensionAPI): void {
       });
       let scope: ReviewScope | undefined;
       let selectedModel: NonNullable<ExtensionContext['model']> | undefined;
-      let review: ReviewResult | undefined;
+      let review: ReviewSuiteResult | undefined;
       let reviewerMessages: unknown[] = [];
       let reviewerToolAccess: ReviewerToolAccessRecord | undefined;
       let toolResult: ReviewToolResult | undefined;
@@ -3095,9 +3247,9 @@ export default function polishSolution(pi: ExtensionAPI): void {
           changedFiles: scope.changedFiles.length,
         });
 
-        const reviewerSession = await runReviewerSession(
+        const reviewSuite = await runReviewSuite(
           scope,
-          DEFAULT_REVIEW_CATEGORY_CONFIG,
+          REVIEW_CATEGORY_CONFIGS,
           selectedModel,
           ctx.modelRegistry,
           signal,
@@ -3109,15 +3261,11 @@ export default function polishSolution(pi: ExtensionAPI): void {
           },
           MAX_AGENT_EXECUTION_MS,
         );
-        review = reviewerSession.review;
-        reviewerMessages = reviewerSession.reviewerMessages;
-        reviewerToolAccess = reviewerSession.reviewerToolAccess;
-        reviewMeta = buildReviewMeta(
-          startedAtMs,
-          Date.now(),
-          reviewerSession.usage,
-        );
-        toolResult = buildReviewToolResult(review, reviewMeta);
+        review = reviewSuite.review;
+        reviewerMessages = reviewSuite.reviewerMessages;
+        reviewerToolAccess = reviewSuite.reviewerToolAccess;
+        reviewMeta = review.meta;
+        toolResult = buildReviewToolResult(review);
 
         progress.update(
           `polish_solution_review finished: ${review.status} (${reviewMeta.elapsed} · ${formatUsageSummary(reviewMeta.usage)}).`,

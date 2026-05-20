@@ -613,6 +613,79 @@ export function buildCategoryReviewerFailureMessage(
   return `${category} review failed: ${message}`;
 }
 
+export function formatReviewFindingId(
+  category: ReviewCategory,
+  ordinal: number,
+): string {
+  return `${category}-${String(ordinal).padStart(2, '0')}`;
+}
+
+export function buildCategoryReviewResult(
+  category: ReviewCategory,
+  review: ChildReviewResult,
+  meta: ReviewMeta,
+): CategoryReviewResult {
+  return {
+    category,
+    status: review.status,
+    summary: review.summary,
+    findings: review.findings.map((finding, index) => {
+      return {
+        ...finding,
+        id: formatReviewFindingId(category, index + 1),
+        category,
+      };
+    }),
+    meta,
+  };
+}
+
+function buildReviewSuiteSummary(
+  categoryResults: CategoryReviewResult[],
+  conflicts: ReviewConflict[],
+): string {
+  const findingCount = categoryResults.reduce((total, result) => {
+    return total + result.findings.length;
+  }, 0);
+  const unresolvedConflictCount = conflicts.filter(conflict => {
+    return conflict.resolution === 'needs-user-direction';
+  }).length;
+
+  const categoryText = `${categoryResults.length} review categor${categoryResults.length === 1 ? 'y' : 'ies'}`;
+  if (unresolvedConflictCount > 0) {
+    return `${findingCount} finding${findingCount === 1 ? '' : 's'} across ${categoryText}; user direction is needed for ${unresolvedConflictCount} unresolved conflict${unresolvedConflictCount === 1 ? '' : 's'}.`;
+  }
+  if (findingCount > 0 || conflicts.length > 0) {
+    const conflictText = conflicts.length
+      ? ` with ${conflicts.length} conflict${conflicts.length === 1 ? '' : 's'}`
+      : '';
+    return `${findingCount} finding${findingCount === 1 ? '' : 's'} across ${categoryText}${conflictText}.`;
+  }
+  return `All ${categoryText} approved with no findings.`;
+}
+
+export function buildReviewSuiteResult(
+  categoryResults: CategoryReviewResult[],
+  meta: ReviewMeta,
+  conflicts: ReviewConflict[] = [],
+): ReviewSuiteResult {
+  const findings = categoryResults.flatMap(result => result.findings);
+  const status: ReviewStatus =
+    categoryResults.every(result => result.status === 'approve') &&
+    conflicts.length === 0
+      ? 'approve'
+      : 'needs-attention';
+
+  return {
+    status,
+    summary: buildReviewSuiteSummary(categoryResults, conflicts),
+    findings,
+    category_results: categoryResults,
+    conflicts,
+    meta,
+  };
+}
+
 export function validateReviewResult(
   input: ReviewSubmitInput,
   scope: ReviewScope,
