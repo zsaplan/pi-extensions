@@ -64,6 +64,7 @@ import {
   type OutputBudget,
   type ReviewCategory,
   type ReviewCategoryConfig,
+  type ReviewConflict,
   type ReviewMeta,
   type ReviewResult,
   type ReviewerToolInspectionState,
@@ -112,6 +113,9 @@ type ReviewRunRecord = {
   status: 'success' | 'error';
   meta: ReviewMeta;
   review?: ReviewSuiteResult;
+  categoryResults?: CategoryReviewResult[];
+  conflicts?: ReviewConflict[];
+  failedCategory?: ReviewCategory;
   error?: ReviewErrorRecord;
   scope?: ReviewScopeRecord;
   reviewerMessages?: unknown[];
@@ -150,8 +154,33 @@ type ReviewArtifactEntry =
       scope: ReviewScopeRecord;
     })
   | (ReviewArtifactEntryBase & {
+      entryType: 'category-started';
+      category: ReviewCategory;
+      ordinal: number;
+      totalCategories: number;
+      label: string;
+    })
+  | (ReviewArtifactEntryBase & {
       entryType: 'reviewer-event';
+      category?: ReviewCategory;
+      ordinal?: number;
+      totalCategories?: number;
       event: unknown;
+    })
+  | (ReviewArtifactEntryBase & {
+      entryType: 'category-finished';
+      category: ReviewCategory;
+      ordinal: number;
+      totalCategories: number;
+      status: 'success' | 'error';
+      result?: CategoryReviewResult;
+      error?: ReviewErrorRecord;
+      completedCategoryResults?: CategoryReviewResult[];
+    })
+  | (ReviewArtifactEntryBase & {
+      entryType: 'conflict-analysis';
+      categoryResults: CategoryReviewResult[];
+      conflicts: ReviewConflict[];
     })
   | (ReviewArtifactEntryBase & {
       entryType: 'run-finished';
@@ -1172,6 +1201,11 @@ function subscribeToReviewerSessionEvents(
     toolCallId: string;
     runId: string;
   },
+  categoryContext?: {
+    category: ReviewCategory;
+    ordinal?: number;
+    totalCategories?: number;
+  },
 ): () => void {
   let activeActivityKey: string | undefined;
 
@@ -1188,6 +1222,7 @@ function subscribeToReviewerSessionEvents(
       maxAttempts,
       activityKey: key,
       timeoutMs: MAX_AGENT_EXECUTION_MS,
+      ...(categoryContext ?? {}),
       ...(details ?? {}),
     });
   };
@@ -1208,6 +1243,7 @@ function subscribeToReviewerSessionEvents(
           artifactContext.runId,
         ),
         entryType: 'reviewer-event',
+        ...(categoryContext ?? {}),
         event: artifactEvent,
       });
     }
@@ -2764,6 +2800,8 @@ async function runReviewerSession(
     writer: ReviewArtifactWriter;
     toolCallId: string;
     runId: string;
+    ordinal?: number;
+    totalCategories?: number;
   },
   timeoutMs = MAX_AGENT_EXECUTION_MS,
 ): Promise<ReviewerSessionResult> {
@@ -2903,6 +2941,11 @@ async function runReviewerSession(
             attempt,
             maxAttempts,
             artifactContext,
+            {
+              category: categoryConfig.category,
+              ordinal: artifactContext?.ordinal,
+              totalCategories: artifactContext?.totalCategories,
+            },
           )
         : undefined;
       progress?.startHeartbeat(`${categoryConfig.label} analyzing the diff…`, {
@@ -3049,27 +3092,64 @@ async function runReviewSuite(
 
   try {
     for (const [index, categoryConfig] of categoryConfigs.entries()) {
+      const ordinal = index + 1;
+      const totalCategories = categoryConfigs.length;
       progress?.update(
-        `Running ${categoryConfig.category} review (${index + 1}/${categoryConfigs.length})…`,
+        `Running ${categoryConfig.category} review (${ordinal}/${totalCategories})…`,
         {
           phase: 'category-started',
           category: categoryConfig.category,
-          ordinal: index + 1,
-          totalCategories: categoryConfigs.length,
+          ordinal,
+          totalCategories,
         },
         {notify: true},
       );
+      artifactContext?.writer.appendBestEffort({
+        ...buildReviewArtifactEntryBase(
+          artifactContext.toolCallId,
+          artifactContext.runId,
+        ),
+        entryType: 'category-started',
+        category: categoryConfig.category,
+        ordinal,
+        totalCategories,
+        label: categoryConfig.label,
+      });
 
-      const sessionResult = await runReviewerSession(
-        scope,
-        categoryConfig,
-        model,
-        modelRegistry,
-        signal,
-        progress,
-        artifactContext,
-        timeoutMs,
-      );
+      let sessionResult: ReviewerSessionResult;
+      try {
+        sessionResult = await runReviewerSession(
+          scope,
+          categoryConfig,
+          model,
+          modelRegistry,
+          signal,
+          progress,
+          artifactContext
+            ? {
+                ...artifactContext,
+                ordinal,
+                totalCategories,
+              }
+            : undefined,
+          timeoutMs,
+        );
+      } catch (error) {
+        artifactContext?.writer.appendBestEffort({
+          ...buildReviewArtifactEntryBase(
+            artifactContext.toolCallId,
+            artifactContext.runId,
+          ),
+          entryType: 'category-finished',
+          category: categoryConfig.category,
+          ordinal,
+          totalCategories,
+          status: 'error',
+          error: buildErrorRecord(error),
+          completedCategoryResults: categoryResults,
+        });
+        throw error;
+      }
       reviewerUsages.push(sessionResult.usage);
       reviewerMessages.push({
         category: categoryConfig.category,
@@ -3088,12 +3168,24 @@ async function runReviewSuite(
         {
           phase: 'category-finished',
           category: categoryConfig.category,
-          ordinal: index + 1,
-          totalCategories: categoryConfigs.length,
+          ordinal,
+          totalCategories,
           reviewStatus: categoryResult.status,
           findings: categoryResult.findings.length,
         },
       );
+      artifactContext?.writer.appendBestEffort({
+        ...buildReviewArtifactEntryBase(
+          artifactContext.toolCallId,
+          artifactContext.runId,
+        ),
+        entryType: 'category-finished',
+        category: categoryConfig.category,
+        ordinal,
+        totalCategories,
+        status: 'success',
+        result: categoryResult,
+      });
     }
   } catch (error) {
     const suiteError: ReviewSuiteError =
@@ -3139,6 +3231,15 @@ async function runReviewSuite(
     phase: 'conflict-analysis',
     conflicts: conflictAnalysis.conflicts.length,
   });
+  artifactContext?.writer.appendBestEffort({
+    ...buildReviewArtifactEntryBase(
+      artifactContext.toolCallId,
+      artifactContext.runId,
+    ),
+    entryType: 'conflict-analysis',
+    categoryResults: conflictAnalysis.categoryResults,
+    conflicts: conflictAnalysis.conflicts,
+  });
   const review = buildReviewSuiteResult(
     conflictAnalysis.categoryResults,
     suiteMeta,
@@ -3147,7 +3248,7 @@ async function runReviewSuite(
 
   return {
     review,
-    categoryResults,
+    categoryResults: conflictAnalysis.categoryResults,
     usage: suiteUsage,
     reviewerMessages,
     reviewerToolAccess,
@@ -3159,11 +3260,11 @@ export default function polishSolution(pi: ExtensionAPI): void {
     name: 'polish_solution_review',
     label: 'Polish Solution Review',
     description:
-      'Run an adversarial review pass on the current git worktree against a main-like base ref and return structured JSON findings.',
+      'Run an isolated multi-category review suite on the current git worktree against a main-like base ref and return structured JSON findings.',
     promptSnippet:
-      'Run an adversarial review pass on the current git worktree and return structured JSON findings.',
+      'Run a multi-category review suite on the current git worktree and return structured JSON findings.',
     promptGuidelines: [
-      'Use this tool when you want an iterative adversarial review pass over the current change set.',
+      'Use this tool when you want an iterative multi-category review suite over the current change set.',
       'It defaults to origin/main when available, otherwise main, and it reviews the full current worktree state including non-ignored untracked files.',
       'Rerun it after each substantial remediation pass until it approves or you need user direction.',
     ],
@@ -3196,6 +3297,8 @@ export default function polishSolution(pi: ExtensionAPI): void {
       let scope: ReviewScope | undefined;
       let selectedModel: NonNullable<ExtensionContext['model']> | undefined;
       let review: ReviewSuiteResult | undefined;
+      let categoryResults: CategoryReviewResult[] | undefined;
+      let conflicts: ReviewConflict[] | undefined;
       let reviewerMessages: unknown[] = [];
       let reviewerToolAccess: ReviewerToolAccessRecord | undefined;
       let toolResult: ReviewToolResult | undefined;
@@ -3221,7 +3324,7 @@ export default function polishSolution(pi: ExtensionAPI): void {
 
       try {
         progress.update(
-          'Starting adversarial review…',
+          'Starting review suite…',
           {
             phase: 'start',
             timeoutMs: MAX_AGENT_EXECUTION_MS,
@@ -3249,7 +3352,7 @@ export default function polishSolution(pi: ExtensionAPI): void {
           );
         }
 
-        progress.update('Launching isolated adversarial reviewer…', {
+        progress.update('Launching isolated review suite…', {
           phase: 'launch-reviewer',
           branch: scope.branch,
           baseRef: scope.baseRef,
@@ -3272,6 +3375,8 @@ export default function polishSolution(pi: ExtensionAPI): void {
           MAX_AGENT_EXECUTION_MS,
         );
         review = reviewSuite.review;
+        categoryResults = reviewSuite.categoryResults;
+        conflicts = review.conflicts;
         reviewerMessages = reviewSuite.reviewerMessages;
         reviewerToolAccess = reviewSuite.reviewerToolAccess;
         reviewMeta = review.meta;
@@ -3290,6 +3395,8 @@ export default function polishSolution(pi: ExtensionAPI): void {
       } catch (error) {
         finalError = error;
         const diagnostics = getReviewerSessionDiagnostics(error);
+        const suiteDiagnostics = error as ReviewSuiteError;
+        categoryResults = suiteDiagnostics.categoryResults ?? categoryResults;
         reviewerMessages = diagnostics?.reviewerMessages ?? reviewerMessages;
         reviewerToolAccess =
           diagnostics?.reviewerToolAccess ?? reviewerToolAccess;
@@ -3326,6 +3433,11 @@ export default function polishSolution(pi: ExtensionAPI): void {
         status: finalError ? 'error' : 'success',
         meta: reviewMeta,
         review,
+        categoryResults: review?.category_results ?? categoryResults,
+        conflicts: review?.conflicts ?? conflicts,
+        failedCategory: finalError
+          ? (finalError as ReviewerSessionError).category
+          : undefined,
         error: finalError ? buildErrorRecord(finalError) : undefined,
         scope: scope ? buildReviewScopeRecord(scope) : undefined,
         reviewerMessages:
