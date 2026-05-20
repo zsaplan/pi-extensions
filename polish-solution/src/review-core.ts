@@ -4,7 +4,56 @@ import {formatSize} from '@mariozechner/pi-coding-agent';
 export type ReviewStatus = 'needs-attention' | 'approve';
 export type ReviewConfidence = 'low' | 'medium' | 'high';
 
-export type ReviewFinding = {
+export const REVIEW_CATEGORY_ORDER = [
+  'adversarial',
+  'simplify',
+  'standardize',
+  'prune',
+  'dry',
+] as const;
+
+export type ReviewCategory = (typeof REVIEW_CATEGORY_ORDER)[number];
+
+export type ReviewCategoryConfig = {
+  category: ReviewCategory;
+  label: string;
+  objective: string;
+};
+
+export const REVIEW_CATEGORY_CONFIGS: readonly ReviewCategoryConfig[] = [
+  {
+    category: 'adversarial',
+    label: 'Adversarial Review',
+    objective:
+      'Find material correctness, robustness, design, safety, and edge-case risks. Prioritize dangerous or expensive failures and report only material blocking risks.',
+  },
+  {
+    category: 'simplify',
+    label: 'Simplify Review',
+    objective:
+      'Catch avoidable complexity that makes the change harder to reason about or maintain. Look for unnecessary abstractions, moving parts, or state/control-flow complexity.',
+  },
+  {
+    category: 'standardize',
+    label: 'Standardize Review',
+    objective:
+      'Catch deviations from existing repository or package conventions. Prefer nearby patterns, established helpers, validation conventions, error shapes, and extension APIs.',
+  },
+  {
+    category: 'prune',
+    label: 'Prune Review',
+    objective:
+      'Catch dead, redundant, or no-longer-needed code, data, comments, documentation, compatibility shims, generated artifacts, or branches produced by the change.',
+  },
+  {
+    category: 'dry',
+    label: 'DRY Review',
+    objective:
+      'Catch duplicated logic where divergence would create bugs or maintenance risk, especially repeated prompts, schemas, result mapping, error handling, validation, orchestration, or artifact plumbing.',
+  },
+];
+
+export type ReviewerFindingInput = {
   title: string;
   body: string;
   file: string;
@@ -14,11 +63,71 @@ export type ReviewFinding = {
   recommendation: string;
 };
 
-export type ReviewResult = {
+export type ReviewFinding = ReviewerFindingInput & {
+  id: string;
+  category: ReviewCategory;
+  conflicts_with?: string[];
+};
+
+export type ChildReviewResult = {
+  status: ReviewStatus;
+  summary: string;
+  findings: ReviewerFindingInput[];
+};
+
+export type ReviewUsage = {
+  model?: string;
+  turns: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  cost: number;
+};
+
+export type ReviewMeta = {
+  startedAt: string;
+  completedAt: string;
+  elapsedMs: number;
+  elapsed: string;
+  usage: ReviewUsage;
+};
+
+export type CategoryReviewResult = {
+  category: ReviewCategory;
   status: ReviewStatus;
   summary: string;
   findings: ReviewFinding[];
+  meta: ReviewMeta;
 };
+
+export type ConflictResolution =
+  | 'prefer-adversarial'
+  | 'prefer-standardize'
+  | 'prefer-prune'
+  | 'prefer-simplify'
+  | 'prefer-dry'
+  | 'needs-user-direction';
+
+export type ReviewConflict = {
+  finding_ids: [string, string];
+  summary: string;
+  resolution: ConflictResolution;
+  preferred_finding_id?: string;
+  rationale: string;
+};
+
+export type ReviewSuiteResult = {
+  status: ReviewStatus;
+  summary: string;
+  findings: ReviewFinding[];
+  category_results: CategoryReviewResult[];
+  conflicts: ReviewConflict[];
+  meta: ReviewMeta;
+};
+
+export type ReviewResult = ChildReviewResult;
 
 export type LineRange = {
   start: number;
@@ -517,7 +626,7 @@ export function validateReviewResult(
       line_end: finding.line_end,
       confidence: finding.confidence,
       recommendation,
-    } satisfies ReviewFinding;
+    } satisfies ReviewerFindingInput;
   });
 
   if (input.status === 'approve' && findings.length > 0) {

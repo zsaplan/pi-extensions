@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import path from 'node:path';
 import {
+  REVIEW_CATEGORY_CONFIGS,
+  REVIEW_CATEGORY_ORDER,
   appendScopedDiffPart,
   appendTextAccumulator,
   buildChangedFileDetails,
@@ -20,6 +22,31 @@ import {
   validateReviewResult,
   type ReviewScope,
 } from '../src/review-core.ts';
+
+test('review category registry exposes stable first-slice order and objectives', () => {
+  assert.deepEqual(REVIEW_CATEGORY_ORDER, [
+    'adversarial',
+    'simplify',
+    'standardize',
+    'prune',
+    'dry',
+  ]);
+  assert.deepEqual(
+    REVIEW_CATEGORY_CONFIGS.map(config => config.category),
+    REVIEW_CATEGORY_ORDER,
+  );
+  assert.equal(
+    REVIEW_CATEGORY_CONFIGS.every(config => {
+      return config.label.length > 0 && config.objective.length > 0;
+    }),
+    true,
+  );
+  assert.match(
+    REVIEW_CATEGORY_CONFIGS.find(config => config.category === 'dry')
+      ?.objective ?? '',
+    /duplicated logic/i,
+  );
+});
 
 function makeScope(overrides: Partial<ReviewScope> = {}): ReviewScope {
   return {

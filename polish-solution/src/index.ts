@@ -54,28 +54,11 @@ import {
   sanitizeArtifactPathSegment,
   validateReviewResult,
   type OutputBudget,
+  type ReviewMeta,
   type ReviewResult,
   type ReviewScope,
+  type ReviewUsage,
 } from './review-core.js';
-
-type ReviewUsage = {
-  model?: string;
-  turns: number;
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  totalTokens: number;
-  cost: number;
-};
-
-type ReviewMeta = {
-  startedAt: string;
-  completedAt: string;
-  elapsedMs: number;
-  elapsed: string;
-  usage: ReviewUsage;
-};
 
 type ReviewToolResult = ReviewResult & {
   meta: ReviewMeta;
