@@ -127,6 +127,11 @@ export type ReviewSuiteResult = {
   meta: ReviewMeta;
 };
 
+export type ReviewerToolInspectionState = {
+  statusInspected: boolean;
+  fullDiffInspected: boolean;
+};
+
 export type ReviewResult = ChildReviewResult;
 
 export type LineRange = {
@@ -575,6 +580,37 @@ export function rangesIntersect(
   end: number,
 ): boolean {
   return ranges.some(range => start <= range.end && end >= range.start);
+}
+
+export function validateReviewerSubmitReadiness(
+  state: ReviewerToolInspectionState,
+): void {
+  if (!state.statusInspected) {
+    throw new Error(
+      'submit_review requires inspecting the fixed review scope with git_status first.',
+    );
+  }
+  if (!state.fullDiffInspected) {
+    throw new Error(
+      'submit_review requires inspecting the full fixed diff with an unscoped git_diff call first.',
+    );
+  }
+}
+
+export function getRemainingCategoryBudgetMs(
+  startedAtMs: number,
+  nowMs: number,
+  timeoutMs: number,
+): number {
+  return timeoutMs - Math.max(0, nowMs - startedAtMs);
+}
+
+export function buildCategoryReviewerFailureMessage(
+  category: ReviewCategory,
+  message: string,
+): string {
+  if (message.startsWith(`${category} review`)) return message;
+  return `${category} review failed: ${message}`;
 }
 
 export function validateReviewResult(

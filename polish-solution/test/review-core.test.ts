@@ -6,12 +6,14 @@ import {
   REVIEW_CATEGORY_ORDER,
   appendScopedDiffPart,
   appendTextAccumulator,
+  buildCategoryReviewerFailureMessage,
   buildChangedFileDetails,
   buildPackageSelfReviewBlockConfig,
   createTextAccumulator,
   decodeGitQuotedPath,
   getAccumulatedLineCount,
   getRemainingBudget,
+  getRemainingCategoryBudgetMs,
   isSameOrNestedPath,
   normalizeGitDiffPath,
   normalizeRepoPath,
@@ -19,6 +21,7 @@ import {
   parseNewHunkRange,
   rangesIntersect,
   sanitizeArtifactPathSegment,
+  validateReviewerSubmitReadiness,
   validateReviewResult,
   type ReviewScope,
 } from '../src/review-core.ts';
@@ -237,6 +240,47 @@ test('rangesIntersect only accepts overlapping line ranges', () => {
   assert.equal(rangesIntersect(ranges, 9, 9), false);
   assert.equal(rangesIntersect(ranges, 9, 10), true);
   assert.equal(rangesIntersect(ranges, 20, 21), true);
+});
+
+test('reviewer submit readiness requires per-category status and diff inspection', () => {
+  assert.throws(
+    () =>
+      validateReviewerSubmitReadiness({
+        statusInspected: false,
+        fullDiffInspected: false,
+      }),
+    /git_status first/,
+  );
+  assert.throws(
+    () =>
+      validateReviewerSubmitReadiness({
+        statusInspected: true,
+        fullDiffInspected: false,
+      }),
+    /unscoped git_diff call first/,
+  );
+  assert.doesNotThrow(() =>
+    validateReviewerSubmitReadiness({
+      statusInspected: true,
+      fullDiffInspected: true,
+    }),
+  );
+});
+
+test('category reviewer budget and failure helpers are deterministic', () => {
+  assert.equal(getRemainingCategoryBudgetMs(1000, 1250, 900), 650);
+  assert.equal(getRemainingCategoryBudgetMs(1000, 900, 900), 900);
+  assert.equal(
+    buildCategoryReviewerFailureMessage('simplify', 'timed out'),
+    'simplify review failed: timed out',
+  );
+  assert.equal(
+    buildCategoryReviewerFailureMessage(
+      'simplify',
+      'simplify review failed: timed out',
+    ),
+    'simplify review failed: timed out',
+  );
 });
 
 test('validateReviewResult trims accepted findings and enforces changed-file/hunk invariants', () => {
