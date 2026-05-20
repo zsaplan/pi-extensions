@@ -2678,7 +2678,10 @@ function createReviewerTools(
       async execute(_toolCallId, params: Static<typeof SUBMIT_REVIEW_SCHEMA>) {
         validateReviewerSubmitReadiness(reviewState);
 
-        const validated = validateReviewResult(params, scope);
+        const validated = validateReviewResult(
+          params as unknown as ReviewResult,
+          scope,
+        );
         reviewState.value = validated;
         return {
           content: [{type: 'text', text: 'submit_review accepted. Stop now.'}],

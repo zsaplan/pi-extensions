@@ -18,29 +18,64 @@ export const REVIEWER_SHARED_SAFETY_INSTRUCTIONS = `Shared safety and scope rule
 - When the diff changes user-facing Markdown-like output, CLI/tool text, or rendered diagnostics, verify markup-sensitive literals are escaped or code-formatted when they must display literally, such as raw \`<tag>\` tokens. Treat this as in scope only when rendering could hide, corrupt, or mislead the output; do not report copy/style nits.
 - When reviewing observability or alerting changes, verify the end-to-end signal path before approving: signal production/export, scrape or discovery selectors such as ServiceMonitor/PodMonitor labels, query label compatibility, alert/recording rules, and notification routing. Search nearby repo conventions when selectors or labels are not obvious.`;
 
+const REVIEW_STATUS_VALUES = ['needs-attention', 'approve'] as const;
+const REVIEW_CONFIDENCE_VALUES = ['low', 'medium', 'high'] as const;
+
 export const REVIEW_STATUS_ENUM = Type.Union(
-  [Type.Literal('needs-attention'), Type.Literal('approve')],
+  REVIEW_STATUS_VALUES.map(value => Type.Literal(value)),
   {
     description: 'Review status.',
   },
 );
 
 export const REVIEW_CONFIDENCE_ENUM = Type.Union(
-  [Type.Literal('low'), Type.Literal('medium'), Type.Literal('high')],
+  REVIEW_CONFIDENCE_VALUES.map(value => Type.Literal(value)),
   {
     description: 'Finding confidence.',
   },
 );
 
-export const REVIEW_FINDING_SCHEMA = Type.Object({
-  title: Type.String({description: 'Short finding title.'}),
-  body: Type.String({description: 'Why this is a material risk.'}),
-  file: Type.String({description: 'Repo-relative file path.'}),
-  line_start: Type.Integer({minimum: 1}),
-  line_end: Type.Integer({minimum: 1}),
-  confidence: REVIEW_CONFIDENCE_ENUM,
-  recommendation: Type.String({description: 'Concrete remediation guidance.'}),
-});
+const REVIEW_FINDING_FIELD_DEFINITIONS = [
+  {
+    name: 'title',
+    promptType: 'string',
+    schema: Type.String({description: 'Short finding title.'}),
+  },
+  {
+    name: 'body',
+    promptType: 'string',
+    schema: Type.String({description: 'Why this is a material risk.'}),
+  },
+  {
+    name: 'file',
+    promptType: 'string',
+    schema: Type.String({description: 'Repo-relative file path.'}),
+  },
+  {
+    name: 'line_start',
+    promptType: 'number',
+    schema: Type.Integer({minimum: 1}),
+  },
+  {name: 'line_end', promptType: 'number', schema: Type.Integer({minimum: 1})},
+  {
+    name: 'confidence',
+    promptType: formatPromptEnum(REVIEW_CONFIDENCE_VALUES),
+    schema: REVIEW_CONFIDENCE_ENUM,
+  },
+  {
+    name: 'recommendation',
+    promptType: 'string',
+    schema: Type.String({description: 'Concrete remediation guidance.'}),
+  },
+] as const;
+
+export const REVIEW_FINDING_SCHEMA = Type.Object(
+  Object.fromEntries(
+    REVIEW_FINDING_FIELD_DEFINITIONS.map(definition => {
+      return [definition.name, definition.schema];
+    }),
+  ),
+);
 
 export const SUBMIT_REVIEW_SCHEMA = Type.Object({
   status: REVIEW_STATUS_ENUM,
@@ -48,48 +83,20 @@ export const SUBMIT_REVIEW_SCHEMA = Type.Object({
   findings: Type.Array(REVIEW_FINDING_SCHEMA),
 });
 
-function getSchemaUnionLiteralValues(schema: unknown): string[] {
-  if (!schema || typeof schema !== 'object') return [];
-  const variants =
-    (schema as {anyOf?: unknown[]; oneOf?: unknown[]}).anyOf ??
-    (schema as {oneOf?: unknown[]}).oneOf ??
-    [];
-  return variants.flatMap(variant => {
-    if (!variant || typeof variant !== 'object') return [];
-    const value = (variant as {const?: unknown}).const;
-    return typeof value === 'string' ? [value] : [];
-  });
-}
-
-function formatPromptEnumFromSchema(schema: unknown): string {
-  return getSchemaUnionLiteralValues(schema)
-    .map(value => `"${value}"`)
-    .join(' | ');
-}
-
-function describePromptFieldType(schema: unknown): string {
-  if (!schema || typeof schema !== 'object') return 'unknown';
-  const schemaRecord = schema as {type?: unknown};
-  if (schemaRecord.type === 'integer' || schemaRecord.type === 'number') {
-    return 'number';
-  }
-  const enumDescription = formatPromptEnumFromSchema(schema);
-  if (enumDescription) return enumDescription;
-  return schemaRecord.type === 'string' ? 'string' : 'unknown';
+function formatPromptEnum(values: readonly string[]): string {
+  return values.map(value => `"${value}"`).join(' | ');
 }
 
 function formatPromptFindingFields(): string {
-  return Object.entries(REVIEW_FINDING_SCHEMA.properties)
-    .map(([name, schema]) => {
-      return `      "${name}": ${describePromptFieldType(schema)}`;
-    })
-    .join(',\n');
+  return REVIEW_FINDING_FIELD_DEFINITIONS.map(definition => {
+    return `      "${definition.name}": ${definition.promptType}`;
+  }).join(',\n');
 }
 
 function buildSubmitReviewPromptContract(): string {
   return `When you are ready, call submit_review with this exact JSON shape:
 {
-  "status": ${formatPromptEnumFromSchema(REVIEW_STATUS_ENUM)},
+  "status": ${formatPromptEnum(REVIEW_STATUS_VALUES)},
   "summary": string,
   "findings": [
     {
