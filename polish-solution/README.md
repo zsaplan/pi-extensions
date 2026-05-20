@@ -1,17 +1,17 @@
 # polish-solution
 
-A pi extension and skill for iterative adversarial review of the current git worktree.
+A pi extension and skill for iterative multi-category review of the current git worktree.
 
 ## What it does
 
 - registers `polish_solution_review`
 - ships a checked-in `polish-solution` skill that teaches the iterate/remediate/rerun workflow
-- runs an isolated reviewer sub-session with a fixed adversarial-review instruction set
-- gives the reviewer only the current diff by default, plus read-only inspection tools if it needs repository context
+- runs a fixed suite of isolated reviewer sub-sessions: adversarial, simplify, standardize, prune, and DRY
+- gives each reviewer only the current diff by default, plus read-only inspection tools if it needs repository context
 - returns structured JSON using the upstream status names:
   - `needs-attention`
   - `approve`
-- includes elapsed time and reviewer token usage in the visible JSON result metadata
+- includes elapsed time and aggregate reviewer token usage in the visible JSON result metadata
 - writes a per-run JSONL debug artifact under `~/.pi/agent/data/polish-solution-review/`
 
 ## Tool
@@ -25,7 +25,9 @@ The tool:
 - includes uncommitted tracked changes and non-ignored untracked files
 - respects `.gitignore`
 - uses the currently active model
-- retries invalid or schema-invalid reviewer output up to 3 times
+- runs the five review categories sequentially in fixed order: `adversarial`, `simplify`, `standardize`, `prune`, `dry`
+- creates a separate isolated child reviewer session for each category, each with its own internal `submit_review` call
+- retries invalid or schema-invalid reviewer output up to 3 times per category
 - returns compact JSON in visible content and the parsed review object plus hidden artifact metadata in `details`
 - emits hidden artifact reference updates in the tool session stream so external consumers can capture the run file without polluting the visible JSON content
 
@@ -37,7 +39,7 @@ The tool fails fast when:
 - the requested base ref cannot be resolved
 - no merge-base can be found
 - there is no effective diff to review
-- the diff is too large for a single reviewer pass
+- the diff is too large for a single category reviewer pass
 
 ## Skill
 
@@ -45,10 +47,10 @@ The tool fails fast when:
 
 Use the skill when you want pi to keep control of a deliberate polishing loop:
 
-1. run adversarial review
-2. address material findings
+1. run the full review suite
+2. address material findings or conflicts
 3. run the relevant validation commands for the changed code
-4. rerun review only after validation is back to green or any pre-existing failures are understood
+4. rerun the full suite from the first category only after validation is back to green or any pre-existing failures are understood
 5. repeat until approval or a real ambiguity needs user direction
 
 ## Usage
@@ -78,11 +80,11 @@ Then either:
 
 ## Notes
 
-- The reviewer prompt is fixed and inline in the extension code.
-- No extra situational summary is passed to the reviewer by default.
+- Reviewer prompts are composed from shared safety/output-schema blocks plus category-specific objectives.
+- No extra situational summary is passed to reviewers by default.
 - Out-of-scope feedback such as tests and other external supports is intentionally excluded from review findings.
-- Each saved debug artifact is a progressive JSONL trail: it is created at run start, appended during scope/reviewer progress, and finished with a final success/error snapshot when the run ends cleanly.
+- Each saved debug artifact is a progressive JSONL trail: it is created at run start, appended during scope/category/reviewer progress and conflict analysis, and finished with a final success/error snapshot when the run ends cleanly.
 - Interrupted runs keep the partial artifact trail that was flushed before interruption, so later debugging still has a checkpointed history even if there is no final snapshot line.
-- The final artifact snapshot captures the fixed review scope, final review/error metadata, reviewer usage, and the isolated reviewer session messages for later debugging.
+- The final artifact snapshot captures the fixed review scope, final review/error metadata, category results, conflicts, aggregate reviewer usage, and the isolated reviewer session messages for later debugging.
 - The artifact path is kept out of the visible tool JSON content; it is stored in hidden tool details and a non-LLM custom session entry.
-- The skill workflow still expects the primary coding agent to run relevant lint/test/verify-style validation after each remediation pass before rerunning adversarial review.
+- The skill workflow still expects the primary coding agent to run relevant lint/test/verify-style validation after each remediation pass before rerunning the full review suite.

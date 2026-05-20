@@ -4,7 +4,56 @@ import {formatSize} from '@mariozechner/pi-coding-agent';
 export type ReviewStatus = 'needs-attention' | 'approve';
 export type ReviewConfidence = 'low' | 'medium' | 'high';
 
-export type ReviewFinding = {
+export const REVIEW_CATEGORY_ORDER = [
+  'adversarial',
+  'simplify',
+  'standardize',
+  'prune',
+  'dry',
+] as const;
+
+export type ReviewCategory = (typeof REVIEW_CATEGORY_ORDER)[number];
+
+export type ReviewCategoryConfig = {
+  category: ReviewCategory;
+  label: string;
+  objective: string;
+};
+
+export const REVIEW_CATEGORY_CONFIGS: readonly ReviewCategoryConfig[] = [
+  {
+    category: 'adversarial',
+    label: 'Adversarial Review',
+    objective:
+      'Find material correctness, robustness, design, safety, and edge-case risks. Prioritize dangerous or expensive failures and report only material blocking risks.',
+  },
+  {
+    category: 'simplify',
+    label: 'Simplify Review',
+    objective:
+      'Catch avoidable complexity that makes the change harder to reason about or maintain. Look for unnecessary abstractions, moving parts, or state/control-flow complexity.',
+  },
+  {
+    category: 'standardize',
+    label: 'Standardize Review',
+    objective:
+      'Catch deviations from existing repository or package conventions. Prefer nearby patterns, established helpers, validation conventions, error shapes, and extension APIs.',
+  },
+  {
+    category: 'prune',
+    label: 'Prune Review',
+    objective:
+      'Catch dead, redundant, or no-longer-needed code, data, comments, documentation, compatibility shims, generated artifacts, or branches produced by the change.',
+  },
+  {
+    category: 'dry',
+    label: 'DRY Review',
+    objective:
+      'Catch duplicated logic where divergence would create bugs or maintenance risk, especially repeated prompts, schemas, result mapping, error handling, validation, orchestration, or artifact plumbing.',
+  },
+];
+
+export type ReviewerFindingInput = {
   title: string;
   body: string;
   file: string;
@@ -14,11 +63,75 @@ export type ReviewFinding = {
   recommendation: string;
 };
 
-export type ReviewResult = {
+export type ReviewFinding = ReviewerFindingInput & {
+  id: string;
+  category: ReviewCategory;
+  conflicts_with?: string[];
+};
+
+export type ChildReviewResult = {
+  status: ReviewStatus;
+  summary: string;
+  findings: ReviewerFindingInput[];
+};
+
+export type ReviewUsage = {
+  model?: string;
+  turns: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  cost: number;
+};
+
+export type ReviewMeta = {
+  startedAt: string;
+  completedAt: string;
+  elapsedMs: number;
+  elapsed: string;
+  usage: ReviewUsage;
+};
+
+export type CategoryReviewResult = {
+  category: ReviewCategory;
   status: ReviewStatus;
   summary: string;
   findings: ReviewFinding[];
+  meta: ReviewMeta;
 };
+
+export type ConflictResolution =
+  | 'prefer-adversarial'
+  | 'prefer-standardize'
+  | 'prefer-prune'
+  | 'prefer-simplify'
+  | 'needs-user-direction';
+
+export type ReviewConflict = {
+  finding_ids: [string, string];
+  summary: string;
+  resolution: ConflictResolution;
+  preferred_finding_id?: string;
+  rationale: string;
+};
+
+export type ReviewSuiteResult = {
+  status: ReviewStatus;
+  summary: string;
+  findings: ReviewFinding[];
+  category_results: CategoryReviewResult[];
+  conflicts: ReviewConflict[];
+  meta: ReviewMeta;
+};
+
+export type ReviewerToolInspectionState = {
+  statusInspected: boolean;
+  fullDiffInspected: boolean;
+};
+
+export type ReviewResult = ChildReviewResult;
 
 export type LineRange = {
   start: number;
@@ -468,6 +581,446 @@ export function rangesIntersect(
   return ranges.some(range => start <= range.end && end >= range.start);
 }
 
+export function validateReviewerSubmitReadiness(
+  state: ReviewerToolInspectionState,
+): void {
+  if (!state.statusInspected) {
+    throw new Error(
+      'submit_review requires inspecting the fixed review scope with git_status first.',
+    );
+  }
+  if (!state.fullDiffInspected) {
+    throw new Error(
+      'submit_review requires inspecting the full fixed diff with an unscoped git_diff call first.',
+    );
+  }
+}
+
+export function getRemainingCategoryBudgetMs(
+  startedAtMs: number,
+  nowMs: number,
+  timeoutMs: number,
+): number {
+  return timeoutMs - Math.max(0, nowMs - startedAtMs);
+}
+
+export function buildCategoryReviewerFailureMessage(
+  category: ReviewCategory,
+  message: string,
+): string {
+  if (message.startsWith(`${category} review`)) return message;
+  return `${category} review failed: ${message}`;
+}
+
+export function formatReviewFindingId(
+  category: ReviewCategory,
+  ordinal: number,
+): string {
+  return `${category}-${String(ordinal).padStart(2, '0')}`;
+}
+
+function cloneReviewFinding(finding: ReviewFinding): ReviewFinding {
+  return {
+    ...finding,
+    conflicts_with: finding.conflicts_with
+      ? [...finding.conflicts_with]
+      : undefined,
+  };
+}
+
+function cloneCategoryReviewResult(
+  result: CategoryReviewResult,
+): CategoryReviewResult {
+  return {
+    ...result,
+    findings: result.findings.map(cloneReviewFinding),
+  };
+}
+
+export function buildCategoryReviewResult(
+  category: ReviewCategory,
+  review: ChildReviewResult,
+  meta: ReviewMeta,
+): CategoryReviewResult {
+  return {
+    category,
+    status: review.status,
+    summary: review.summary,
+    findings: review.findings.map((finding, index) => {
+      return {
+        ...finding,
+        id: formatReviewFindingId(category, index + 1),
+        category,
+      };
+    }),
+    meta,
+  };
+}
+
+type ConflictAction = 'remove' | 'keep' | 'extract' | 'inline';
+
+type OpposingActionPair = 'remove-keep' | 'remove-extract' | 'inline-extract';
+
+type DetectedOpposingActionPair = {
+  pair: OpposingActionPair;
+  leftAction: ConflictAction;
+  rightAction: ConflictAction;
+};
+
+const CONFLICT_ACTION_PATTERNS: Record<ConflictAction, RegExp> = {
+  remove: /\b(?:remove|delete|drop|prune)\b/i,
+  keep: /\b(?:keep|retain|preserve)\b/i,
+  extract: /\b(?:extract|share|abstract|dedupe)\b/i,
+  inline: /\b(?:inline|simplify)\b/i,
+};
+
+const OPPOSING_ACTION_PAIRS: ReadonlyArray<{
+  pair: OpposingActionPair;
+  leftAction: ConflictAction;
+  rightAction: ConflictAction;
+}> = [
+  {pair: 'remove-keep', leftAction: 'remove', rightAction: 'keep'},
+  {pair: 'remove-extract', leftAction: 'remove', rightAction: 'extract'},
+  {pair: 'inline-extract', leftAction: 'inline', rightAction: 'extract'},
+];
+
+function findingTextHasAction(
+  finding: ReviewFinding,
+  action: ConflictAction,
+): boolean {
+  return CONFLICT_ACTION_PATTERNS[action].test(
+    `${finding.title} ${finding.recommendation}`,
+  );
+}
+
+function detectOpposingActionPair(
+  left: ReviewFinding,
+  right: ReviewFinding,
+): DetectedOpposingActionPair | undefined {
+  for (const actionPair of OPPOSING_ACTION_PAIRS) {
+    if (
+      findingTextHasAction(left, actionPair.leftAction) &&
+      findingTextHasAction(right, actionPair.rightAction)
+    ) {
+      return actionPair;
+    }
+    if (
+      findingTextHasAction(left, actionPair.rightAction) &&
+      findingTextHasAction(right, actionPair.leftAction)
+    ) {
+      return {
+        pair: actionPair.pair,
+        leftAction: actionPair.rightAction,
+        rightAction: actionPair.leftAction,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+type PreferredConflictResolution = Exclude<
+  ConflictResolution,
+  'needs-user-direction'
+>;
+
+type ConflictPriorityRule = {
+  resolution: PreferredConflictResolution;
+  preferredCategory: ReviewCategory;
+  otherCategories?: readonly ReviewCategory[];
+  actionPair?: OpposingActionPair;
+  rationale: string;
+};
+
+const CONFLICT_PRIORITY_RULES: readonly ConflictPriorityRule[] = [
+  {
+    resolution: 'prefer-adversarial',
+    preferredCategory: 'adversarial',
+    rationale:
+      'Adversarial findings take priority over non-adversarial category conflicts in the first-slice resolver.',
+  },
+  {
+    resolution: 'prefer-standardize',
+    preferredCategory: 'standardize',
+    otherCategories: ['simplify', 'dry'],
+    rationale:
+      'Repository/package convention findings take priority over simplify or DRY conflicts in the first-slice resolver.',
+  },
+  {
+    resolution: 'prefer-prune',
+    preferredCategory: 'prune',
+    otherCategories: ['dry'],
+    actionPair: 'remove-extract',
+    rationale:
+      'Prune findings take priority over DRY extraction when the explicit conflict is remove/delete/drop/prune versus extract/share/abstract/dedupe.',
+  },
+  {
+    resolution: 'prefer-simplify',
+    preferredCategory: 'simplify',
+    otherCategories: ['dry'],
+    actionPair: 'inline-extract',
+    rationale:
+      'Simplify findings take priority over DRY extraction when the explicit conflict is inline/simplify versus extract/share/abstract/dedupe.',
+  },
+];
+
+function matchConflictPriorityRule(
+  rule: ConflictPriorityRule,
+  left: ReviewFinding,
+  right: ReviewFinding,
+  actionPair: DetectedOpposingActionPair,
+): ReviewFinding | undefined {
+  if (rule.actionPair && rule.actionPair !== actionPair.pair) return undefined;
+
+  const preferred =
+    left.category === rule.preferredCategory
+      ? left
+      : right.category === rule.preferredCategory
+        ? right
+        : undefined;
+  if (!preferred) return undefined;
+
+  const other = preferred === left ? right : left;
+  if (rule.otherCategories && !rule.otherCategories.includes(other.category)) {
+    return undefined;
+  }
+
+  return preferred;
+}
+
+function resolveReviewConflict(
+  left: ReviewFinding,
+  right: ReviewFinding,
+  actionPair: DetectedOpposingActionPair,
+): Pick<ReviewConflict, 'resolution' | 'preferred_finding_id' | 'rationale'> {
+  for (const rule of CONFLICT_PRIORITY_RULES) {
+    const preferred = matchConflictPriorityRule(rule, left, right, actionPair);
+    if (!preferred) continue;
+
+    return {
+      resolution: rule.resolution,
+      preferred_finding_id: preferred.id,
+      rationale: rule.rationale,
+    };
+  }
+
+  return {
+    resolution: 'needs-user-direction',
+    rationale:
+      'The first-slice resolver detected an explicit opposing action pair but no deterministic priority rule applies.',
+  };
+}
+
+function addConflictReference(
+  finding: ReviewFinding,
+  conflictId: string,
+): void {
+  finding.conflicts_with ??= [];
+  if (!finding.conflicts_with.includes(conflictId)) {
+    finding.conflicts_with.push(conflictId);
+  }
+}
+
+export function analyzeReviewConflicts(
+  categoryResults: CategoryReviewResult[],
+): {categoryResults: CategoryReviewResult[]; conflicts: ReviewConflict[]} {
+  const clonedCategoryResults = categoryResults.map(cloneCategoryReviewResult);
+  const findings = clonedCategoryResults.flatMap(result => result.findings);
+  const findingsById = new Map(findings.map(finding => [finding.id, finding]));
+  const conflicts: ReviewConflict[] = [];
+
+  for (let leftIndex = 0; leftIndex < findings.length; leftIndex += 1) {
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < findings.length;
+      rightIndex += 1
+    ) {
+      const left = findings[leftIndex];
+      const right = findings[rightIndex];
+      if (left.category === right.category) continue;
+      if (left.file !== right.file) continue;
+      if (
+        !(
+          left.line_start <= right.line_end && left.line_end >= right.line_start
+        )
+      ) {
+        continue;
+      }
+
+      const actionPair = detectOpposingActionPair(left, right);
+      if (!actionPair) continue;
+
+      const conflictResolution = resolveReviewConflict(left, right, actionPair);
+      conflicts.push({
+        finding_ids: [left.id, right.id],
+        summary: `${left.id} (${actionPair.leftAction}) conflicts with ${right.id} (${actionPair.rightAction}) on ${left.file}:${Math.max(left.line_start, right.line_start)}-${Math.min(left.line_end, right.line_end)}.`,
+        ...conflictResolution,
+      });
+      addConflictReference(findingsById.get(left.id) ?? left, right.id);
+      addConflictReference(findingsById.get(right.id) ?? right, left.id);
+    }
+  }
+
+  return {categoryResults: clonedCategoryResults, conflicts};
+}
+
+function buildReviewSuiteSummary(
+  categoryResults: CategoryReviewResult[],
+  conflicts: ReviewConflict[],
+): string {
+  const findingCount = categoryResults.reduce((total, result) => {
+    return total + result.findings.length;
+  }, 0);
+  const unresolvedConflictCount = conflicts.filter(conflict => {
+    return conflict.resolution === 'needs-user-direction';
+  }).length;
+
+  const categoryText = `${categoryResults.length} review categor${categoryResults.length === 1 ? 'y' : 'ies'}`;
+  if (unresolvedConflictCount > 0) {
+    return `${findingCount} finding${findingCount === 1 ? '' : 's'} across ${categoryText}; user direction is needed for ${unresolvedConflictCount} unresolved conflict${unresolvedConflictCount === 1 ? '' : 's'}.`;
+  }
+  if (findingCount > 0 || conflicts.length > 0) {
+    const conflictText = conflicts.length
+      ? ` with ${conflicts.length} conflict${conflicts.length === 1 ? '' : 's'}`
+      : '';
+    return `${findingCount} finding${findingCount === 1 ? '' : 's'} across ${categoryText}${conflictText}.`;
+  }
+  return `All ${categoryText} approved with no findings.`;
+}
+
+export type CategorySessionBase = {
+  category: ReviewCategory;
+  review: ChildReviewResult;
+  meta: ReviewMeta;
+};
+
+export type CategoryRunContext = {
+  ordinal: number;
+  totalCategories: number;
+};
+
+export type CategorySequenceEvent =
+  | ({
+      type: 'category-started';
+      categoryConfig: ReviewCategoryConfig;
+    } & CategoryRunContext)
+  | ({
+      type: 'category-finished';
+      categoryConfig: ReviewCategoryConfig;
+      status: 'success';
+      result: CategoryReviewResult;
+    } & CategoryRunContext)
+  | ({
+      type: 'category-finished';
+      categoryConfig: ReviewCategoryConfig;
+      status: 'error';
+      error: unknown;
+      completedCategoryResults: CategoryReviewResult[];
+    } & CategoryRunContext)
+  | {
+      type: 'conflict-analysis';
+      categoryResults: CategoryReviewResult[];
+      conflicts: ReviewConflict[];
+    };
+
+export type CategorySequenceResult = {
+  categoryResults: CategoryReviewResult[];
+  conflicts: ReviewConflict[];
+};
+
+export type CategorySequenceError = Error & {
+  failedCategory?: ReviewCategory;
+  categoryResults?: CategoryReviewResult[];
+};
+
+export async function runCategoryReviewSequence(
+  categoryConfigs: readonly ReviewCategoryConfig[],
+  runCategory: (
+    categoryConfig: ReviewCategoryConfig,
+    context: CategoryRunContext,
+  ) => Promise<CategorySessionBase>,
+  onEvent?: (event: CategorySequenceEvent) => void,
+): Promise<CategorySequenceResult> {
+  const categoryResults: CategoryReviewResult[] = [];
+
+  for (const [index, categoryConfig] of categoryConfigs.entries()) {
+    const context = {
+      ordinal: index + 1,
+      totalCategories: categoryConfigs.length,
+    };
+    onEvent?.({type: 'category-started', categoryConfig, ...context});
+
+    let sessionResult: CategorySessionBase;
+    try {
+      sessionResult = await runCategory(categoryConfig, context);
+    } catch (error) {
+      onEvent?.({
+        type: 'category-finished',
+        categoryConfig,
+        ...context,
+        status: 'error',
+        error,
+        completedCategoryResults: categoryResults,
+      });
+      const sequenceError =
+        error instanceof Error
+          ? (error as CategorySequenceError)
+          : (new Error(String(error)) as CategorySequenceError);
+      sequenceError.failedCategory = categoryConfig.category;
+      sequenceError.categoryResults = categoryResults;
+      throw sequenceError;
+    }
+
+    const categoryResult = buildCategoryReviewResult(
+      sessionResult.category,
+      sessionResult.review,
+      sessionResult.meta,
+    );
+    categoryResults.push(categoryResult);
+    onEvent?.({
+      type: 'category-finished',
+      categoryConfig,
+      ...context,
+      status: 'success',
+      result: categoryResult,
+    });
+  }
+
+  const conflictAnalysis = analyzeReviewConflicts(categoryResults);
+  onEvent?.({
+    type: 'conflict-analysis',
+    categoryResults: conflictAnalysis.categoryResults,
+    conflicts: conflictAnalysis.conflicts,
+  });
+
+  return {
+    categoryResults: conflictAnalysis.categoryResults,
+    conflicts: conflictAnalysis.conflicts,
+  };
+}
+
+export function buildReviewSuiteResult(
+  categoryResults: CategoryReviewResult[],
+  meta: ReviewMeta,
+  conflicts: ReviewConflict[] = [],
+): ReviewSuiteResult {
+  const findings = categoryResults.flatMap(result => result.findings);
+  const status: ReviewStatus =
+    categoryResults.every(result => result.status === 'approve') &&
+    conflicts.length === 0
+      ? 'approve'
+      : 'needs-attention';
+
+  return {
+    status,
+    summary: buildReviewSuiteSummary(categoryResults, conflicts),
+    findings,
+    category_results: categoryResults,
+    conflicts,
+    meta,
+  };
+}
+
 export function validateReviewResult(
   input: ReviewSubmitInput,
   scope: ReviewScope,
@@ -517,7 +1070,7 @@ export function validateReviewResult(
       line_end: finding.line_end,
       confidence: finding.confidence,
       recommendation,
-    } satisfies ReviewFinding;
+    } satisfies ReviewerFindingInput;
   });
 
   if (input.status === 'approve' && findings.length > 0) {

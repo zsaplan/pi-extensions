@@ -2,24 +2,80 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import path from 'node:path';
 import {
+  REVIEW_CATEGORY_CONFIGS,
+  REVIEW_CATEGORY_ORDER,
+  analyzeReviewConflicts,
   appendScopedDiffPart,
   appendTextAccumulator,
+  buildCategoryReviewerFailureMessage,
+  buildCategoryReviewResult,
   buildChangedFileDetails,
   buildPackageSelfReviewBlockConfig,
   createTextAccumulator,
   decodeGitQuotedPath,
   getAccumulatedLineCount,
   getRemainingBudget,
+  getRemainingCategoryBudgetMs,
+  buildReviewSuiteResult,
   isSameOrNestedPath,
   normalizeGitDiffPath,
   normalizeRepoPath,
   parseDiffHeaderPaths,
   parseNewHunkRange,
+  formatReviewFindingId,
   rangesIntersect,
   sanitizeArtifactPathSegment,
+  validateReviewerSubmitReadiness,
   validateReviewResult,
+  type ReviewCategory,
+  type ReviewMeta,
   type ReviewScope,
 } from '../src/review-core.ts';
+
+test('review category registry exposes stable first-slice order and objectives', () => {
+  assert.deepEqual(REVIEW_CATEGORY_ORDER, [
+    'adversarial',
+    'simplify',
+    'standardize',
+    'prune',
+    'dry',
+  ]);
+  assert.deepEqual(
+    REVIEW_CATEGORY_CONFIGS.map(config => config.category),
+    REVIEW_CATEGORY_ORDER,
+  );
+  assert.equal(
+    REVIEW_CATEGORY_CONFIGS.every(config => {
+      return config.label.length > 0 && config.objective.length > 0;
+    }),
+    true,
+  );
+  assert.match(
+    REVIEW_CATEGORY_CONFIGS.find(config => config.category === 'dry')
+      ?.objective ?? '',
+    /duplicated logic/i,
+  );
+});
+
+function makeMeta(overrides: Partial<ReviewMeta> = {}): ReviewMeta {
+  return {
+    startedAt: '2026-01-01T00:00:00.000Z',
+    completedAt: '2026-01-01T00:00:01.000Z',
+    elapsedMs: 1000,
+    elapsed: '0:01',
+    usage: {
+      model: 'test/model',
+      turns: 1,
+      input: 2,
+      output: 3,
+      cacheRead: 4,
+      cacheWrite: 5,
+      totalTokens: 14,
+      cost: 0.01,
+    },
+    ...overrides,
+  };
+}
 
 function makeScope(overrides: Partial<ReviewScope> = {}): ReviewScope {
   return {
@@ -43,6 +99,35 @@ function makeScope(overrides: Partial<ReviewScope> = {}): ReviewScope {
     },
     ...overrides,
   };
+}
+
+function makeCategoryResultWithFinding(options: {
+  category: ReviewCategory;
+  title: string;
+  recommendation: string;
+  file?: string;
+  line_start?: number;
+  line_end?: number;
+}) {
+  return buildCategoryReviewResult(
+    options.category,
+    {
+      status: 'needs-attention',
+      summary: `${options.category} finding`,
+      findings: [
+        {
+          title: options.title,
+          body: 'body',
+          file: options.file ?? 'src/changed.ts',
+          line_start: options.line_start ?? 10,
+          line_end: options.line_end ?? 12,
+          confidence: 'high',
+          recommendation: options.recommendation,
+        },
+      ],
+    },
+    makeMeta(),
+  );
 }
 
 test('sanitizeArtifactPathSegment produces safe lowercase path segments', () => {
@@ -210,6 +295,208 @@ test('rangesIntersect only accepts overlapping line ranges', () => {
   assert.equal(rangesIntersect(ranges, 9, 9), false);
   assert.equal(rangesIntersect(ranges, 9, 10), true);
   assert.equal(rangesIntersect(ranges, 20, 21), true);
+});
+
+test('reviewer submit readiness requires per-category status and diff inspection', () => {
+  assert.throws(
+    () =>
+      validateReviewerSubmitReadiness({
+        statusInspected: false,
+        fullDiffInspected: false,
+      }),
+    /git_status first/,
+  );
+  assert.throws(
+    () =>
+      validateReviewerSubmitReadiness({
+        statusInspected: true,
+        fullDiffInspected: false,
+      }),
+    /unscoped git_diff call first/,
+  );
+  assert.doesNotThrow(() =>
+    validateReviewerSubmitReadiness({
+      statusInspected: true,
+      fullDiffInspected: true,
+    }),
+  );
+});
+
+test('category reviewer budget and failure helpers are deterministic', () => {
+  assert.equal(getRemainingCategoryBudgetMs(1000, 1250, 900), 650);
+  assert.equal(getRemainingCategoryBudgetMs(1000, 900, 900), 900);
+  assert.equal(
+    buildCategoryReviewerFailureMessage('simplify', 'timed out'),
+    'simplify review failed: timed out',
+  );
+  assert.equal(
+    buildCategoryReviewerFailureMessage(
+      'simplify',
+      'simplify review failed: timed out',
+    ),
+    'simplify review failed: timed out',
+  );
+});
+
+test('category aggregation assigns visible finding ids and preserves compatibility fields', () => {
+  assert.equal(formatReviewFindingId('adversarial', 1), 'adversarial-01');
+
+  const categoryResult = buildCategoryReviewResult(
+    'adversarial',
+    {
+      status: 'needs-attention',
+      summary: 'found one',
+      findings: [
+        {
+          title: 'Guard matters',
+          body: 'The changed guard prevents bad input.',
+          file: 'src/changed.ts',
+          line_start: 10,
+          line_end: 10,
+          confidence: 'high',
+          recommendation: 'Keep the guard.',
+        },
+      ],
+    },
+    makeMeta(),
+  );
+
+  assert.deepEqual(categoryResult.findings[0], {
+    id: 'adversarial-01',
+    category: 'adversarial',
+    title: 'Guard matters',
+    body: 'The changed guard prevents bad input.',
+    file: 'src/changed.ts',
+    line_start: 10,
+    line_end: 10,
+    confidence: 'high',
+    recommendation: 'Keep the guard.',
+  });
+
+  const suiteResult = buildReviewSuiteResult([categoryResult], makeMeta());
+
+  assert.equal(suiteResult.status, 'needs-attention');
+  assert.equal(suiteResult.findings[0].id, 'adversarial-01');
+  assert.equal(suiteResult.category_results[0], categoryResult);
+  assert.deepEqual(suiteResult.conflicts, []);
+  assert.match(suiteResult.summary, /1 finding across 1 review category/);
+});
+
+test('conflict analysis prefers adversarial over prune remove/keep conflicts', () => {
+  const adversarial = makeCategoryResultWithFinding({
+    category: 'adversarial',
+    title: 'Keep validation guard',
+    recommendation:
+      'Keep the changed validation guard because it blocks bad input.',
+  });
+  const prune = makeCategoryResultWithFinding({
+    category: 'prune',
+    title: 'Delete redundant guard',
+    recommendation: 'Delete the validation guard as redundant.',
+  });
+
+  const analysis = analyzeReviewConflicts([adversarial, prune]);
+  const suite = buildReviewSuiteResult(
+    analysis.categoryResults,
+    makeMeta(),
+    analysis.conflicts,
+  );
+
+  assert.equal(analysis.conflicts.length, 1);
+  assert.deepEqual(analysis.conflicts[0].finding_ids, [
+    'adversarial-01',
+    'prune-01',
+  ]);
+  assert.equal(analysis.conflicts[0].resolution, 'prefer-adversarial');
+  assert.equal(analysis.conflicts[0].preferred_finding_id, 'adversarial-01');
+  assert.equal(suite.status, 'needs-attention');
+  assert.deepEqual(suite.findings[0].conflicts_with, ['prune-01']);
+  assert.deepEqual(suite.findings[1].conflicts_with, ['adversarial-01']);
+});
+
+test('conflict analysis leaves standardize/prune preserve/delete deadlocks unresolved', () => {
+  const standardize = makeCategoryResultWithFinding({
+    category: 'standardize',
+    title: 'Preserve compatibility shim',
+    recommendation:
+      'Preserve the compatibility shim to match the existing extension API shape.',
+  });
+  const prune = makeCategoryResultWithFinding({
+    category: 'prune',
+    title: 'Delete obsolete shim',
+    recommendation: 'Delete the same compatibility shim as obsolete.',
+  });
+
+  const analysis = analyzeReviewConflicts([standardize, prune]);
+  const suite = buildReviewSuiteResult(
+    analysis.categoryResults,
+    makeMeta(),
+    analysis.conflicts,
+  );
+
+  assert.equal(analysis.conflicts.length, 1);
+  assert.deepEqual(analysis.conflicts[0].finding_ids, [
+    'standardize-01',
+    'prune-01',
+  ]);
+  assert.equal(analysis.conflicts[0].resolution, 'needs-user-direction');
+  assert.equal('preferred_finding_id' in analysis.conflicts[0], false);
+  assert.equal(suite.status, 'needs-attention');
+  assert.match(suite.summary, /user direction is needed/);
+});
+
+test('conflict analysis ignores overlapping findings without explicit opposing action pairs', () => {
+  const simplify = makeCategoryResultWithFinding({
+    category: 'simplify',
+    title: 'Clarify helper flow',
+    recommendation: 'Clarify the helper flow around the changed branch.',
+  });
+  const dry = makeCategoryResultWithFinding({
+    category: 'dry',
+    title: 'Centralize branch wording',
+    recommendation: 'Centralize branch wording near the existing helper.',
+  });
+
+  const analysis = analyzeReviewConflicts([simplify, dry]);
+
+  assert.deepEqual(analysis.conflicts, []);
+  assert.equal(
+    analysis.categoryResults[0].findings[0].conflicts_with,
+    undefined,
+  );
+});
+
+test('suite aggregation approves only when all categories approve and no conflicts exist', () => {
+  const approvedCategoryResults = REVIEW_CATEGORY_ORDER.map(category =>
+    buildCategoryReviewResult(
+      category,
+      {status: 'approve', summary: `${category} ok`, findings: []},
+      makeMeta(),
+    ),
+  );
+
+  const approvedSuite = buildReviewSuiteResult(
+    approvedCategoryResults,
+    makeMeta(),
+  );
+  assert.equal(approvedSuite.status, 'approve');
+  assert.deepEqual(approvedSuite.findings, []);
+  assert.match(approvedSuite.summary, /All 5 review categories approved/);
+
+  const conflictedSuite = buildReviewSuiteResult(
+    approvedCategoryResults,
+    makeMeta(),
+    [
+      {
+        finding_ids: ['adversarial-01', 'prune-01'],
+        summary: 'test conflict',
+        resolution: 'needs-user-direction',
+        rationale: 'test rationale',
+      },
+    ],
+  );
+  assert.equal(conflictedSuite.status, 'needs-attention');
+  assert.match(conflictedSuite.summary, /user direction is needed/);
 });
 
 test('validateReviewResult trims accepted findings and enforces changed-file/hunk invariants', () => {
