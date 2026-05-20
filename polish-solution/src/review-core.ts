@@ -728,61 +728,88 @@ function detectOpposingActionPair(
   return undefined;
 }
 
+type PreferredConflictResolution = Exclude<
+  ConflictResolution,
+  'needs-user-direction'
+>;
+
+type ConflictPriorityRule = {
+  resolution: PreferredConflictResolution;
+  preferredCategory: ReviewCategory;
+  otherCategories?: readonly ReviewCategory[];
+  actionPair?: OpposingActionPair;
+  rationale: string;
+};
+
+const CONFLICT_PRIORITY_RULES: readonly ConflictPriorityRule[] = [
+  {
+    resolution: 'prefer-adversarial',
+    preferredCategory: 'adversarial',
+    rationale:
+      'Adversarial findings take priority over non-adversarial category conflicts in the first-slice resolver.',
+  },
+  {
+    resolution: 'prefer-standardize',
+    preferredCategory: 'standardize',
+    otherCategories: ['simplify', 'dry'],
+    rationale:
+      'Repository/package convention findings take priority over simplify or DRY conflicts in the first-slice resolver.',
+  },
+  {
+    resolution: 'prefer-prune',
+    preferredCategory: 'prune',
+    otherCategories: ['dry'],
+    actionPair: 'remove-extract',
+    rationale:
+      'Prune findings take priority over DRY extraction when the explicit conflict is remove/delete/drop/prune versus extract/share/abstract/dedupe.',
+  },
+  {
+    resolution: 'prefer-simplify',
+    preferredCategory: 'simplify',
+    otherCategories: ['dry'],
+    actionPair: 'inline-extract',
+    rationale:
+      'Simplify findings take priority over DRY extraction when the explicit conflict is inline/simplify versus extract/share/abstract/dedupe.',
+  },
+];
+
+function matchConflictPriorityRule(
+  rule: ConflictPriorityRule,
+  left: ReviewFinding,
+  right: ReviewFinding,
+  actionPair: DetectedOpposingActionPair,
+): ReviewFinding | undefined {
+  if (rule.actionPair && rule.actionPair !== actionPair.pair) return undefined;
+
+  const preferred =
+    left.category === rule.preferredCategory
+      ? left
+      : right.category === rule.preferredCategory
+        ? right
+        : undefined;
+  if (!preferred) return undefined;
+
+  const other = preferred === left ? right : left;
+  if (rule.otherCategories && !rule.otherCategories.includes(other.category)) {
+    return undefined;
+  }
+
+  return preferred;
+}
+
 function resolveReviewConflict(
   left: ReviewFinding,
   right: ReviewFinding,
   actionPair: DetectedOpposingActionPair,
 ): Pick<ReviewConflict, 'resolution' | 'preferred_finding_id' | 'rationale'> {
-  if (left.category === 'adversarial' || right.category === 'adversarial') {
-    const preferred = left.category === 'adversarial' ? left : right;
-    return {
-      resolution: 'prefer-adversarial',
-      preferred_finding_id: preferred.id,
-      rationale:
-        'Adversarial findings take priority over non-adversarial category conflicts in the first-slice resolver.',
-    };
-  }
+  for (const rule of CONFLICT_PRIORITY_RULES) {
+    const preferred = matchConflictPriorityRule(rule, left, right, actionPair);
+    if (!preferred) continue;
 
-  if (
-    (left.category === 'standardize' &&
-      (right.category === 'simplify' || right.category === 'dry')) ||
-    (right.category === 'standardize' &&
-      (left.category === 'simplify' || left.category === 'dry'))
-  ) {
-    const preferred = left.category === 'standardize' ? left : right;
     return {
-      resolution: 'prefer-standardize',
+      resolution: rule.resolution,
       preferred_finding_id: preferred.id,
-      rationale:
-        'Repository/package convention findings take priority over simplify or DRY conflicts in the first-slice resolver.',
-    };
-  }
-
-  if (
-    actionPair.pair === 'remove-extract' &&
-    ((left.category === 'prune' && right.category === 'dry') ||
-      (right.category === 'prune' && left.category === 'dry'))
-  ) {
-    const preferred = left.category === 'prune' ? left : right;
-    return {
-      resolution: 'prefer-prune',
-      preferred_finding_id: preferred.id,
-      rationale:
-        'Prune findings take priority over DRY extraction when the explicit conflict is remove/delete/drop/prune versus extract/share/abstract/dedupe.',
-    };
-  }
-
-  if (
-    actionPair.pair === 'inline-extract' &&
-    ((left.category === 'simplify' && right.category === 'dry') ||
-      (right.category === 'simplify' && left.category === 'dry'))
-  ) {
-    const preferred = left.category === 'simplify' ? left : right;
-    return {
-      resolution: 'prefer-simplify',
-      preferred_finding_id: preferred.id,
-      rationale:
-        'Simplify findings take priority over DRY extraction when the explicit conflict is inline/simplify versus extract/share/abstract/dedupe.',
+      rationale: rule.rationale,
     };
   }
 
