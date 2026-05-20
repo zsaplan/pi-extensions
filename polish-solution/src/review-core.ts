@@ -870,6 +870,125 @@ function buildReviewSuiteSummary(
   return `All ${categoryText} approved with no findings.`;
 }
 
+export type CategorySessionBase = {
+  category: ReviewCategory;
+  review: ChildReviewResult;
+  meta: ReviewMeta;
+};
+
+export type CategoryRunContext = {
+  ordinal: number;
+  totalCategories: number;
+};
+
+export type CategorySequenceEvent =
+  | ({
+      type: 'category-started';
+      categoryConfig: ReviewCategoryConfig;
+    } & CategoryRunContext)
+  | ({
+      type: 'category-finished';
+      categoryConfig: ReviewCategoryConfig;
+      status: 'success';
+      result: CategoryReviewResult;
+    } & CategoryRunContext)
+  | ({
+      type: 'category-finished';
+      categoryConfig: ReviewCategoryConfig;
+      status: 'error';
+      error: unknown;
+      completedCategoryResults: CategoryReviewResult[];
+    } & CategoryRunContext)
+  | {
+      type: 'conflict-analysis';
+      categoryResults: CategoryReviewResult[];
+      conflicts: ReviewConflict[];
+    };
+
+export type CategorySequenceResult<TSession extends CategorySessionBase> = {
+  sessionResults: TSession[];
+  categoryResults: CategoryReviewResult[];
+  conflicts: ReviewConflict[];
+};
+
+export type CategorySequenceError = Error & {
+  failedCategory?: ReviewCategory;
+  categoryResults?: CategoryReviewResult[];
+  sessionResults?: CategorySessionBase[];
+};
+
+export async function runCategoryReviewSequence<
+  TSession extends CategorySessionBase,
+>(
+  categoryConfigs: readonly ReviewCategoryConfig[],
+  runCategory: (
+    categoryConfig: ReviewCategoryConfig,
+    context: CategoryRunContext,
+  ) => Promise<TSession>,
+  onEvent?: (event: CategorySequenceEvent) => void,
+): Promise<CategorySequenceResult<TSession>> {
+  const categoryResults: CategoryReviewResult[] = [];
+  const sessionResults: TSession[] = [];
+
+  for (const [index, categoryConfig] of categoryConfigs.entries()) {
+    const context = {
+      ordinal: index + 1,
+      totalCategories: categoryConfigs.length,
+    };
+    onEvent?.({type: 'category-started', categoryConfig, ...context});
+
+    let sessionResult: TSession;
+    try {
+      sessionResult = await runCategory(categoryConfig, context);
+    } catch (error) {
+      onEvent?.({
+        type: 'category-finished',
+        categoryConfig,
+        ...context,
+        status: 'error',
+        error,
+        completedCategoryResults: categoryResults,
+      });
+      const sequenceError =
+        error instanceof Error
+          ? (error as CategorySequenceError)
+          : (new Error(String(error)) as CategorySequenceError);
+      sequenceError.failedCategory = categoryConfig.category;
+      sequenceError.categoryResults = categoryResults;
+      sequenceError.sessionResults = sessionResults;
+      throw sequenceError;
+    }
+
+    sessionResults.push(sessionResult);
+    const categoryResult = buildCategoryReviewResult(
+      sessionResult.category,
+      sessionResult.review,
+      sessionResult.meta,
+    );
+    categoryResults.push(categoryResult);
+    onEvent?.({
+      type: 'category-finished',
+      categoryConfig,
+      ...context,
+      status: 'success',
+      result: categoryResult,
+    });
+  }
+
+  const conflictAnalysis = analyzeReviewConflicts(categoryResults);
+  onEvent?.({
+    type: 'conflict-analysis',
+    categoryResults: conflictAnalysis.categoryResults,
+    conflicts: conflictAnalysis.conflicts,
+  });
+
+  return {
+    sessionResults,
+    categoryResults: conflictAnalysis.categoryResults,
+    conflicts: conflictAnalysis.conflicts,
+  };
+}
+
 export function buildReviewSuiteResult(
   categoryResults: CategoryReviewResult[],
   meta: ReviewMeta,

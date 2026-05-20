@@ -38,10 +38,8 @@ import {
   type ReviewerToolAccessRecord,
 } from './reviewer-diagnostics.js';
 import {
-  analyzeReviewConflicts,
   appendScopedDiffPart,
   appendTextAccumulator,
-  buildCategoryReviewResult,
   buildChangedFileDetails,
   buildPackageSelfReviewBlockConfig,
   buildCategoryReviewerFailureMessage,
@@ -58,9 +56,11 @@ import {
   normalizeRepoPath,
   sanitizeArtifactPathSegment,
   REVIEW_CATEGORY_CONFIGS,
+  runCategoryReviewSequence,
   validateReviewerSubmitReadiness,
   validateReviewResult,
   type CategoryReviewResult,
+  type CategorySequenceEvent,
   type OutputBudget,
   type ReviewCategory,
   type ReviewCategoryConfig,
@@ -3092,40 +3092,106 @@ async function runReviewSuite(
   timeoutMs = MAX_AGENT_EXECUTION_MS,
 ): Promise<ReviewSuiteRunResult> {
   const suiteStartedAtMs = Date.now();
-  const categoryResults: CategoryReviewResult[] = [];
   const reviewerMessages: unknown[] = [];
   const reviewerUsages: ReviewUsage[] = [];
   let reviewerToolAccess: ReviewerToolAccessRecord | undefined;
 
-  try {
-    for (const [index, categoryConfig] of categoryConfigs.entries()) {
-      const ordinal = index + 1;
-      const totalCategories = categoryConfigs.length;
-      progress?.update(
-        `Running ${categoryConfig.category} review (${ordinal}/${totalCategories})…`,
-        {
-          phase: 'category-started',
-          category: categoryConfig.category,
-          ordinal,
-          totalCategories,
-        },
-        {notify: true},
-      );
-      artifactContext?.writer.appendBestEffort(
-        buildCategoryStartedArtifactEntry(
-          buildReviewArtifactEntryBase(
-            artifactContext.toolCallId,
-            artifactContext.runId,
+  const handleSequenceEvent = (event: CategorySequenceEvent): void => {
+    switch (event.type) {
+      case 'category-started':
+        progress?.update(
+          `Running ${event.categoryConfig.category} review (${event.ordinal}/${event.totalCategories})…`,
+          {
+            phase: 'category-started',
+            category: event.categoryConfig.category,
+            ordinal: event.ordinal,
+            totalCategories: event.totalCategories,
+          },
+          {notify: true},
+        );
+        artifactContext?.writer.appendBestEffort(
+          buildCategoryStartedArtifactEntry(
+            buildReviewArtifactEntryBase(
+              artifactContext.toolCallId,
+              artifactContext.runId,
+            ),
+            event.categoryConfig,
+            event.ordinal,
+            event.totalCategories,
           ),
-          categoryConfig,
-          ordinal,
-          totalCategories,
-        ),
-      );
+        );
+        break;
+      case 'category-finished':
+        if (event.status === 'success') {
+          progress?.update(
+            `${event.categoryConfig.label} completed: ${event.result.status}.`,
+            {
+              phase: 'category-finished',
+              category: event.categoryConfig.category,
+              ordinal: event.ordinal,
+              totalCategories: event.totalCategories,
+              reviewStatus: event.result.status,
+              findings: event.result.findings.length,
+            },
+          );
+          artifactContext?.writer.appendBestEffort(
+            buildCategoryFinishedArtifactEntry(
+              buildReviewArtifactEntryBase(
+                artifactContext.toolCallId,
+                artifactContext.runId,
+              ),
+              {
+                category: event.categoryConfig.category,
+                ordinal: event.ordinal,
+                totalCategories: event.totalCategories,
+                status: 'success',
+                result: event.result,
+              },
+            ),
+          );
+        } else {
+          artifactContext?.writer.appendBestEffort(
+            buildCategoryFinishedArtifactEntry(
+              buildReviewArtifactEntryBase(
+                artifactContext.toolCallId,
+                artifactContext.runId,
+              ),
+              {
+                category: event.categoryConfig.category,
+                ordinal: event.ordinal,
+                totalCategories: event.totalCategories,
+                status: 'error',
+                error: buildErrorRecord(event.error),
+                completedCategoryResults: event.completedCategoryResults,
+              },
+            ),
+          );
+        }
+        break;
+      case 'conflict-analysis':
+        progress?.update('Completed conservative conflict analysis.', {
+          phase: 'conflict-analysis',
+          conflicts: event.conflicts.length,
+        });
+        artifactContext?.writer.appendBestEffort(
+          buildConflictAnalysisArtifactEntry(
+            buildReviewArtifactEntryBase(
+              artifactContext.toolCallId,
+              artifactContext.runId,
+            ),
+            event.categoryResults,
+            event.conflicts,
+          ),
+        );
+        break;
+    }
+  };
 
-      let sessionResult: ReviewerSessionResult;
-      try {
-        sessionResult = await runReviewerSession(
+  try {
+    const sequenceResult = await runCategoryReviewSequence(
+      categoryConfigs,
+      async (categoryConfig, context) => {
+        const sessionResult = await runReviewerSession(
           scope,
           categoryConfig,
           model,
@@ -3135,71 +3201,46 @@ async function runReviewSuite(
           artifactContext
             ? {
                 ...artifactContext,
-                ordinal,
-                totalCategories,
+                ordinal: context.ordinal,
+                totalCategories: context.totalCategories,
               }
             : undefined,
           timeoutMs,
         );
-      } catch (error) {
-        artifactContext?.writer.appendBestEffort(
-          buildCategoryFinishedArtifactEntry(
-            buildReviewArtifactEntryBase(
-              artifactContext.toolCallId,
-              artifactContext.runId,
-            ),
-            {
-              category: categoryConfig.category,
-              ordinal,
-              totalCategories,
-              status: 'error',
-              error: buildErrorRecord(error),
-              completedCategoryResults: categoryResults,
-            },
-          ),
-        );
-        throw error;
-      }
-      reviewerUsages.push(sessionResult.usage);
-      reviewerMessages.push({
-        category: categoryConfig.category,
-        messages: sessionResult.reviewerMessages,
-      });
-      reviewerToolAccess = sessionResult.reviewerToolAccess;
-      const categoryResult = buildCategoryReviewResult(
-        sessionResult.category,
-        sessionResult.review,
-        sessionResult.meta,
-      );
-      categoryResults.push(categoryResult);
-
-      progress?.update(
-        `${categoryConfig.label} completed: ${categoryResult.status}.`,
-        {
-          phase: 'category-finished',
+        reviewerUsages.push(sessionResult.usage);
+        reviewerMessages.push({
           category: categoryConfig.category,
-          ordinal,
-          totalCategories,
-          reviewStatus: categoryResult.status,
-          findings: categoryResult.findings.length,
-        },
-      );
-      artifactContext?.writer.appendBestEffort(
-        buildCategoryFinishedArtifactEntry(
-          buildReviewArtifactEntryBase(
-            artifactContext.toolCallId,
-            artifactContext.runId,
-          ),
-          {
-            category: categoryConfig.category,
-            ordinal,
-            totalCategories,
-            status: 'success',
-            result: categoryResult,
-          },
-        ),
-      );
-    }
+          messages: sessionResult.reviewerMessages,
+        });
+        reviewerToolAccess = sessionResult.reviewerToolAccess;
+        return sessionResult;
+      },
+      handleSequenceEvent,
+    );
+
+    const suiteCompletedAtMs = Date.now();
+    const suiteUsage = aggregateReviewUsage(
+      reviewerUsages,
+      describeModel(model),
+    );
+    const suiteMeta = buildReviewMeta(
+      suiteStartedAtMs,
+      suiteCompletedAtMs,
+      suiteUsage,
+    );
+    const review = buildReviewSuiteResult(
+      sequenceResult.categoryResults,
+      suiteMeta,
+      sequenceResult.conflicts,
+    );
+
+    return {
+      review,
+      categoryResults: sequenceResult.categoryResults,
+      usage: suiteUsage,
+      reviewerMessages,
+      reviewerToolAccess,
+    };
   } catch (error) {
     const suiteError: ReviewSuiteError =
       error instanceof Error
@@ -3214,7 +3255,6 @@ async function runReviewSuite(
       [...reviewerUsages, failedUsage],
       describeModel(model),
     );
-    suiteError.categoryResults = categoryResults;
     suiteError.reviewerUsage = aggregateUsage;
     suiteError.reviewerMessages = [
       ...reviewerMessages,
@@ -3231,42 +3271,6 @@ async function runReviewSuite(
       diagnostics?.reviewerToolAccess ?? reviewerToolAccess;
     throw suiteError;
   }
-
-  const suiteCompletedAtMs = Date.now();
-  const suiteUsage = aggregateReviewUsage(reviewerUsages, describeModel(model));
-  const suiteMeta = buildReviewMeta(
-    suiteStartedAtMs,
-    suiteCompletedAtMs,
-    suiteUsage,
-  );
-  const conflictAnalysis = analyzeReviewConflicts(categoryResults);
-  progress?.update('Completed conservative conflict analysis.', {
-    phase: 'conflict-analysis',
-    conflicts: conflictAnalysis.conflicts.length,
-  });
-  artifactContext?.writer.appendBestEffort(
-    buildConflictAnalysisArtifactEntry(
-      buildReviewArtifactEntryBase(
-        artifactContext.toolCallId,
-        artifactContext.runId,
-      ),
-      conflictAnalysis.categoryResults,
-      conflictAnalysis.conflicts,
-    ),
-  );
-  const review = buildReviewSuiteResult(
-    conflictAnalysis.categoryResults,
-    suiteMeta,
-    conflictAnalysis.conflicts,
-  );
-
-  return {
-    review,
-    categoryResults: conflictAnalysis.categoryResults,
-    usage: suiteUsage,
-    reviewerMessages,
-    reviewerToolAccess,
-  };
 }
 
 export default function polishSolution(pi: ExtensionAPI): void {
