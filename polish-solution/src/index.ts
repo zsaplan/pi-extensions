@@ -77,6 +77,12 @@ import {
   buildCategoryStartedArtifactEntry,
   buildConflictAnalysisArtifactEntry,
   buildReviewerEventArtifactEntry,
+  type CategoryFinishedArtifactEntry,
+  type CategoryStartedArtifactEntry,
+  type ConflictAnalysisArtifactEntry,
+  type ReviewerEventArtifactEntry,
+  type ReviewArtifactEntryBaseFields,
+  type ReviewArtifactErrorRecord,
 } from './review-artifacts.js';
 import {buildReviewerSystemPrompt} from './review-prompts.js';
 import {REVIEW_TOOL_PARAMS} from './review-tool-contract.js';
@@ -100,11 +106,7 @@ type ReviewScopeRecord = {
   diff: string;
 };
 
-type ReviewErrorRecord = {
-  name: string;
-  message: string;
-  stack?: string;
-};
+type ReviewErrorRecord = ReviewArtifactErrorRecord;
 
 type ReviewRunRecord = {
   version: 1;
@@ -128,13 +130,7 @@ type ReviewRunRecord = {
   reviewerToolAccess?: ReviewerToolAccessRecord;
 };
 
-type ReviewArtifactEntryBase = {
-  version: 1;
-  toolName: 'polish_solution_review';
-  toolCallId: string;
-  runId: string;
-  timestamp: string;
-};
+type ReviewArtifactEntryBase = ReviewArtifactEntryBaseFields;
 
 type ReviewArtifactEntry =
   | (ReviewArtifactEntryBase & {
@@ -159,35 +155,10 @@ type ReviewArtifactEntry =
       entryType: 'scope';
       scope: ReviewScopeRecord;
     })
-  | (ReviewArtifactEntryBase & {
-      entryType: 'category-started';
-      category: ReviewCategory;
-      ordinal: number;
-      totalCategories: number;
-      label: string;
-    })
-  | (ReviewArtifactEntryBase & {
-      entryType: 'reviewer-event';
-      category?: ReviewCategory;
-      ordinal?: number;
-      totalCategories?: number;
-      event: unknown;
-    })
-  | (ReviewArtifactEntryBase & {
-      entryType: 'category-finished';
-      category: ReviewCategory;
-      ordinal: number;
-      totalCategories: number;
-      status: 'success' | 'error';
-      result?: CategoryReviewResult;
-      error?: ReviewErrorRecord;
-      completedCategoryResults?: CategoryReviewResult[];
-    })
-  | (ReviewArtifactEntryBase & {
-      entryType: 'conflict-analysis';
-      categoryResults: CategoryReviewResult[];
-      conflicts: ReviewConflict[];
-    })
+  | CategoryStartedArtifactEntry
+  | ReviewerEventArtifactEntry
+  | CategoryFinishedArtifactEntry
+  | ConflictAnalysisArtifactEntry
   | (ReviewArtifactEntryBase & {
       entryType: 'run-finished';
       status: ReviewRunRecord['status'];
