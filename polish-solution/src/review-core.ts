@@ -107,7 +107,6 @@ export type ConflictResolution =
   | 'prefer-standardize'
   | 'prefer-prune'
   | 'prefer-simplify'
-  | 'prefer-dry'
   | 'needs-user-direction';
 
 export type ReviewConflict = {
@@ -932,8 +931,7 @@ export type CategorySequenceEvent =
       conflicts: ReviewConflict[];
     };
 
-export type CategorySequenceResult<TSession extends CategorySessionBase> = {
-  sessionResults: TSession[];
+export type CategorySequenceResult = {
   categoryResults: CategoryReviewResult[];
   conflicts: ReviewConflict[];
 };
@@ -941,21 +939,17 @@ export type CategorySequenceResult<TSession extends CategorySessionBase> = {
 export type CategorySequenceError = Error & {
   failedCategory?: ReviewCategory;
   categoryResults?: CategoryReviewResult[];
-  sessionResults?: CategorySessionBase[];
 };
 
-export async function runCategoryReviewSequence<
-  TSession extends CategorySessionBase,
->(
+export async function runCategoryReviewSequence(
   categoryConfigs: readonly ReviewCategoryConfig[],
   runCategory: (
     categoryConfig: ReviewCategoryConfig,
     context: CategoryRunContext,
-  ) => Promise<TSession>,
+  ) => Promise<CategorySessionBase>,
   onEvent?: (event: CategorySequenceEvent) => void,
-): Promise<CategorySequenceResult<TSession>> {
+): Promise<CategorySequenceResult> {
   const categoryResults: CategoryReviewResult[] = [];
-  const sessionResults: TSession[] = [];
 
   for (const [index, categoryConfig] of categoryConfigs.entries()) {
     const context = {
@@ -964,7 +958,7 @@ export async function runCategoryReviewSequence<
     };
     onEvent?.({type: 'category-started', categoryConfig, ...context});
 
-    let sessionResult: TSession;
+    let sessionResult: CategorySessionBase;
     try {
       sessionResult = await runCategory(categoryConfig, context);
     } catch (error) {
@@ -982,11 +976,9 @@ export async function runCategoryReviewSequence<
           : (new Error(String(error)) as CategorySequenceError);
       sequenceError.failedCategory = categoryConfig.category;
       sequenceError.categoryResults = categoryResults;
-      sequenceError.sessionResults = sessionResults;
       throw sequenceError;
     }
 
-    sessionResults.push(sessionResult);
     const categoryResult = buildCategoryReviewResult(
       sessionResult.category,
       sessionResult.review,
@@ -1010,7 +1002,6 @@ export async function runCategoryReviewSequence<
   });
 
   return {
-    sessionResults,
     categoryResults: conflictAnalysis.categoryResults,
     conflicts: conflictAnalysis.conflicts,
   };
