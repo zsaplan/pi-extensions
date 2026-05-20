@@ -84,7 +84,10 @@ import {
   type ReviewArtifactEntryBaseFields,
   type ReviewArtifactErrorRecord,
 } from './review-artifacts.js';
-import {buildReviewerSystemPrompt} from './review-prompts.js';
+import {
+  SUBMIT_REVIEW_SCHEMA,
+  buildReviewerSystemPrompt,
+} from './review-prompts.js';
 import {REVIEW_TOOL_PARAMS} from './review-tool-contract.js';
 
 type ReviewToolResult = ReviewSuiteResult;
@@ -205,6 +208,7 @@ type ReviewSuiteRunResult = {
 };
 
 type ReviewSuiteError = Error & {
+  failedCategory?: ReviewCategory;
   categoryResults?: CategoryReviewResult[];
   reviewerUsage?: ReviewUsage;
   reviewerMessages?: unknown[];
@@ -221,35 +225,6 @@ type BudgetedCommandResult = CommandResult & {
   stdoutBytes: number;
   stdoutLines: number;
 };
-
-const REVIEW_STATUS_ENUM = Type.Union(
-  [Type.Literal('needs-attention'), Type.Literal('approve')],
-  {
-    description: 'Review status.',
-  },
-);
-const REVIEW_CONFIDENCE_ENUM = Type.Union(
-  [Type.Literal('low'), Type.Literal('medium'), Type.Literal('high')],
-  {
-    description: 'Finding confidence.',
-  },
-);
-
-const REVIEW_FINDING_SCHEMA = Type.Object({
-  title: Type.String({description: 'Short finding title.'}),
-  body: Type.String({description: 'Why this is a material risk.'}),
-  file: Type.String({description: 'Repo-relative file path.'}),
-  line_start: Type.Integer({minimum: 1}),
-  line_end: Type.Integer({minimum: 1}),
-  confidence: REVIEW_CONFIDENCE_ENUM,
-  recommendation: Type.String({description: 'Concrete remediation guidance.'}),
-});
-
-const SUBMIT_REVIEW_SCHEMA = Type.Object({
-  status: REVIEW_STATUS_ENUM,
-  summary: Type.String({description: 'One concise overall review summary.'}),
-  findings: Type.Array(REVIEW_FINDING_SCHEMA),
-});
 
 const EMPTY_SCHEMA = Type.Object({});
 const GIT_DIFF_SCHEMA = Type.Object({
@@ -3226,6 +3201,11 @@ async function runReviewSuite(
       [...reviewerUsages, failedUsage],
       describeModel(model),
     );
+    const sequenceDiagnostics = error as ReviewSuiteError;
+    suiteError.failedCategory =
+      sequenceDiagnostics.failedCategory ??
+      (sequenceDiagnostics as ReviewerSessionError).category;
+    suiteError.categoryResults = sequenceDiagnostics.categoryResults;
     suiteError.reviewerUsage = aggregateUsage;
     suiteError.reviewerMessages = [
       ...reviewerMessages,
@@ -3293,6 +3273,7 @@ export default function polishSolution(pi: ExtensionAPI): void {
       let toolResult: ReviewToolResult | undefined;
       let artifactRef = artifactWriter.ref;
       let finalError: unknown;
+      let failedCategory: ReviewCategory | undefined;
       let artifactWarning = artifactWriter.getWarning();
       let reviewMeta = buildReviewMeta(
         startedAtMs,
@@ -3386,6 +3367,9 @@ export default function polishSolution(pi: ExtensionAPI): void {
         const diagnostics = getReviewerSessionDiagnostics(error);
         const suiteDiagnostics = error as ReviewSuiteError;
         categoryResults = suiteDiagnostics.categoryResults ?? categoryResults;
+        failedCategory =
+          suiteDiagnostics.failedCategory ??
+          (suiteDiagnostics as ReviewerSessionError).category;
         reviewerMessages = diagnostics?.reviewerMessages ?? reviewerMessages;
         reviewerToolAccess =
           diagnostics?.reviewerToolAccess ?? reviewerToolAccess;
@@ -3424,9 +3408,7 @@ export default function polishSolution(pi: ExtensionAPI): void {
         review,
         categoryResults: review?.category_results ?? categoryResults,
         conflicts: review?.conflicts ?? conflicts,
-        failedCategory: finalError
-          ? (finalError as ReviewerSessionError).category
-          : undefined,
+        failedCategory,
         error: finalError ? buildErrorRecord(finalError) : undefined,
         scope: scope ? buildReviewScopeRecord(scope) : undefined,
         reviewerMessages:

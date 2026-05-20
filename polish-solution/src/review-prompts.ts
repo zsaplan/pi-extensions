@@ -1,3 +1,4 @@
+import {Type} from 'typebox';
 import type {ReviewCategoryConfig} from './review-core.js';
 
 export const REVIEWER_SHARED_TOOL_INSTRUCTIONS = `Available tools:
@@ -16,6 +17,36 @@ export const REVIEWER_SHARED_SAFETY_INSTRUCTIONS = `Shared safety and scope rule
 - Out of scope: tests, test coverage, lint-only concerns, docs-only concerns, generic monitoring suggestions for unrelated product changes, rollout chores, or other external supports. Monitoring, metrics, logs, traces, scraping, alerting, and notification routing are in scope when they are changed by the diff or required for the diff to work. If the only plausible concerns are out-of-scope items such as tests or other external supports, approve with no findings.
 - When the diff changes user-facing Markdown-like output, CLI/tool text, or rendered diagnostics, verify markup-sensitive literals are escaped or code-formatted when they must display literally, such as raw \`<tag>\` tokens. Treat this as in scope only when rendering could hide, corrupt, or mislead the output; do not report copy/style nits.
 - When reviewing observability or alerting changes, verify the end-to-end signal path before approving: signal production/export, scrape or discovery selectors such as ServiceMonitor/PodMonitor labels, query label compatibility, alert/recording rules, and notification routing. Search nearby repo conventions when selectors or labels are not obvious.`;
+
+export const REVIEW_STATUS_ENUM = Type.Union(
+  [Type.Literal('needs-attention'), Type.Literal('approve')],
+  {
+    description: 'Review status.',
+  },
+);
+
+export const REVIEW_CONFIDENCE_ENUM = Type.Union(
+  [Type.Literal('low'), Type.Literal('medium'), Type.Literal('high')],
+  {
+    description: 'Finding confidence.',
+  },
+);
+
+export const REVIEW_FINDING_SCHEMA = Type.Object({
+  title: Type.String({description: 'Short finding title.'}),
+  body: Type.String({description: 'Why this is a material risk.'}),
+  file: Type.String({description: 'Repo-relative file path.'}),
+  line_start: Type.Integer({minimum: 1}),
+  line_end: Type.Integer({minimum: 1}),
+  confidence: REVIEW_CONFIDENCE_ENUM,
+  recommendation: Type.String({description: 'Concrete remediation guidance.'}),
+});
+
+export const SUBMIT_REVIEW_SCHEMA = Type.Object({
+  status: REVIEW_STATUS_ENUM,
+  summary: Type.String({description: 'One concise overall review summary.'}),
+  findings: Type.Array(REVIEW_FINDING_SCHEMA),
+});
 
 export const REVIEWER_OUTPUT_SCHEMA_INSTRUCTIONS = `When you are ready, call submit_review with this exact JSON shape:
 {
