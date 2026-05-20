@@ -38,6 +38,7 @@ import {
   type ReviewerToolAccessRecord,
 } from './reviewer-diagnostics.js';
 import {
+  analyzeReviewConflicts,
   appendScopedDiffPart,
   appendTextAccumulator,
   buildCategoryReviewResult,
@@ -3133,7 +3134,16 @@ async function runReviewSuite(
     suiteCompletedAtMs,
     suiteUsage,
   );
-  const review = buildReviewSuiteResult(categoryResults, suiteMeta, []);
+  const conflictAnalysis = analyzeReviewConflicts(categoryResults);
+  progress?.update('Completed conservative conflict analysis.', {
+    phase: 'conflict-analysis',
+    conflicts: conflictAnalysis.conflicts.length,
+  });
+  const review = buildReviewSuiteResult(
+    conflictAnalysis.categoryResults,
+    suiteMeta,
+    conflictAnalysis.conflicts,
+  );
 
   return {
     review,

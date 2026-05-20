@@ -620,6 +620,24 @@ export function formatReviewFindingId(
   return `${category}-${String(ordinal).padStart(2, '0')}`;
 }
 
+function cloneReviewFinding(finding: ReviewFinding): ReviewFinding {
+  return {
+    ...finding,
+    conflicts_with: finding.conflicts_with
+      ? [...finding.conflicts_with]
+      : undefined,
+  };
+}
+
+function cloneCategoryReviewResult(
+  result: CategoryReviewResult,
+): CategoryReviewResult {
+  return {
+    ...result,
+    findings: result.findings.map(cloneReviewFinding),
+  };
+}
+
 export function buildCategoryReviewResult(
   category: ReviewCategory,
   review: ChildReviewResult,
@@ -638,6 +656,194 @@ export function buildCategoryReviewResult(
     }),
     meta,
   };
+}
+
+type OpposingActionPair = 'remove-keep' | 'remove-extract' | 'inline-extract';
+
+type DetectedOpposingActionPair = {
+  pair: OpposingActionPair;
+  leftAction: string;
+  rightAction: string;
+};
+
+const REMOVE_ACTION_PATTERN = /\b(?:remove|delete|drop|prune)\b/i;
+const KEEP_ACTION_PATTERN = /\b(?:keep|retain|preserve)\b/i;
+const EXTRACT_ACTION_PATTERN = /\b(?:extract|share|abstract|dedupe)\b/i;
+const INLINE_ACTION_PATTERN = /\b(?:inline|simplify)\b/i;
+
+function textMatches(pattern: RegExp, value: string): boolean {
+  return pattern.test(value);
+}
+
+function detectOpposingActionPair(
+  left: ReviewFinding,
+  right: ReviewFinding,
+): DetectedOpposingActionPair | undefined {
+  const leftText = `${left.title} ${left.recommendation}`;
+  const rightText = `${right.title} ${right.recommendation}`;
+  const leftRemove = textMatches(REMOVE_ACTION_PATTERN, leftText);
+  const rightRemove = textMatches(REMOVE_ACTION_PATTERN, rightText);
+  const leftKeep = textMatches(KEEP_ACTION_PATTERN, leftText);
+  const rightKeep = textMatches(KEEP_ACTION_PATTERN, rightText);
+  const leftExtract = textMatches(EXTRACT_ACTION_PATTERN, leftText);
+  const rightExtract = textMatches(EXTRACT_ACTION_PATTERN, rightText);
+  const leftInline = textMatches(INLINE_ACTION_PATTERN, leftText);
+  const rightInline = textMatches(INLINE_ACTION_PATTERN, rightText);
+
+  if (leftRemove && rightKeep) {
+    return {pair: 'remove-keep', leftAction: 'remove', rightAction: 'keep'};
+  }
+  if (leftKeep && rightRemove) {
+    return {pair: 'remove-keep', leftAction: 'keep', rightAction: 'remove'};
+  }
+  if (leftRemove && rightExtract) {
+    return {
+      pair: 'remove-extract',
+      leftAction: 'remove',
+      rightAction: 'extract',
+    };
+  }
+  if (leftExtract && rightRemove) {
+    return {
+      pair: 'remove-extract',
+      leftAction: 'extract',
+      rightAction: 'remove',
+    };
+  }
+  if (leftInline && rightExtract) {
+    return {
+      pair: 'inline-extract',
+      leftAction: 'inline',
+      rightAction: 'extract',
+    };
+  }
+  if (leftExtract && rightInline) {
+    return {
+      pair: 'inline-extract',
+      leftAction: 'extract',
+      rightAction: 'inline',
+    };
+  }
+
+  return undefined;
+}
+
+function resolveReviewConflict(
+  left: ReviewFinding,
+  right: ReviewFinding,
+  actionPair: DetectedOpposingActionPair,
+): Pick<ReviewConflict, 'resolution' | 'preferred_finding_id' | 'rationale'> {
+  if (left.category === 'adversarial' || right.category === 'adversarial') {
+    const preferred = left.category === 'adversarial' ? left : right;
+    return {
+      resolution: 'prefer-adversarial',
+      preferred_finding_id: preferred.id,
+      rationale:
+        'Adversarial findings take priority over non-adversarial category conflicts in the first-slice resolver.',
+    };
+  }
+
+  if (
+    (left.category === 'standardize' &&
+      (right.category === 'simplify' || right.category === 'dry')) ||
+    (right.category === 'standardize' &&
+      (left.category === 'simplify' || left.category === 'dry'))
+  ) {
+    const preferred = left.category === 'standardize' ? left : right;
+    return {
+      resolution: 'prefer-standardize',
+      preferred_finding_id: preferred.id,
+      rationale:
+        'Repository/package convention findings take priority over simplify or DRY conflicts in the first-slice resolver.',
+    };
+  }
+
+  if (
+    actionPair.pair === 'remove-extract' &&
+    ((left.category === 'prune' && right.category === 'dry') ||
+      (right.category === 'prune' && left.category === 'dry'))
+  ) {
+    const preferred = left.category === 'prune' ? left : right;
+    return {
+      resolution: 'prefer-prune',
+      preferred_finding_id: preferred.id,
+      rationale:
+        'Prune findings take priority over DRY extraction when the explicit conflict is remove/delete/drop/prune versus extract/share/abstract/dedupe.',
+    };
+  }
+
+  if (
+    actionPair.pair === 'inline-extract' &&
+    ((left.category === 'simplify' && right.category === 'dry') ||
+      (right.category === 'simplify' && left.category === 'dry'))
+  ) {
+    const preferred = left.category === 'simplify' ? left : right;
+    return {
+      resolution: 'prefer-simplify',
+      preferred_finding_id: preferred.id,
+      rationale:
+        'Simplify findings take priority over DRY extraction when the explicit conflict is inline/simplify versus extract/share/abstract/dedupe.',
+    };
+  }
+
+  return {
+    resolution: 'needs-user-direction',
+    rationale:
+      'The first-slice resolver detected an explicit opposing action pair but no deterministic priority rule applies.',
+  };
+}
+
+function addConflictReference(
+  finding: ReviewFinding,
+  conflictId: string,
+): void {
+  finding.conflicts_with ??= [];
+  if (!finding.conflicts_with.includes(conflictId)) {
+    finding.conflicts_with.push(conflictId);
+  }
+}
+
+export function analyzeReviewConflicts(
+  categoryResults: CategoryReviewResult[],
+): {categoryResults: CategoryReviewResult[]; conflicts: ReviewConflict[]} {
+  const clonedCategoryResults = categoryResults.map(cloneCategoryReviewResult);
+  const findings = clonedCategoryResults.flatMap(result => result.findings);
+  const findingsById = new Map(findings.map(finding => [finding.id, finding]));
+  const conflicts: ReviewConflict[] = [];
+
+  for (let leftIndex = 0; leftIndex < findings.length; leftIndex += 1) {
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < findings.length;
+      rightIndex += 1
+    ) {
+      const left = findings[leftIndex];
+      const right = findings[rightIndex];
+      if (left.category === right.category) continue;
+      if (left.file !== right.file) continue;
+      if (
+        !(
+          left.line_start <= right.line_end && left.line_end >= right.line_start
+        )
+      ) {
+        continue;
+      }
+
+      const actionPair = detectOpposingActionPair(left, right);
+      if (!actionPair) continue;
+
+      const conflictResolution = resolveReviewConflict(left, right, actionPair);
+      conflicts.push({
+        finding_ids: [left.id, right.id],
+        summary: `${left.id} (${actionPair.leftAction}) conflicts with ${right.id} (${actionPair.rightAction}) on ${left.file}:${Math.max(left.line_start, right.line_start)}-${Math.min(left.line_end, right.line_end)}.`,
+        ...conflictResolution,
+      });
+      addConflictReference(findingsById.get(left.id) ?? left, right.id);
+      addConflictReference(findingsById.get(right.id) ?? right, left.id);
+    }
+  }
+
+  return {categoryResults: clonedCategoryResults, conflicts};
 }
 
 function buildReviewSuiteSummary(

@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   REVIEW_CATEGORY_CONFIGS,
   REVIEW_CATEGORY_ORDER,
+  analyzeReviewConflicts,
   appendScopedDiffPart,
   appendTextAccumulator,
   buildCategoryReviewerFailureMessage,
@@ -26,6 +27,7 @@ import {
   sanitizeArtifactPathSegment,
   validateReviewerSubmitReadiness,
   validateReviewResult,
+  type ReviewCategory,
   type ReviewMeta,
   type ReviewScope,
 } from '../src/review-core.ts';
@@ -97,6 +99,35 @@ function makeScope(overrides: Partial<ReviewScope> = {}): ReviewScope {
     },
     ...overrides,
   };
+}
+
+function makeCategoryResultWithFinding(options: {
+  category: ReviewCategory;
+  title: string;
+  recommendation: string;
+  file?: string;
+  line_start?: number;
+  line_end?: number;
+}) {
+  return buildCategoryReviewResult(
+    options.category,
+    {
+      status: 'needs-attention',
+      summary: `${options.category} finding`,
+      findings: [
+        {
+          title: options.title,
+          body: 'body',
+          file: options.file ?? 'src/changed.ts',
+          line_start: options.line_start ?? 10,
+          line_end: options.line_end ?? 12,
+          confidence: 'high',
+          recommendation: options.recommendation,
+        },
+      ],
+    },
+    makeMeta(),
+  );
 }
 
 test('sanitizeArtifactPathSegment produces safe lowercase path segments', () => {
@@ -349,6 +380,90 @@ test('category aggregation assigns visible finding ids and preserves compatibili
   assert.equal(suiteResult.category_results[0], categoryResult);
   assert.deepEqual(suiteResult.conflicts, []);
   assert.match(suiteResult.summary, /1 finding across 1 review category/);
+});
+
+test('conflict analysis prefers adversarial over prune remove/keep conflicts', () => {
+  const adversarial = makeCategoryResultWithFinding({
+    category: 'adversarial',
+    title: 'Keep validation guard',
+    recommendation:
+      'Keep the changed validation guard because it blocks bad input.',
+  });
+  const prune = makeCategoryResultWithFinding({
+    category: 'prune',
+    title: 'Delete redundant guard',
+    recommendation: 'Delete the validation guard as redundant.',
+  });
+
+  const analysis = analyzeReviewConflicts([adversarial, prune]);
+  const suite = buildReviewSuiteResult(
+    analysis.categoryResults,
+    makeMeta(),
+    analysis.conflicts,
+  );
+
+  assert.equal(analysis.conflicts.length, 1);
+  assert.deepEqual(analysis.conflicts[0].finding_ids, [
+    'adversarial-01',
+    'prune-01',
+  ]);
+  assert.equal(analysis.conflicts[0].resolution, 'prefer-adversarial');
+  assert.equal(analysis.conflicts[0].preferred_finding_id, 'adversarial-01');
+  assert.equal(suite.status, 'needs-attention');
+  assert.deepEqual(suite.findings[0].conflicts_with, ['prune-01']);
+  assert.deepEqual(suite.findings[1].conflicts_with, ['adversarial-01']);
+});
+
+test('conflict analysis leaves standardize/prune preserve/delete deadlocks unresolved', () => {
+  const standardize = makeCategoryResultWithFinding({
+    category: 'standardize',
+    title: 'Preserve compatibility shim',
+    recommendation:
+      'Preserve the compatibility shim to match the existing extension API shape.',
+  });
+  const prune = makeCategoryResultWithFinding({
+    category: 'prune',
+    title: 'Delete obsolete shim',
+    recommendation: 'Delete the same compatibility shim as obsolete.',
+  });
+
+  const analysis = analyzeReviewConflicts([standardize, prune]);
+  const suite = buildReviewSuiteResult(
+    analysis.categoryResults,
+    makeMeta(),
+    analysis.conflicts,
+  );
+
+  assert.equal(analysis.conflicts.length, 1);
+  assert.deepEqual(analysis.conflicts[0].finding_ids, [
+    'standardize-01',
+    'prune-01',
+  ]);
+  assert.equal(analysis.conflicts[0].resolution, 'needs-user-direction');
+  assert.equal('preferred_finding_id' in analysis.conflicts[0], false);
+  assert.equal(suite.status, 'needs-attention');
+  assert.match(suite.summary, /user direction is needed/);
+});
+
+test('conflict analysis ignores overlapping findings without explicit opposing action pairs', () => {
+  const simplify = makeCategoryResultWithFinding({
+    category: 'simplify',
+    title: 'Clarify helper flow',
+    recommendation: 'Clarify the helper flow around the changed branch.',
+  });
+  const dry = makeCategoryResultWithFinding({
+    category: 'dry',
+    title: 'Centralize branch wording',
+    recommendation: 'Centralize branch wording near the existing helper.',
+  });
+
+  const analysis = analyzeReviewConflicts([simplify, dry]);
+
+  assert.deepEqual(analysis.conflicts, []);
+  assert.equal(
+    analysis.categoryResults[0].findings[0].conflicts_with,
+    undefined,
+  );
 });
 
 test('suite aggregation approves only when all categories approve and no conflicts exist', () => {
