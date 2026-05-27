@@ -3,11 +3,13 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   buildWorktreePath,
-  formatFooterStatus,
+  formatPrStatusErrorLine,
+  formatPrStatusLine,
   getCacheDir,
   parseGitHubRemotes,
   parseGitHubRepo,
   parsePullRequestUrl,
+  rightAlignStatusLine,
   summarizeChecks,
   summarizeReviewRequests,
   type FoundCacheEntry,
@@ -66,7 +68,7 @@ test('parseGitHubRemotes deduplicates fetch and push remotes', () => {
   );
 });
 
-test('summarizeReviewRequests keeps the footer compact', () => {
+test('summarizeReviewRequests keeps the status line compact', () => {
   assert.equal(summarizeReviewRequests([]), 'no review request');
   assert.equal(
     summarizeReviewRequests([{login: 'zach'}]),
@@ -106,7 +108,7 @@ test('summarizeChecks prioritizes failing, then pending, then passing', () => {
   );
 });
 
-test('formatFooterStatus uses concrete fields and includes the full URL', () => {
+test('formatPrStatusLine uses concrete fields and includes the full URL', () => {
   const entry: FoundCacheEntry = {
     kind: 'found',
     fetchedAt: 1,
@@ -123,10 +125,32 @@ test('formatFooterStatus uses concrete fields and includes the full URL', () => 
   };
 
   assert.equal(
-    formatFooterStatus(entry),
-    'PR #1234 · open · review requested: platform · checks pending 1/2 · https://github.com/IntuitiveWebSolutions/platform/pull/1234',
+    formatPrStatusLine(entry),
+    'open · review requested: platform · checks pending 1/2 · https://github.com/IntuitiveWebSolutions/platform/pull/1234',
   );
-  assert.doesNotMatch(formatFooterStatus(entry), /REVIEW_REQUIRED/);
+  assert.doesNotMatch(formatPrStatusLine(entry), /REVIEW_REQUIRED/);
+  assert.doesNotMatch(formatPrStatusLine(entry), /PR #1234/);
+});
+
+test('formatPrStatusErrorLine keeps hard failures visible and compact', () => {
+  assert.equal(
+    formatPrStatusErrorLine('gh auth required'),
+    'PR status error: gh auth required',
+  );
+  assert.match(
+    formatPrStatusErrorLine(`gh failed ${'x'.repeat(200)}`),
+    /^PR status error: gh failed x+…$/,
+  );
+});
+
+test('rightAlignStatusLine pads left and preserves trailing URLs when possible', () => {
+  assert.equal(rightAlignStatusLine('status', 10), '    status');
+  assert.equal(rightAlignStatusLine('long status', 6), 'long …');
+
+  const url = 'https://github.com/o/r/pull/1234';
+  const status = `open · checks pending 1/2 · ${url}`;
+  assert.equal(rightAlignStatusLine(status, url.length), url);
+  assert.equal(rightAlignStatusLine(status, url.length + 4), `… · ${url}`);
 });
 
 test('buildWorktreePath follows the sibling <repo>-pr-<number> convention', () => {

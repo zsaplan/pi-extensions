@@ -7,11 +7,12 @@ import type {
   ExtensionContext,
 } from '@mariozechner/pi-coding-agent';
 
-const STATUS_KEY = 'pr-worktree-status';
+const DISPLAY_KEY = 'pr-worktree-status';
 const CACHE_VERSION = 1;
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const CACHE_TTL_MS = REFRESH_INTERVAL_MS;
 const LOCK_TTL_MS = 30 * 1000;
+const CACHE_WRITE_LOCK_KEY = '__cache-write__';
 const GH_PR_FIELDS = [
   'number',
   'title',
@@ -109,9 +110,25 @@ interface PullRequestTarget {
   prUrl?: string;
 }
 
+type RefreshOutcome =
+  | 'no-target'
+  | 'cache-hit'
+  | 'fresh'
+  | 'none'
+  | 'error'
+  | 'refresh-in-progress'
+  | 'stale-refresh-in-progress'
+  | 'stale-error'
+  | 'cache-write-error';
+
+type RefreshSeverity = 'info' | 'warning' | 'error';
+
 interface RefreshResult {
   entry?: CacheEntry;
   message: string;
+  outcome: RefreshOutcome;
+  severity: RefreshSeverity;
+  cause?: CacheEntry;
 }
 
 export interface WorktreeCreateResult {
@@ -284,10 +301,15 @@ async function updateCache(
   cacheDir: string,
   updater: (cache: PrStatusCache) => void,
 ): Promise<PrStatusCache> {
-  const cache = await readCache(cacheDir);
-  updater(cache);
-  await writeCache(cacheDir, cache);
-  return cache;
+  const releaseLock = await acquireCacheWriteLock(cacheDir);
+  try {
+    const cache = await readCache(cacheDir);
+    updater(cache);
+    await writeCache(cacheDir, cache);
+    return cache;
+  } finally {
+    await releaseLock();
+  }
 }
 
 async function acquireCacheLock(
@@ -326,6 +348,26 @@ async function acquireCacheLock(
   return null;
 }
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function acquireCacheWriteLock(
+  cacheDir: string,
+): Promise<() => Promise<void>> {
+  const deadline = Date.now() + LOCK_TTL_MS;
+
+  while (true) {
+    const releaseLock = await acquireCacheLock(cacheDir, CACHE_WRITE_LOCK_KEY);
+    if (releaseLock) return releaseLock;
+
+    if (Date.now() >= deadline) {
+      throw new Error('Timed out waiting for PR status cache write lock.');
+    }
+    await sleep(25);
+  }
+}
+
 async function getGitContext(
   pi: ExtensionAPI,
   cwd: string,
@@ -358,6 +400,25 @@ async function getGitContext(
   };
 }
 
+function worktreeMappingMatchesContext(
+  mapping: WorktreeMapping,
+  context: LocalGitContext,
+): boolean {
+  return (
+    sameRepo(context.repo, {owner: mapping.owner, repo: mapping.repo}) &&
+    context.branch === `pr-${mapping.number}`
+  );
+}
+
+async function discardStaleWorktreeMapping(
+  cacheDir: string,
+  root: string,
+): Promise<void> {
+  await updateCache(cacheDir, cache => {
+    delete cache.worktrees[root];
+  }).catch(() => undefined);
+}
+
 async function resolveCurrentTarget(
   pi: ExtensionAPI,
   cwd: string,
@@ -368,7 +429,7 @@ async function resolveCurrentTarget(
 
   const cache = await readCache(cacheDir);
   const mapping = cache.worktrees[context.root];
-  if (mapping) {
+  if (mapping && worktreeMappingMatchesContext(mapping, context)) {
     return {
       key: mapping.key,
       cwd: context.root,
@@ -376,6 +437,7 @@ async function resolveCurrentTarget(
       prUrl: mapping.url,
     };
   }
+  if (mapping) await discardStaleWorktreeMapping(cacheDir, context.root);
 
   if (!context.branch || !context.repo) return null;
 
@@ -486,38 +548,119 @@ async function runGhPrView(
   }
 }
 
+function messageFromError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function resultFromEntry(
+  entry: CacheEntry,
+  outcome: RefreshOutcome,
+): RefreshResult {
+  if (entry.kind === 'found') {
+    return {
+      entry,
+      outcome,
+      severity: 'info',
+      message:
+        outcome === 'fresh'
+          ? 'PR status refreshed.'
+          : 'Using cached PR status.',
+    };
+  }
+
+  if (entry.kind === 'none') {
+    return {entry, outcome: 'none', severity: 'info', message: entry.message};
+  }
+
+  return {entry, outcome: 'error', severity: 'error', message: entry.message};
+}
+
+function cacheEntryMessage(entry: CacheEntry | undefined): string | undefined {
+  if (!entry || entry.kind === 'found') return undefined;
+  return entry.message;
+}
+
+function staleResult(
+  entry: FoundCacheEntry,
+  outcome: 'stale-error' | 'stale-refresh-in-progress',
+  message: string,
+  cause?: CacheEntry,
+): RefreshResult {
+  return {entry, outcome, severity: 'warning', message, cause};
+}
+
 async function getOrRefreshEntry(
   pi: ExtensionAPI,
   target: PullRequestTarget,
   cacheDir: string,
   force: boolean,
-): Promise<CacheEntry | undefined> {
+): Promise<RefreshResult> {
   const now = Date.now();
   const cache = await readCache(cacheDir);
   const cachedEntry = cache.entries[target.key];
-  if (!force && cachedEntry && cachedEntry.expiresAt > now) return cachedEntry;
+  if (!force && cachedEntry && cachedEntry.expiresAt > now) {
+    return resultFromEntry(cachedEntry, 'cache-hit');
+  }
 
   const releaseLock = await acquireCacheLock(cacheDir, target.key, now);
   if (!releaseLock) {
-    const latest = (await readCache(cacheDir)).entries[target.key];
-    return latest ?? cachedEntry;
+    const latest =
+      (await readCache(cacheDir)).entries[target.key] ?? cachedEntry;
+    if (latest?.kind === 'found') {
+      return staleResult(
+        latest,
+        'stale-refresh-in-progress',
+        'Showing cached PR status while another refresh is in progress.',
+      );
+    }
+    if (latest) return resultFromEntry(latest, 'cache-hit');
+
+    return {
+      outcome: 'refresh-in-progress',
+      severity: 'info',
+      message: 'PR status refresh is already in progress.',
+    };
   }
 
   try {
     const latest = await readCache(cacheDir);
     const latestEntry = latest.entries[target.key];
     if (!force && latestEntry && latestEntry.expiresAt > Date.now()) {
-      return latestEntry;
+      return resultFromEntry(latestEntry, 'cache-hit');
     }
 
     const {entry, preservePreviousOnError} = await runGhPrView(pi, target);
-    if (preservePreviousOnError && latestEntry?.kind === 'found')
-      return latestEntry;
+    if (preservePreviousOnError && latestEntry?.kind === 'found') {
+      return staleResult(
+        latestEntry,
+        'stale-error',
+        `Showing stale PR status; refresh failed: ${
+          cacheEntryMessage(entry) ?? 'unknown refresh error'
+        }`,
+        entry,
+      );
+    }
 
-    await updateCache(cacheDir, cache => {
-      cache.entries[target.key] = entry;
-    });
-    return entry;
+    try {
+      await updateCache(cacheDir, cache => {
+        cache.entries[target.key] = entry;
+      });
+    } catch (error) {
+      return {
+        entry,
+        outcome: 'cache-write-error',
+        severity: entry.kind === 'error' ? 'error' : 'warning',
+        message: `PR status resolved but cache update failed: ${messageFromError(
+          error,
+        )}`,
+        cause: entry,
+      };
+    }
+
+    return resultFromEntry(
+      entry,
+      entry.kind === 'found' ? 'fresh' : entry.kind,
+    );
   } finally {
     await releaseLock();
   }
@@ -613,10 +756,9 @@ export function summarizeChecks(checks: CheckLike[]): string {
   return 'checks passing';
 }
 
-export function formatFooterStatus(entry: FoundCacheEntry): string {
+export function formatPrStatusLine(entry: FoundCacheEntry): string {
   const state = entry.pr.isDraft ? 'draft' : entry.pr.state.toLowerCase();
   return [
-    `PR #${entry.pr.number}`,
     state,
     summarizeReviewRequests(entry.pr.reviewRequests),
     summarizeChecks(entry.pr.statusCheckRollup),
@@ -624,35 +766,145 @@ export function formatFooterStatus(entry: FoundCacheEntry): string {
   ].join(' · ');
 }
 
+function conciseStatusMessage(message: string): string {
+  return truncatePlainText(normalizeSpace(message), 96);
+}
+
+export function formatPrStatusErrorLine(message: string): string {
+  return `PR status error: ${conciseStatusMessage(message)}`;
+}
+
+function formatRefreshResultLine(result: RefreshResult): string | undefined {
+  if (result.entry?.kind === 'found') {
+    const line = formatPrStatusLine(result.entry);
+    if (result.outcome === 'stale-error') {
+      const causeMessage = cacheEntryMessage(result.cause) ?? result.message;
+      return `stale: refresh failed (${conciseStatusMessage(causeMessage)}) · ${line}`;
+    }
+    if (result.outcome === 'stale-refresh-in-progress') {
+      return `refreshing: using cached status · ${line}`;
+    }
+    if (result.outcome === 'cache-write-error') {
+      return `cache warning: ${conciseStatusMessage(result.message)} · ${line}`;
+    }
+    return line;
+  }
+
+  if (result.outcome === 'refresh-in-progress') {
+    return 'PR status refresh in progress…';
+  }
+  if (
+    result.outcome === 'error' ||
+    result.entry?.kind === 'error' ||
+    result.outcome === 'cache-write-error'
+  ) {
+    return formatPrStatusErrorLine(result.message);
+  }
+
+  return undefined;
+}
+
+function truncatePlainText(text: string, width: number): string {
+  if (width <= 0) return '';
+  if (text.length <= width) return text;
+  if (width === 1) return '…';
+  return `${text.slice(0, width - 1)}…`;
+}
+
+function fitStatusLine(text: string, width: number): string {
+  if (width <= 0) return '';
+  if (text.length <= width) return text;
+
+  const separator = ' · ';
+  const urlSeparatorIndex = Math.max(
+    text.lastIndexOf(`${separator}https://`),
+    text.lastIndexOf(`${separator}http://`),
+  );
+  if (urlSeparatorIndex >= 0) {
+    const url = text.slice(urlSeparatorIndex + separator.length);
+    if (url.length <= width) {
+      const prefixWidth = width - url.length - separator.length;
+      if (prefixWidth <= 0) return url;
+
+      const prefix = truncatePlainText(
+        text.slice(0, urlSeparatorIndex),
+        prefixWidth,
+      );
+      return `${prefix}${separator}${url}`;
+    }
+  }
+
+  return truncatePlainText(text, width);
+}
+
+export function rightAlignStatusLine(text: string, width: number): string {
+  const fitted = fitStatusLine(text, width);
+  return `${' '.repeat(Math.max(0, width - fitted.length))}${fitted}`;
+}
+
+function setPrStatusDisplay(
+  ctx: ExtensionContext,
+  text: string | undefined,
+): void {
+  if (!ctx.hasUI) return;
+
+  // Earlier builds used footer statuses. Clear that slot so the PR line now
+  // renders above pi's model/thinking footer instead of inside it.
+  ctx.ui.setStatus(DISPLAY_KEY, undefined);
+
+  if (!text) {
+    ctx.ui.setWidget(DISPLAY_KEY, undefined);
+    return;
+  }
+
+  ctx.ui.setWidget(
+    DISPLAY_KEY,
+    () => ({
+      invalidate() {},
+      render(width: number): string[] {
+        return [rightAlignStatusLine(text, width)];
+      },
+    }),
+    {placement: 'belowEditor'},
+  );
+}
+
 async function refreshCurrentStatus(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
-  options: {force?: boolean; notify?: boolean} = {},
+  options: {force?: boolean} = {},
 ): Promise<RefreshResult> {
-  const cacheDir = getCacheDir();
-  const target = await resolveCurrentTarget(pi, ctx.cwd, cacheDir);
+  try {
+    const cacheDir = getCacheDir();
+    const target = await resolveCurrentTarget(pi, ctx.cwd, cacheDir);
 
-  if (!target) {
-    if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, undefined);
-    return {message: 'No PR-capable git worktree detected.'};
+    if (!target) {
+      const result: RefreshResult = {
+        outcome: 'no-target',
+        severity: 'info',
+        message: 'No PR-capable git worktree detected.',
+      };
+      setPrStatusDisplay(ctx, formatRefreshResultLine(result));
+      return result;
+    }
+
+    const result = await getOrRefreshEntry(
+      pi,
+      target,
+      cacheDir,
+      Boolean(options.force),
+    );
+    setPrStatusDisplay(ctx, formatRefreshResultLine(result));
+    return result;
+  } catch (error) {
+    const result: RefreshResult = {
+      outcome: 'error',
+      severity: 'error',
+      message: `PR status refresh failed: ${messageFromError(error)}`,
+    };
+    setPrStatusDisplay(ctx, formatRefreshResultLine(result));
+    return result;
   }
-
-  const entry = await getOrRefreshEntry(
-    pi,
-    target,
-    cacheDir,
-    Boolean(options.force),
-  );
-  if (entry?.kind === 'found') {
-    if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, formatFooterStatus(entry));
-    return {entry, message: 'PR status refreshed.'};
-  }
-
-  if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, undefined);
-  return {
-    entry,
-    message: entry?.message ?? 'PR status refresh is already in progress.',
-  };
 }
 
 async function readGitHubRemotes(
@@ -785,6 +1037,105 @@ async function loadPullRequestByUrl(
   return pr;
 }
 
+async function validateExistingWorktreePath(
+  pi: ExtensionAPI,
+  worktreePath: string,
+  ref: PullRequestRef,
+): Promise<void> {
+  let stat;
+  try {
+    stat = await fs.stat(worktreePath);
+  } catch {
+    throw new Error(`Existing path disappeared: ${worktreePath}.`);
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(
+      `Existing PR worktree path is not a directory: ${worktreePath}.`,
+    );
+  }
+
+  const rootResult = await pi.exec('git', ['rev-parse', '--show-toplevel'], {
+    cwd: worktreePath,
+    timeout: 5_000,
+  });
+  if (rootResult.code !== 0) {
+    throw new Error(
+      `Existing PR worktree path is not a git checkout: ${worktreePath}.`,
+    );
+  }
+
+  const root = normalizeWorktreePath(normalizeSpace(rootResult.stdout));
+  if (root !== normalizeWorktreePath(worktreePath)) {
+    throw new Error(
+      `Existing PR worktree path resolves to ${root}, not ${worktreePath}.`,
+    );
+  }
+
+  const remote = pickRemote(await readGitHubRemotes(pi, worktreePath), ref);
+  if (!remote) {
+    throw new Error(
+      `Existing PR worktree path is not a checkout for ${ref.owner}/${ref.repo}: ${worktreePath}.`,
+    );
+  }
+
+  const expectedBranch = `pr-${ref.number}`;
+  const branchResult = await pi.exec('git', ['branch', '--show-current'], {
+    cwd: worktreePath,
+    timeout: 5_000,
+  });
+  const branch = normalizeSpace(branchResult.stdout);
+  if (branch !== expectedBranch) {
+    throw new Error(
+      `Existing PR worktree path is on ${
+        branch || 'detached HEAD'
+      }, expected ${expectedBranch}: ${worktreePath}.`,
+    );
+  }
+
+  const fetchResult = await pi.exec(
+    'git',
+    ['fetch', remote.name, `pull/${ref.number}/head`],
+    {cwd: worktreePath, timeout: 60_000},
+  );
+  if (fetchResult.code !== 0) {
+    throw new Error(
+      normalizeSpace(
+        fetchResult.stderr ||
+          fetchResult.stdout ||
+          'git fetch failed for existing PR worktree',
+      ),
+    );
+  }
+
+  const headResult = await pi.exec('git', ['rev-parse', 'HEAD'], {
+    cwd: worktreePath,
+    timeout: 5_000,
+  });
+  const fetchHeadResult = await pi.exec('git', ['rev-parse', 'FETCH_HEAD'], {
+    cwd: worktreePath,
+    timeout: 5_000,
+  });
+  const head = normalizeSpace(headResult.stdout);
+  const fetchHead = normalizeSpace(fetchHeadResult.stdout);
+  if (
+    headResult.code !== 0 ||
+    fetchHeadResult.code !== 0 ||
+    !head ||
+    !fetchHead
+  ) {
+    throw new Error(
+      `Could not verify existing PR worktree HEAD for ${worktreePath}.`,
+    );
+  }
+  if (head !== fetchHead) {
+    throw new Error(
+      `Existing PR worktree path is not at the latest PR ref for ${
+        ref.url
+      }: ${worktreePath}.`,
+    );
+  }
+}
+
 async function createPullRequestWorktree(
   pi: ExtensionAPI,
   cwd: string,
@@ -808,6 +1159,7 @@ async function createPullRequestWorktree(
   const pr = await loadPullRequestByUrl(pi, baseCheckout, ref);
 
   if (await pathExists(worktreePath)) {
+    await validateExistingWorktreePath(pi, worktreePath, ref);
     await ensureWorktreeMapping(cacheDir, worktreePath, ref);
     await cachePullRequest(cacheDir, ref, pr);
     return {created: false, worktreePath, pr};
@@ -862,20 +1214,10 @@ async function handlePrRefresh(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
 ): Promise<void> {
-  const result = await refreshCurrentStatus(pi, ctx, {
-    force: true,
-    notify: true,
-  });
+  const result = await refreshCurrentStatus(pi, ctx, {force: true});
   if (!ctx.hasUI) return;
 
-  if (result.entry?.kind === 'found') {
-    ctx.ui.notify('PR status refreshed.', 'info');
-  } else {
-    ctx.ui.notify(
-      result.message,
-      result.entry?.kind === 'error' ? 'error' : 'info',
-    );
-  }
+  ctx.ui.notify(result.message, result.severity);
 }
 
 async function handlePrWorktree(
@@ -901,11 +1243,17 @@ async function handlePrWorktree(
 }
 
 export default function prWorktreeStatus(pi: ExtensionAPI) {
-  let refreshTimer: NodeJS.Timeout | undefined;
+  const refreshTimers = new Map<string, NodeJS.Timeout>();
+
+  function clearRefreshTimer(sessionId: string): void {
+    const timer = refreshTimers.get(sessionId);
+    if (timer) clearInterval(timer);
+    refreshTimers.delete(sessionId);
+  }
 
   pi.registerCommand('pr-refresh', {
     description:
-      'Force-refresh the current worktree PR footer status using gh.',
+      'Force-refresh the current worktree PR status display using gh.',
     handler: async (_args, ctx) => {
       await handlePrRefresh(pi, ctx);
     },
@@ -922,16 +1270,19 @@ export default function prWorktreeStatus(pi: ExtensionAPI) {
   pi.on('session_start', (_event, ctx) => {
     if (!ctx.hasUI) return;
 
+    const sessionId = ctx.sessionManager.getSessionId();
+    clearRefreshTimer(sessionId);
+
     void refreshCurrentStatus(pi, ctx);
-    refreshTimer = setInterval(() => {
+    const refreshTimer = setInterval(() => {
       void refreshCurrentStatus(pi, ctx);
     }, REFRESH_INTERVAL_MS);
     refreshTimer.unref?.();
+    refreshTimers.set(sessionId, refreshTimer);
   });
 
   pi.on('session_shutdown', async (_event, ctx) => {
-    if (refreshTimer) clearInterval(refreshTimer);
-    refreshTimer = undefined;
-    if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, undefined);
+    clearRefreshTimer(ctx.sessionManager.getSessionId());
+    setPrStatusDisplay(ctx, undefined);
   });
 }
