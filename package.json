@@ -26,6 +26,7 @@
   "files": [
     "discord-notify",
     "polish-solution",
+    "pr-worktree-status",
     "rain-core",
     "raincatcher",
     "raindistiller",
@@ -40,6 +41,7 @@
     "extensions": [
       "./discord-notify/src/index.ts",
       "./polish-solution/src/index.ts",
+      "./pr-worktree-status/src/index.ts",
       "./raincatcher/src/index.ts",
       "./raindistiller/src/index.ts",
       "./rainman/src/index.ts",
@@ -72,6 +74,7 @@
   "workspaces": [
     "discord-notify",
     "polish-solution",
+    "pr-worktree-status",
     "rain-core",
     "raincatcher",
     "raindistiller",
