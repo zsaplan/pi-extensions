@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   abbreviateHome,
   buildSplitLine,
+  padEndToWidth,
   sanitizeFooterText,
   truncateStartToWidth,
 } from '../src/index.ts';
@@ -28,6 +29,13 @@ test('truncateStartToWidth preserves the session filename suffix', () => {
 
   assert.equal(visibleWidth(value), 19);
   assert.equal(value, '…session-file.jsonl');
+});
+
+test('padEndToWidth pads short ANSI-styled footer lines to terminal width', () => {
+  const value = padEndToWidth('\u001b[2mstatus\u001b[0m', 12);
+
+  assert.equal(visibleWidth(value), 12);
+  assert.match(value, / {6}$/);
 });
 
 test('buildSplitLine right-aligns the session path when both columns fit', () => {

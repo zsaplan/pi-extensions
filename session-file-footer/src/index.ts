@@ -69,6 +69,14 @@ export function truncateStartToWidth(text: string, width: number): string {
   return `${ellipsis}${suffix}`;
 }
 
+export function padEndToWidth(text: string, width: number): string {
+  if (width <= 0) return '';
+
+  const textWidth = visibleWidth(text);
+  if (textWidth > width) return truncateToWidth(text, width, '');
+  return `${text}${' '.repeat(width - textWidth)}`;
+}
+
 export function buildSplitLine(
   left: string,
   right: string | undefined,
@@ -78,7 +86,8 @@ export function buildSplitLine(
 
   const cleanLeft = sanitizeFooterText(left);
   const cleanRight = right ? sanitizeFooterText(right) : undefined;
-  if (!cleanRight) return truncateToWidth(cleanLeft, width, '...');
+  if (!cleanRight)
+    return padEndToWidth(truncateToWidth(cleanLeft, width, '...'), width);
 
   const leftWidth = visibleWidth(cleanLeft);
   const rightWidth = visibleWidth(cleanRight);
@@ -103,7 +112,10 @@ export function buildSplitLine(
     width - visibleWidth(truncatedLeft) - visibleWidth(truncatedRight),
   );
 
-  return `${truncatedLeft}${' '.repeat(gapWidth)}${truncatedRight}`;
+  return padEndToWidth(
+    `${truncatedLeft}${' '.repeat(gapWidth)}${truncatedRight}`,
+    width,
+  );
 }
 
 export function buildLocationLabel(
@@ -261,7 +273,10 @@ function renderStatsLine(
   }
 
   const remainder = statsLine.slice(statsLeft.length);
-  return theme.fg('dim', statsLeft) + theme.fg('dim', remainder);
+  return padEndToWidth(
+    theme.fg('dim', statsLeft) + theme.fg('dim', remainder),
+    width,
+  );
 }
 
 function renderStatusLine(
@@ -279,7 +294,10 @@ function renderStatusLine(
     .join(' ');
 
   if (!statusLine) return undefined;
-  return truncateToWidth(statusLine, width, theme.fg('dim', '...'));
+  return padEndToWidth(
+    truncateToWidth(statusLine, width, theme.fg('dim', '...')),
+    width,
+  );
 }
 
 function createFooterComponent(
