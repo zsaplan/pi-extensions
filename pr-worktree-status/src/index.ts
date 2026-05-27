@@ -1273,6 +1273,11 @@ export default function prWorktreeStatus(pi: ExtensionAPI) {
     const sessionId = ctx.sessionManager.getSessionId();
     clearRefreshTimer(sessionId);
 
+    // Reserve the below-editor PR row before the async git/GitHub probe
+    // completes. Without this, the footer can move down after the first paint
+    // and briefly interleave old footer rows with the new PR row in some
+    // terminals.
+    setPrStatusDisplay(ctx, 'PR status refresh in progress…');
     void refreshCurrentStatus(pi, ctx);
     const refreshTimer = setInterval(() => {
       void refreshCurrentStatus(pi, ctx);

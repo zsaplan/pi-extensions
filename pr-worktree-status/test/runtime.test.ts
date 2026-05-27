@@ -265,6 +265,11 @@ test('session cron schedules refreshes, uses cache, and clears on shutdown', asy
     assert.ok(sessionStart);
     sessionStart({}, ctx);
 
+    assert.equal(
+      renderWidget(widgetUpdates(updates).at(-1)!, 120).trimStart(),
+      'PR status refresh in progress…',
+    );
+
     await waitFor(
       () =>
         runtime.getGhCallCount() === 1 && widgetUpdates(updates).length >= 1,
@@ -351,7 +356,7 @@ test('session refresh timers are isolated per session', async t => {
     assert.equal(intervals.all[1].cleared, false);
 
     await waitFor(
-      () => widgetUpdates(updates).length >= 2,
+      () => runtime.getGhCallCount() >= 1 && widgetUpdates(updates).length >= 4,
       'session refreshes did not finish',
     );
 
