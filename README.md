@@ -6,6 +6,7 @@ Personal repo-backed source for pi extensions.
 
 - `discord-notify/` → `@zsaplan/pi-discord-notify`
 - `polish-solution/` → `@zsaplan/pi-polish-solution`
+- `pr-worktree-status/` → `@zsaplan/pi-pr-worktree-status`
 - `rain-core/` → shared KB/file utilities used by Rain extensions
 - `raincatcher/` → `@zsaplan/pi-raincatcher`
 - `raindistiller/` → `@zsaplan/pi-raindistiller`
@@ -31,6 +32,10 @@ pi-extensions/
 │   ├── skills/
 │   │   └── polish-solution/
 │   │       └── SKILL.md
+│   └── src/
+├── pr-worktree-status/
+│   ├── package.json
+│   ├── README.md
 │   └── src/
 ├── rain-core/
 │   ├── CODEBASE.md
@@ -70,6 +75,7 @@ pi -e .
 # (run `npm install` at the repo root first so local package dependencies are wired up)
 pi -e ./discord-notify
 pi -e ./polish-solution
+pi -e ./pr-worktree-status
 pi -e ./raincatcher
 pi -e ./raindistiller
 pi -e ./rainman
@@ -107,6 +113,7 @@ Useful targeted commands:
 npm run verify --workspace response-review
 npm run verify --workspace rainman
 npm run verify --workspace session-file-footer
+npm run verify --workspace pr-worktree-status
 ```
 
 Notes:
@@ -129,6 +136,7 @@ Repo-native additions after the initial import:
 
 - `discord-notify/`
 - `polish-solution/`
+- `pr-worktree-status/`
 - `rain-core/`
 - `raindistiller/`
 - `response-review/`

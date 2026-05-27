@@ -10,6 +10,8 @@
     "discord-notify/test/**/*.ts",
     "polish-solution/src/**/*.ts",
     "polish-solution/test/**/*.ts",
+    "pr-worktree-status/src/**/*.ts",
+    "pr-worktree-status/test/**/*.test.ts",
     "response-review/src/**/*.ts",
     "response-review/test/**/*.test.ts",
     "session-file-footer/src/**/*.ts",

@@ -1,0 +1,45 @@
+{
+  "name": "@zsaplan/pi-pr-worktree-status",
+  "version": "0.1.0",
+  "description": "Pi extension that tracks the GitHub PR associated with the current worktree and displays it in the footer.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zsaplan/pi-extensions.git",
+    "directory": "pr-worktree-status"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "github",
+    "pull-request",
+    "worktree",
+    "footer"
+  ],
+  "files": [
+    "src",
+    "DESIGN.md",
+    "README.md",
+    "package.json"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.70.0"
+  },
+  "scripts": {
+    "lint": "gts lint",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.ts",
+    "verify": "npm run lint && npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "gts": "^7.0.0",
+    "typescript": "^5.9.3"
+  }
+}
