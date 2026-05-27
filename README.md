@@ -11,6 +11,7 @@ Personal repo-backed source for pi extensions.
 - `raindistiller/` → `@zsaplan/pi-raindistiller`
 - `rainman/` → `@zsaplan/pi-rainman`
 - `response-review/` → `@zsaplan/pi-response-review`
+- `session-file-footer/` → `@zsaplan/pi-session-file-footer`
 
 Extension packages keep their own `package.json` and `pi` manifest. `rain-core/` is the shared deterministic utility layer; model policy and runtime orchestration stay in the extension packages.
 
@@ -53,6 +54,10 @@ pi-extensions/
 │   ├── README.md
 │   ├── src/
 │   └── web/
+├── session-file-footer/
+│   ├── package.json
+│   ├── README.md
+│   └── src/
 └── README.md
 ```
 
@@ -69,6 +74,7 @@ pi -e ./raincatcher
 pi -e ./raindistiller
 pi -e ./rainman
 pi -e ./response-review
+pi -e ./session-file-footer
 
 # install the whole repo-backed package
 pi install .
@@ -100,6 +106,7 @@ Useful targeted commands:
 ```bash
 npm run verify --workspace response-review
 npm run verify --workspace rainman
+npm run verify --workspace session-file-footer
 ```
 
 Notes:
@@ -125,3 +132,4 @@ Repo-native additions after the initial import:
 - `rain-core/`
 - `raindistiller/`
 - `response-review/`
+- `session-file-footer/`
