@@ -1,7 +1,7 @@
 {
   "name": "@zsaplan/pi-pr-worktree-status",
   "version": "0.1.0",
-  "description": "Pi extension that tracks the GitHub PR associated with the current worktree and displays it in the footer.",
+  "description": "Pi extension that tracks the GitHub PR associated with the current worktree and displays it above the footer.",
   "type": "module",
   "license": "UNLICENSED",
   "repository": {
