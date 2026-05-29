@@ -498,6 +498,43 @@ test('forced refresh makes stale cached status explicit when gh fails', async t 
   });
 });
 
+test('/pr-worktree reports polish-review start command', async t => {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-pr-status-'));
+  const cacheDir = path.join(tempDir, 'cache');
+  const repoRoot = path.join(tempDir, 'pi-extensions');
+  const worktreePath = path.join(tempDir, 'pi-extensions-pr-30');
+  await fs.mkdir(repoRoot, {recursive: true});
+
+  const oldCacheDir = process.env.PI_PR_STATUS_CACHE_DIR;
+  process.env.PI_PR_STATUS_CACHE_DIR = cacheDir;
+  t.after(async () => {
+    if (oldCacheDir === undefined) delete process.env.PI_PR_STATUS_CACHE_DIR;
+    else process.env.PI_PR_STATUS_CACHE_DIR = oldCacheDir;
+    await fs.rm(tempDir, {recursive: true, force: true});
+  });
+
+  const runtime = createRuntime(repoRoot, undefined, (args, cwd) => {
+    if (cwd === repoRoot && args[0] === 'fetch') return ok('');
+    if (cwd === repoRoot && args[0] === 'worktree') return ok('');
+    return undefined;
+  });
+  const updates: UiUpdate[] = [];
+  const ctx = createContext(repoRoot, updates);
+  prWorktreeStatus(runtime.pi);
+
+  const command = runtime.commands.get('pr-worktree');
+  assert.ok(command);
+  await command(PR_URL, ctx);
+
+  const notification = notifyUpdates(updates).at(-1);
+  assert.ok(notification);
+  assert.equal(notification.level, 'info');
+  assert.equal(
+    notification.message,
+    `Created ${worktreePath}. Start it with: cd '${worktreePath}' && pi "/skill:pr-polish-review ${PR_URL}"`,
+  );
+});
+
 test('/pr-worktree rejects an existing non-matching sibling path', async t => {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pi-pr-status-'));
   const cacheDir = path.join(tempDir, 'cache');

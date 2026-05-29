@@ -1210,6 +1210,10 @@ function shellQuote(value: string): string {
   return `${quote}${value.split(quote).join(`${quote}\\${quote}${quote}`)}${quote}`;
 }
 
+function shellDoubleQuote(value: string): string {
+  return `"${value.replace(/["\\$`]/g, match => `\\${match}`)}"`;
+}
+
 async function handlePrRefresh(
   pi: ExtensionAPI,
   ctx: ExtensionCommandContext,
@@ -1228,7 +1232,10 @@ async function handlePrWorktree(
   try {
     const result = await createPullRequestWorktree(pi, ctx.cwd, args.trim());
     const verb = result.created ? 'Created' : 'Using existing';
-    const nextCommand = `cd ${shellQuote(result.worktreePath)} && pi`;
+    const reviewPrompt = `/skill:pr-polish-review ${result.pr.url}`;
+    const nextCommand = `cd ${shellQuote(
+      result.worktreePath,
+    )} && pi ${shellDoubleQuote(reviewPrompt)}`;
     if (ctx.hasUI) {
       ctx.ui.notify(
         `${verb} ${result.worktreePath}. Start it with: ${nextCommand}`,
