@@ -7,7 +7,7 @@ import {
   sanitizeFooterText,
   truncateStartToWidth,
 } from '../src/index.ts';
-import {visibleWidth} from '@mariozechner/pi-tui';
+import {visibleWidth} from '@earendil-works/pi-tui';
 
 test('sanitizeFooterText removes control whitespace for single-line footer output', () => {
   assert.equal(sanitizeFooterText(' one\n\ttwo\r  three '), 'one two three');

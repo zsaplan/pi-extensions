@@ -2,8 +2,8 @@ import {spawn} from 'node:child_process';
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
-} from '@mariozechner/pi-coding-agent';
-import {Key, matchesKey, truncateToWidth} from '@mariozechner/pi-tui';
+} from '@earendil-works/pi-coding-agent';
+import {Key, matchesKey, truncateToWidth} from '@earendil-works/pi-tui';
 import {open, type GlimpseWindow} from 'glimpseui';
 import {
   isCancelPayload,

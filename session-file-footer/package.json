@@ -1,6 +1,6 @@
 {
   "name": "@zsaplan/pi-session-file-footer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pi extension that shows the active JSONL session file in the footer beside the working directory.",
   "type": "module",
   "license": "UNLICENSED",
@@ -27,8 +27,8 @@
     ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.70.0",
-    "@mariozechner/pi-tui": "^0.70.0"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "scripts": {
     "lint": "gts lint",

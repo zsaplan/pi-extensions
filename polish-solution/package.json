@@ -1,6 +1,6 @@
 {
   "name": "@zsaplan/pi-polish-solution",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pi extension and skill for iterative adversarial review of the current git worktree.",
   "type": "module",
   "license": "UNLICENSED",
@@ -33,8 +33,8 @@
     ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-ai": "^0.70.0",
-    "@mariozechner/pi-coding-agent": "^0.70.0"
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
   },
   "scripts": {
     "lint": "gts lint",
