@@ -28,7 +28,7 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
   type ToolDefinition,
-} from '@mariozechner/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent';
 import {Type, type Static} from 'typebox';
 import {
   buildReviewerToolAccessRecord,

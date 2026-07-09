@@ -13,7 +13,7 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
   type ToolDefinition,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import {
   KB_ROOT_ENV_VAR,
   STRUCTURED_FACT_SYNTAX_GUIDANCE,

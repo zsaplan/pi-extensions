@@ -1,6 +1,6 @@
 {
   "name": "@zsaplan/pi-pr-worktree-status",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pi extension that tracks the GitHub PR associated with the current worktree and displays it above the footer.",
   "type": "module",
   "license": "UNLICENSED",
@@ -29,7 +29,7 @@
     ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.70.0"
+    "@earendil-works/pi-coding-agent": "*"
   },
   "scripts": {
     "lint": "gts lint",

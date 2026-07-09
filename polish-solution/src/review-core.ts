@@ -1,5 +1,5 @@
 import path from 'node:path';
-import {formatSize} from '@mariozechner/pi-coding-agent';
+import {formatSize} from '@earendil-works/pi-coding-agent';
 
 export type ReviewStatus = 'needs-attention' | 'approve';
 export type ReviewConfidence = 'low' | 'medium' | 'high';

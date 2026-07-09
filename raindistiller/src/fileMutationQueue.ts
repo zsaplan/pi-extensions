@@ -29,7 +29,7 @@ function createLocalQueueImpl(): FileMutationQueueImpl {
 
 async function loadImpl(): Promise<FileMutationQueueImpl> {
   if (!loadedImplPromise) {
-    loadedImplPromise = import("@mariozechner/pi-coding-agent")
+    loadedImplPromise = import("@earendil-works/pi-coding-agent")
       .then((module) => {
         if (typeof module.withFileMutationQueue !== "function") {
           throw new Error("withFileMutationQueue is unavailable");
