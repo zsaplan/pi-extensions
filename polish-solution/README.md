@@ -16,13 +16,15 @@ A pi extension and skill for iterative multi-category review of the current git 
 
 ## Tool
 
-- `polish_solution_review(baseRef?)`
+- `polish_solution_review(baseRef?, largeDiff?)`
 
 The tool:
 
 - defaults to `origin/main` when available, otherwise `main`
 - diffs against the merge-base with the current worktree, not the base tip directly
 - includes uncommitted tracked changes and non-ignored untracked files
+- accepts diffs up to 6,000 lines or 150 KiB by default
+- supports an explicit `largeDiff: true` opt-in for diffs up to 10,000 lines or 250 KiB; this costs more, takes longer, and may reduce review quality through context dilution
 - respects `.gitignore`
 - uses the currently active model
 - runs the five review categories sequentially in fixed order: `adversarial`, `simplify`, `standardize`, `prune`, `dry`
