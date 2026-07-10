@@ -268,9 +268,14 @@ const DEFAULT_THINKING_LEVEL = 'low' as const;
 const MAX_REPAIR_ATTEMPTS = 3;
 const MAX_AGENT_EXECUTION_MS = 900_000;
 const MAX_REVIEWER_STALL_MS = 90_000;
-const REVIEW_DIFF_BUDGET_MULTIPLIER = 3;
-const MAX_DIFF_BYTES = DEFAULT_MAX_BYTES * REVIEW_DIFF_BUDGET_MULTIPLIER;
-const MAX_DIFF_LINES = DEFAULT_MAX_LINES * REVIEW_DIFF_BUDGET_MULTIPLIER;
+const DEFAULT_DIFF_BUDGET: OutputBudget = {
+  maxBytes: DEFAULT_MAX_BYTES * 3,
+  maxLines: DEFAULT_MAX_LINES * 3,
+};
+const LARGE_DIFF_BUDGET: OutputBudget = {
+  maxBytes: 250 * 1024,
+  maxLines: 10_000,
+};
 const MAX_READ_FILE_BYTES = DEFAULT_MAX_BYTES * 4;
 const MAX_READ_FILE_LINES = DEFAULT_MAX_LINES * 10;
 const MAX_GREP_BYTES = DEFAULT_MAX_BYTES;
@@ -2147,6 +2152,7 @@ async function readFileFromSnapshot(
 async function buildReviewScope(
   cwd: string,
   requestedBaseRef: string | undefined,
+  diffBudget: OutputBudget,
   signal?: AbortSignal,
   progress?: ReturnType<typeof createProgressReporter>,
 ): Promise<ReviewScope> {
@@ -2197,10 +2203,7 @@ async function buildReviewScope(
     mergeBase,
     signal,
     undefined,
-    {
-      maxBytes: MAX_DIFF_BYTES,
-      maxLines: MAX_DIFF_LINES,
-    },
+    diffBudget,
   );
   if (!liveScopedDiff.diff) {
     throw new Error(
@@ -2272,10 +2275,7 @@ async function buildReviewScope(
         mergeBase,
         signal,
         undefined,
-        {
-          maxBytes: MAX_DIFF_BYTES,
-          maxLines: MAX_DIFF_LINES,
-        },
+        diffBudget,
         snapshot.snapshotTree,
         snapshot.snapshotEnv,
       );
@@ -2336,6 +2336,7 @@ async function buildReviewScope(
         diff: scopedDiff.diff,
         diffBytes: scopedDiff.diffBytes,
         diffLines: scopedDiff.diffLines,
+        diffBudget,
         changedFiles: scopedDiff.changedFiles,
         untrackedFiles: uniqueSorted(untrackedFiles),
         changedFileDetails: buildChangedFileDetails(scopedDiff.diff),
@@ -2481,8 +2482,8 @@ function createReviewerTools(
                   ? 'narrow further or inspect files directly with read_file'
                   : 'call git_diff with path to narrow the diff',
                 {
-                  maxBytes: MAX_DIFF_BYTES,
-                  maxLines: MAX_DIFF_LINES,
+                  maxBytes: scope.diffBudget.maxBytes,
+                  maxLines: scope.diffBudget.maxLines,
                 },
               ),
             },
@@ -3187,6 +3188,7 @@ export default function polishSolution(pi: ExtensionAPI): void {
     promptGuidelines: [
       'Use this tool when you want an iterative multi-category review suite over the current change set.',
       'It defaults to origin/main when available, otherwise main, and it reviews the full current worktree state including non-ignored untracked files.',
+      'Use largeDiff only when the user explicitly opts in after being warned that larger reviews cost more, take longer, and may reduce review quality through context dilution.',
       'Rerun it after each substantial remediation pass until it approves or you need user direction.',
     ],
     parameters: REVIEW_TOOL_PARAMS,
@@ -3202,6 +3204,9 @@ export default function polishSolution(pi: ExtensionAPI): void {
       const thinkingLevel = pi.getThinkingLevel();
       const runId = randomUUID();
       const requestedBaseRef = normalizeBaseRef(params.baseRef);
+      const diffBudget = params.largeDiff
+        ? LARGE_DIFF_BUDGET
+        : DEFAULT_DIFF_BUDGET;
       const artifactWriter = await createReviewArtifactWriter({
         toolCallId,
         runId,
@@ -3257,6 +3262,7 @@ export default function polishSolution(pi: ExtensionAPI): void {
         scope = await buildReviewScope(
           currentCwd,
           params.baseRef,
+          diffBudget,
           signal,
           progress,
         );
