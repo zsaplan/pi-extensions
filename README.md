@@ -5,6 +5,7 @@ Personal repo-backed source for pi extensions.
 ## Packages
 
 - `discord-notify/` → `@zsaplan/pi-discord-notify`
+- `jira/` → `@zsaplan/pi-jira`
 - `polish-solution/` → `@zsaplan/pi-polish-solution`
 - `pr-worktree-status/` → `@zsaplan/pi-pr-worktree-status`
 - `rain-core/` → shared KB/file utilities used by Rain extensions
@@ -23,6 +24,10 @@ Repo-wide design lives in [`DESIGN.md`](./DESIGN.md). Each extension directory a
 ```text
 pi-extensions/
 ├── discord-notify/
+│   ├── package.json
+│   ├── README.md
+│   └── src/
+├── jira/
 │   ├── package.json
 │   ├── README.md
 │   └── src/
@@ -74,6 +79,7 @@ pi -e .
 # or load individual source packages from this repo checkout
 # (run `npm install` at the repo root first so local package dependencies are wired up)
 pi -e ./discord-notify
+pi -e ./jira
 pi -e ./polish-solution
 pi -e ./pr-worktree-status
 pi -e ./raincatcher
@@ -110,6 +116,7 @@ npm run verify
 Useful targeted commands:
 
 ```bash
+npm run verify --workspace jira
 npm run verify --workspace response-review
 npm run verify --workspace rainman
 npm run verify --workspace session-file-footer
@@ -135,6 +142,7 @@ Initial package sources were copied from:
 Repo-native additions after the initial import:
 
 - `discord-notify/`
+- `jira/`
 - `polish-solution/`
 - `pr-worktree-status/`
 - `rain-core/`

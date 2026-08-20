@@ -25,6 +25,7 @@
   },
   "files": [
     "discord-notify",
+    "jira",
     "polish-solution",
     "pr-worktree-status",
     "rain-core",
@@ -40,6 +41,7 @@
   "pi": {
     "extensions": [
       "./discord-notify/src/index.ts",
+      "./jira/src/index.ts",
       "./polish-solution/src/index.ts",
       "./pr-worktree-status/src/index.ts",
       "./raincatcher/src/index.ts",
@@ -73,6 +75,7 @@
   },
   "workspaces": [
     "discord-notify",
+    "jira",
     "polish-solution",
     "pr-worktree-status",
     "rain-core",
