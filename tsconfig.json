@@ -8,6 +8,8 @@
   "include": [
     "discord-notify/src/**/*.ts",
     "discord-notify/test/**/*.ts",
+    "jira/src/**/*.ts",
+    "jira/test/**/*.ts",
     "polish-solution/src/**/*.ts",
     "polish-solution/test/**/*.ts",
     "pr-worktree-status/src/**/*.ts",

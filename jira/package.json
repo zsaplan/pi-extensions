@@ -1,0 +1,32 @@
+{
+  "name": "@zsaplan/pi-jira",
+  "version": "0.1.0",
+  "description": "Pi extension for reading Jira and writing issues and comments with the Jira Cloud API.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zsaplan/pi-extensions.git",
+    "directory": "jira"
+  },
+  "keywords": ["pi-package", "pi-extension", "jira", "atlassian"],
+  "files": ["src", "DESIGN.md", "README.md", "package.json"],
+  "pi": {"extensions": ["./src/index.ts"]},
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "scripts": {
+    "lint": "gts lint",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.ts",
+    "verify": "npm run lint && npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.80.5",
+    "@types/node": "^24.12.2",
+    "gts": "^7.0.0",
+    "typebox": "^1.1.24",
+    "typescript": "^5.9.3"
+  }
+}
