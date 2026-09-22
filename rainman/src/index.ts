@@ -5,6 +5,7 @@ import path from "node:path";
 import { Type, type Static } from "typebox";
 import {
   DefaultResourceLoader,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   createAgentSession,
@@ -2496,7 +2497,7 @@ async function runVerification(
   question: string,
   kbRoot: string,
   model: any,
-  modelRegistry: any,
+  modelRegistry: ExtensionContext["modelRegistry"],
   thinkingLevel: any,
   signal?: AbortSignal,
   progress?: ReturnType<typeof createLookupProgressReporter>,
@@ -2544,6 +2545,12 @@ async function runVerification(
     { includeContent: false },
   );
 
+  const modelRuntime = await ModelRuntime.create({ signal });
+  const nativeProvider = modelRegistry.getRegisteredNativeProvider(model.provider);
+  if (nativeProvider) modelRuntime.registerNativeProvider(nativeProvider);
+  const providerConfig = modelRegistry.getRegisteredProviderConfig(model.provider);
+  if (providerConfig) modelRuntime.registerProvider(model.provider, providerConfig);
+
   const createLookupSession = async () => {
     const { session } = await createAgentSession({
       cwd: kbRoot,
@@ -2552,12 +2559,13 @@ async function runVerification(
       // Keep the isolated lookup agent's reasoning disabled for speed.
       // Rainman returns validated citations; the caller can do any higher-level reasoning.
       thinkingLevel,
-      modelRegistry,
+      modelRuntime,
       noTools: "builtin",
       customTools: lookupTools,
       resourceLoader,
       sessionManager: SessionManager.inMemory(),
       settingsManager: SettingsManager.inMemory({
+        cacheWarming: "off",
         compaction: { enabled: false },
         retry: { enabled: true, maxRetries: MAX_REPAIR_ATTEMPTS },
       }),

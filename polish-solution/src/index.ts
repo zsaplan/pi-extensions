@@ -17,6 +17,7 @@ import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
   DefaultResourceLoader,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   createAgentSession,
@@ -2759,12 +2760,24 @@ async function runReviewerSession(
       return !availableToolNames.includes(toolName);
     });
   };
+  // Preserve the selected provider's extension overrides in isolated sessions.
+  const modelRuntime = await ModelRuntime.create({signal});
+  const nativeProvider = modelRegistry.getRegisteredNativeProvider(
+    model.provider,
+  );
+  if (nativeProvider) modelRuntime.registerNativeProvider(nativeProvider);
+  const providerConfig = modelRegistry.getRegisteredProviderConfig(
+    model.provider,
+  );
+  if (providerConfig)
+    modelRuntime.registerProvider(model.provider, providerConfig);
+
   const createReviewerSession = async () => {
     const {session} = await createAgentSession({
       cwd: scope.repoRoot,
       agentDir: getAgentDir(),
       model,
-      modelRegistry,
+      modelRuntime,
       // Keep the isolated reviewer at low reasoning effort; higher settings
       // make it more likely to roleplay tool syntax instead of invoking tools.
       thinkingLevel: DEFAULT_THINKING_LEVEL,
@@ -2773,6 +2786,7 @@ async function runReviewerSession(
       resourceLoader,
       sessionManager: SessionManager.inMemory(),
       settingsManager: SettingsManager.inMemory({
+        cacheWarming: 'off',
         compaction: {enabled: false},
         retry: {enabled: true, maxRetries: MAX_REPAIR_ATTEMPTS},
       }),
