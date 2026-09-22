@@ -21,6 +21,8 @@
     "verify:packages": "npm run verify --workspaces --if-present",
     "prepare:packages": "npm run prepare --workspaces --if-present",
     "verify": "npm run lint && npm run verify:packages",
+    "verify:upgrade": "node scripts/verify-pi-upgrade.mjs",
+    "verify:live": "node scripts/verify-pi-live.mjs",
     "prepare": "npm run prepare:packages"
   },
   "files": [
@@ -65,9 +67,9 @@
     "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.80.5",
-    "@earendil-works/pi-coding-agent": "^0.80.5",
-    "@earendil-works/pi-tui": "^0.80.5",
+    "@earendil-works/pi-ai": "0.87.1",
+    "@earendil-works/pi-coding-agent": "0.87.1",
+    "@earendil-works/pi-tui": "0.87.1",
     "@types/node": "^24.12.2",
     "gts": "^7.0.0",
     "knip": "^5.88.1",
