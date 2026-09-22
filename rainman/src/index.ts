@@ -2545,7 +2545,6 @@ async function runVerification(
     { includeContent: false },
   );
 
-  // Preserve extension provider overrides when constructing the SDK runtime.
   const modelRuntime = await ModelRuntime.create({ signal });
   const nativeProvider = modelRegistry.getRegisteredNativeProvider(model.provider);
   if (nativeProvider) modelRuntime.registerNativeProvider(nativeProvider);

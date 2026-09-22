@@ -2760,7 +2760,6 @@ async function runReviewerSession(
       return !availableToolNames.includes(toolName);
     });
   };
-  // The SDK requires ModelRuntime, not the extension-facing registry facade.
   // Preserve the selected provider's extension overrides in isolated sessions.
   const modelRuntime = await ModelRuntime.create({signal});
   const nativeProvider = modelRegistry.getRegisteredNativeProvider(

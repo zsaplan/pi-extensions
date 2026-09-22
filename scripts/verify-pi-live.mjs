@@ -1,5 +1,4 @@
-// Actual CLI + configured provider acceptance. Makes paid/subscription model calls.
-// Only synthetic inputs and explicitly selected local/read-only tools are exposed.
+// Live CLI acceptance; makes real subscription/paid model requests.
 import assert from 'node:assert/strict';
 import {execFileSync, spawn} from 'node:child_process';
 import console from 'node:console';
@@ -11,6 +10,7 @@ import path from 'node:path';
 import process from 'node:process';
 import {clearTimeout, setTimeout} from 'node:timers';
 import {fileURLToPath} from 'node:url';
+import {prepareLiveCredentials, readLiveConfig} from './live-config.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 assert.ok(
@@ -21,15 +21,7 @@ const quick = process.argv.includes('--quick');
 const pi = path.join(root, 'node_modules/.bin/pi');
 const personal =
   process.env.PI_CODING_AGENT_DIR ?? path.join(homedir(), '.pi/agent');
-const settings = JSON.parse(
-  await readFile(path.join(personal, 'settings.json'), 'utf8'),
-);
-const provider = process.env.PI_LIVE_PROVIDER ?? settings.defaultProvider;
-const model = process.env.PI_LIVE_MODEL ?? settings.defaultModel;
-assert.ok(
-  provider && model,
-  'Set PI_LIVE_PROVIDER and PI_LIVE_MODEL or configure Pi defaults',
-);
+const {provider, model} = await readLiveConfig(personal, process.env);
 await mkdir(path.join(root, 'tmp'), {recursive: true});
 const output = await mkdtemp(path.join(root, 'tmp/pi-live-'));
 await chmod(output, 0o700);
@@ -56,21 +48,6 @@ process.on('SIGTERM', interrupt);
 
 try {
   for (const dir of [agent, cwd, kb]) await mkdir(dir);
-  // A temporary copy of ONLY the selected provider credential; never in artifacts.
-  // Provider API-key environment variables remain available to the child.
-  try {
-    const auth = JSON.parse(
-      await readFile(path.join(personal, 'auth.json'), 'utf8'),
-    );
-    if (auth[provider])
-      await writeFile(
-        path.join(agent, 'auth.json'),
-        JSON.stringify({[provider]: auth[provider]}),
-        {mode: 0o600},
-      );
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error;
-  }
   await writeFile(
     path.join(agent, 'settings.json'),
     JSON.stringify({
@@ -97,7 +74,15 @@ try {
     '0.87.1',
     'Use the pinned test CLI, not the daily installation',
   );
-  const git = (...args) => execFileSync('git', args, {cwd, stdio: 'pipe'});
+  const credentialDeadline = await prepareLiveCredentials({
+    pi,
+    personal,
+    agent,
+    provider,
+    env: process.env,
+  });
+  const git = (...args) =>
+    execFileSync('git', args, {cwd, stdio: 'pipe', timeout: 10000});
   git('init', '-b', 'main');
   await writeFile(
     path.join(cwd, 'README.md'),
@@ -140,6 +125,10 @@ try {
 
   async function run(name, args, prompt, expectedTool) {
     assert.equal(interrupted, false, 'Run interrupted');
+    assert.ok(
+      Date.now() + 183000 < credentialDeadline,
+      'Exported OAuth token has insufficient remaining lifetime; rerun the test.',
+    );
     const stage = {
       name,
       status: 'running',

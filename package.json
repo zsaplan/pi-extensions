@@ -20,9 +20,10 @@
     "test": "npm run test --workspaces --if-present",
     "verify:packages": "npm run verify --workspaces --if-present",
     "prepare:packages": "npm run prepare --workspaces --if-present",
-    "verify": "npm run lint && npm run verify:packages",
+    "verify": "npm run lint && npm run verify:packages && npm run verify:live-config",
     "verify:upgrade": "node scripts/verify-pi-upgrade.mjs",
     "verify:live": "node scripts/verify-pi-live.mjs",
+    "verify:live-config": "eslint scripts/live-config.mjs scripts/live-config.test.mjs scripts/verify-pi-live.mjs && node --test scripts/live-config.test.mjs",
     "prepare": "npm run prepare:packages"
   },
   "files": [

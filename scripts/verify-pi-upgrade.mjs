@@ -1,5 +1,4 @@
-// Offline upgrade acceptance: real Pi SDK, extension loader, HTTP transport,
-// child reviewers, tool execution, and restored session context. No paid calls.
+// Offline SDK acceptance through a localhost provider.
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import console from 'node:console';
