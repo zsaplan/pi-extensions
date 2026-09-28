@@ -6,6 +6,8 @@
     "allowImportingTsExtensions": true
   },
   "include": [
+    "codex-research/src/**/*.ts",
+    "codex-research/test/**/*.test.ts",
     "discord-notify/src/**/*.ts",
     "discord-notify/test/**/*.ts",
     "jira/src/**/*.ts",

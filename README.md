@@ -4,6 +4,7 @@ Personal repo-backed source for pi extensions.
 
 ## Packages
 
+- `codex-research/` → `@zsaplan/pi-codex-research`
 - `discord-notify/` → `@zsaplan/pi-discord-notify`
 - `jira/` → `@zsaplan/pi-jira`
 - `polish-solution/` → `@zsaplan/pi-polish-solution`
@@ -23,6 +24,10 @@ Repo-wide design lives in [`DESIGN.md`](./DESIGN.md). Each extension directory a
 
 ```text
 pi-extensions/
+├── codex-research/
+│   ├── package.json
+│   ├── README.md
+│   └── src/
 ├── discord-notify/
 │   ├── package.json
 │   ├── README.md
@@ -78,6 +83,7 @@ pi -e .
 
 # or load individual source packages from this repo checkout
 # (run `npm install` at the repo root first so local package dependencies are wired up)
+pi -e ./codex-research
 pi -e ./discord-notify
 pi -e ./jira
 pi -e ./polish-solution
@@ -116,6 +122,7 @@ npm run verify
 Useful targeted commands:
 
 ```bash
+npm run verify --workspace codex-research
 npm run verify --workspace jira
 npm run verify --workspace response-review
 npm run verify --workspace rainman
@@ -141,6 +148,7 @@ Initial package sources were copied from:
 
 Repo-native additions after the initial import:
 
+- `codex-research/`
 - `discord-notify/`
 - `jira/`
 - `polish-solution/`
