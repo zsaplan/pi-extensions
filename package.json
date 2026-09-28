@@ -27,6 +27,7 @@
     "prepare": "npm run prepare:packages"
   },
   "files": [
+    "codex-research",
     "discord-notify",
     "jira",
     "polish-solution",
@@ -43,6 +44,7 @@
   ],
   "pi": {
     "extensions": [
+      "./codex-research/src/index.ts",
       "./discord-notify/src/index.ts",
       "./jira/src/index.ts",
       "./polish-solution/src/index.ts",
@@ -77,6 +79,7 @@
     "typescript": "^5.9.3"
   },
   "workspaces": [
+    "codex-research",
     "discord-notify",
     "jira",
     "polish-solution",
