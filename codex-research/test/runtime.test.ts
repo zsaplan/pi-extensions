@@ -275,7 +275,7 @@ test('concurrent research calls use distinct workspaces, threads, and artifacts'
 
 test('large reports are truncated only in model-facing output', async () => {
   await withArtifactRoot(async () => {
-    const fullReport = `${'x'.repeat(31_000)}FULL_REPORT_END`;
+    const fullReport = `${'"'.repeat(31_000)}FULL_REPORT_END`;
     const {tool} = createRuntime({reports: [fullReport]});
     const result = await tool.execute(
       'call-large',
@@ -285,7 +285,8 @@ test('large reports are truncated only in model-facing output', async () => {
 
     assert.equal(result.details.report, fullReport);
     assert.doesNotMatch(result.content[0].text, /FULL_REPORT_END/);
-    assert.match(result.content[0].text, /Report truncated in tool output/);
+    assert.match(result.content[0].text, /(?:truncated|content omitted)/);
+    assert.ok(result.content[0].text.length <= 50_000);
     const artifact = await fs.readFile(result.details.artifactPath, 'utf8');
     assert.match(artifact, /FULL_REPORT_END/);
   });

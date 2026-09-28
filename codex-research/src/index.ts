@@ -9,8 +9,12 @@ const MAX_EXECUTION_MS = 30 * 60 * 1000;
 const COMPATIBILITY_CHECK_TIMEOUT_MS = 10 * 1000;
 const MINIMUM_CODEX_VERSION = [0, 158, 0] as const;
 const PROGRESS_INTERVAL_MS = 30 * 1000;
-const MAX_MODEL_REPORT_CHARS = 30_000;
-const MAX_MODEL_SOURCES = 50;
+const MAX_RESEARCH_SOURCES = 50;
+const MAX_RESEARCH_UNCERTAINTIES = 20;
+const MAX_MODEL_RESULT_CHARS = 50_000;
+const MAX_MODEL_REPORT_CHARS = 25_000;
+const MAX_MODEL_SOURCES = 8;
+const MAX_MODEL_UNCERTAINTIES = 8;
 const THREAD_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -130,20 +134,21 @@ function outputSchema(): object {
       report: {type: 'string'},
       sources: {
         type: 'array',
-        maxItems: MAX_MODEL_SOURCES,
+        maxItems: MAX_RESEARCH_SOURCES,
         items: {
           type: 'object',
           additionalProperties: false,
           required: ['title', 'url'],
           properties: {
-            title: {type: 'string'},
-            url: {type: 'string'},
+            title: {type: 'string', maxLength: 500},
+            url: {type: 'string', maxLength: 4_000},
           },
         },
       },
       uncertainties: {
         type: 'array',
-        items: {type: 'string'},
+        maxItems: MAX_RESEARCH_UNCERTAINTIES,
+        items: {type: 'string', maxLength: 2_000},
       },
     },
   };
@@ -248,9 +253,9 @@ function validateDocument(value: unknown): ResearchDocument {
     );
   }
 
-  if (candidate.sources.length > MAX_MODEL_SOURCES) {
+  if (candidate.sources.length > MAX_RESEARCH_SOURCES) {
     throw new Error(
-      `Codex returned more than ${MAX_MODEL_SOURCES} research sources.`,
+      `Codex returned more than ${MAX_RESEARCH_SOURCES} research sources.`,
     );
   }
 
@@ -258,7 +263,9 @@ function validateDocument(value: unknown): ResearchDocument {
     if (
       !source ||
       typeof source.title !== 'string' ||
-      typeof source.url !== 'string'
+      source.title.length > 500 ||
+      typeof source.url !== 'string' ||
+      source.url.length > 4_000
     ) {
       throw new Error('Codex returned an invalid research source.');
     }
@@ -268,10 +275,15 @@ function validateDocument(value: unknown): ResearchDocument {
         'Codex returned a source with an unsupported URL scheme.',
       );
     }
-    return {title: source.title, url: source.url};
+    return {title: source.title, url: parsed.toString()};
   });
 
-  if (!candidate.uncertainties.every(item => typeof item === 'string')) {
+  if (
+    candidate.uncertainties.length > MAX_RESEARCH_UNCERTAINTIES ||
+    !candidate.uncertainties.every(
+      item => typeof item === 'string' && item.length <= 2_000,
+    )
+  ) {
     throw new Error('Codex returned an invalid uncertainty entry.');
   }
 
@@ -404,25 +416,50 @@ export async function runCodexResearch(options: {
   }
 }
 
+function cleanModelText(text: string, maxLength: number): string {
+  return Array.from(text, character => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 31 || (codePoint >= 127 && codePoint <= 159)
+      ? ' '
+      : character;
+  })
+    .join('')
+    .slice(0, maxLength);
+}
+
 function modelFacingResult(result: ResearchResult): string {
-  const report =
-    result.report.length <= MAX_MODEL_REPORT_CHARS
-      ? result.report
-      : `${result.report.slice(0, MAX_MODEL_REPORT_CHARS)}\n\n[Report truncated in tool output. Read the full artifact at ${result.artifactPath}.]`;
-  return JSON.stringify(
-    {
-      status: 'completed',
-      threadId: result.threadId,
-      continued: result.continued,
-      codexVersion: result.codexVersion,
-      report,
-      sources: result.sources,
-      uncertainties: result.uncertainties,
-      artifactPath: result.artifactPath,
-    },
-    null,
-    2,
-  );
+  const reportTruncated = result.report.length > MAX_MODEL_REPORT_CHARS;
+  const report = reportTruncated
+    ? `${result.report.slice(0, MAX_MODEL_REPORT_CHARS)}\n\n[Report truncated in tool output. Read the full artifact at ${result.artifactPath}.]`
+    : result.report;
+  const payload = {
+    status: 'completed',
+    threadId: result.threadId,
+    continued: result.continued,
+    codexVersion: result.codexVersion,
+    report,
+    sources: result.sources.slice(0, MAX_MODEL_SOURCES).map(source => ({
+      title: cleanModelText(source.title, 200),
+      url: cleanModelText(source.url, 4_000),
+    })),
+    sourcesOmitted: Math.max(0, result.sources.length - MAX_MODEL_SOURCES),
+    uncertainties: result.uncertainties
+      .slice(0, MAX_MODEL_UNCERTAINTIES)
+      .map(item => cleanModelText(item, 500)),
+    uncertaintiesOmitted: Math.max(
+      0,
+      result.uncertainties.length - MAX_MODEL_UNCERTAINTIES,
+    ),
+    artifactPath: result.artifactPath,
+  };
+
+  let serialized = JSON.stringify(payload, null, 2);
+  if (serialized.length > MAX_MODEL_RESULT_CHARS) {
+    const overflow = serialized.length - MAX_MODEL_RESULT_CHARS;
+    payload.report = `${payload.report.slice(0, Math.max(0, payload.report.length - overflow - 200))}\n\n[Additional content omitted. Read the full artifact at ${result.artifactPath}.]`;
+    serialized = JSON.stringify(payload, null, 2);
+  }
+  return serialized;
 }
 
 export default function codexResearchExtension(pi: ExtensionAPI) {
