@@ -19,6 +19,17 @@ A later invocation can supply that thread ID to run `codex exec resume`, preserv
 - No shell interpolation; command arguments are passed directly to Pi's process executor.
 - Web content is explicitly treated as untrusted prompt content.
 - Full outputs are local artifacts; model-facing output is size-bounded.
+- A cached version preflight rejects Codex CLI releases older than the validated 0.158.0 contract before research begins.
+- Concurrent calls use independent temporary workspaces and artifacts; cancellation is forwarded to the owning subprocess.
+
+## Deferred hardening
+
+The following checks are intentionally shelved rather than treated as release blockers:
+
+- adversarial web-page prompt-injection acceptance testing
+- specialized operator guidance for missing or expired Codex login state
+
+Generic subprocess failures remain bounded and credential-redacted.
 
 ## Known limitations
 

@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -5,6 +6,8 @@ import type {ExtensionAPI} from '@earendil-works/pi-coding-agent';
 import {Type, type Static} from 'typebox';
 
 const MAX_EXECUTION_MS = 30 * 60 * 1000;
+const COMPATIBILITY_CHECK_TIMEOUT_MS = 10 * 1000;
+const MINIMUM_CODEX_VERSION = [0, 158, 0] as const;
 const PROGRESS_INTERVAL_MS = 30 * 1000;
 const MAX_MODEL_REPORT_CHARS = 30_000;
 const MAX_MODEL_SOURCES = 50;
@@ -48,6 +51,7 @@ export interface ResearchDocument {
 export interface ResearchResult extends ResearchDocument {
   threadId: string;
   artifactPath: string;
+  codexVersion: string;
   continued: boolean;
 }
 
@@ -70,6 +74,52 @@ export type CodexExec = (
   args: string[],
   options: {signal?: AbortSignal; timeout?: number; cwd?: string},
 ) => Promise<ExecResult>;
+
+export function parseCodexVersion(output: string): [number, number, number] {
+  const match = output.match(/(?:^|\s)(\d+)\.(\d+)\.(\d+)(?:\s|$|-)/);
+  if (!match) {
+    throw new Error(
+      `Could not parse the Codex CLI version from: ${redactDiagnostic(output).slice(0, 200)}`,
+    );
+  }
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function compareVersions(
+  left: readonly number[],
+  right: readonly number[],
+): number {
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
+export async function checkCodexCompatibility(options: {
+  exec: CodexExec;
+  executable: string;
+  signal?: AbortSignal;
+}): Promise<string> {
+  const result = await options.exec(options.executable, ['--version'], {
+    signal: options.signal,
+    timeout: COMPATIBILITY_CHECK_TIMEOUT_MS,
+  });
+  if (result.code !== 0 || result.killed) {
+    throw new Error(
+      `Unable to verify Codex CLI compatibility.\n${safeDiagnostic(result)}`,
+    );
+  }
+
+  const versionText = result.stdout.trim();
+  const version = parseCodexVersion(versionText);
+  if (compareVersions(version, MINIMUM_CODEX_VERSION) < 0) {
+    throw new Error(
+      `Unsupported Codex CLI ${version.join('.')}; codex_web_research requires ${MINIMUM_CODEX_VERSION.join('.')} or newer. Upgrade Codex before running research.`,
+    );
+  }
+  return versionText;
+}
 
 function outputSchema(): object {
   return {
@@ -269,12 +319,14 @@ function getArtifactRoot(env: NodeJS.ProcessEnv): string {
 }
 
 function artifactName(threadId: string): string {
-  return `${new Date().toISOString().replaceAll(':', '-')}_${threadId}.json`;
+  const invocationId = randomUUID().slice(0, 8);
+  return `${new Date().toISOString().replaceAll(':', '-')}_${threadId}_${invocationId}.json`;
 }
 
 export async function runCodexResearch(options: {
   params: ResearchParams;
   exec: CodexExec;
+  codexVersion: string;
   signal?: AbortSignal;
   env?: NodeJS.ProcessEnv;
 }): Promise<ResearchResult> {
@@ -329,6 +381,7 @@ export async function runCodexResearch(options: {
       ...document,
       threadId,
       artifactPath,
+      codexVersion: options.codexVersion,
       continued: Boolean(params.threadId),
     };
     await fs.writeFile(
@@ -361,6 +414,7 @@ function modelFacingResult(result: ResearchResult): string {
       status: 'completed',
       threadId: result.threadId,
       continued: result.continued,
+      codexVersion: result.codexVersion,
       report,
       sources: result.sources,
       uncertainties: result.uncertainties,
@@ -372,6 +426,24 @@ function modelFacingResult(result: ResearchResult): string {
 }
 
 export default function codexResearchExtension(pi: ExtensionAPI) {
+  let compatibleVersion: {executable: string; version: string} | undefined;
+
+  const getCodexVersion = async (
+    executable: string,
+    signal?: AbortSignal,
+  ): Promise<string> => {
+    if (compatibleVersion?.executable === executable) {
+      return compatibleVersion.version;
+    }
+    const version = await checkCodexCompatibility({
+      exec: (command, args, execOptions) => pi.exec(command, args, execOptions),
+      executable,
+      signal,
+    });
+    compatibleVersion = {executable, version};
+    return version;
+  };
+
   pi.registerTool({
     name: 'codex_web_research',
     label: 'Codex Web Research',
@@ -405,10 +477,13 @@ export default function codexResearchExtension(pi: ExtensionAPI) {
       progressTimer.unref();
 
       try {
+        const executable = process.env.PI_CODEX_RESEARCH_BIN || 'codex';
+        const codexVersion = await getCodexVersion(executable, signal);
         const result = await runCodexResearch({
           params,
           exec: (command, args, execOptions) =>
             pi.exec(command, args, execOptions),
+          codexVersion,
           signal,
         });
         return {

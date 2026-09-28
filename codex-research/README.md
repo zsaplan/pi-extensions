@@ -24,7 +24,7 @@ codex login
 codex login status
 ```
 
-The login may use a supported ChatGPT plan. The extension does not read or copy Codex credentials.
+The login may use a supported ChatGPT plan. The extension does not read or copy Codex credentials. The current extension contract requires Codex CLI 0.158.0 or newer and checks the installed version before starting the first research call.
 
 ## Isolation and context boundaries
 
@@ -35,6 +35,8 @@ Each invocation:
 - selects the read-only sandbox and disables approval prompts
 - ignores Codex user configuration and exec-policy rules
 - instructs the researcher not to inspect the local filesystem or execute shell commands
+- checks CLI compatibility before spending a research turn
+- forwards cancellation to the Codex subprocess and removes its temporary workspace
 - stores the full structured result locally, but only returns a bounded result to Pi
 
 Research artifacts default to `~/.pi/agent/codex-research`. Override the location with `PI_CODEX_RESEARCH_DIR`. Override the executable for testing or a nonstandard installation with `PI_CODEX_RESEARCH_BIN`.
