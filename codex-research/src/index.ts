@@ -65,6 +65,7 @@ export interface ResearchResult extends ResearchDocument {
   threadId: string;
   artifactPath: string;
   codexVersion: string;
+  depth: 'quick' | 'thorough';
   reasoningEffort: 'low' | 'medium' | 'high';
   continued: boolean;
 }
@@ -408,6 +409,7 @@ export async function runCodexResearch(options: {
       threadId,
       artifactPath,
       codexVersion: options.codexVersion,
+      depth: params.depth ?? 'thorough',
       reasoningEffort: params.reasoningEffort ?? 'medium',
       continued: Boolean(params.threadId),
     };
@@ -417,7 +419,6 @@ export async function runCodexResearch(options: {
         {
           ...researchResult,
           question,
-          depth: params.depth ?? 'thorough',
           completedAt: new Date().toISOString(),
         },
         null,
@@ -452,6 +453,7 @@ function modelFacingResult(result: ResearchResult): string {
     threadId: result.threadId,
     continued: result.continued,
     codexVersion: result.codexVersion,
+    depth: result.depth,
     reasoningEffort: result.reasoningEffort,
     report,
     sources: result.sources.slice(0, MAX_MODEL_SOURCES).map(source => ({

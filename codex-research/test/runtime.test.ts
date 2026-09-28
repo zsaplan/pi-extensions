@@ -26,6 +26,7 @@ type RegisteredTool = {
       threadId: string;
       artifactPath: string;
       codexVersion: string;
+      depth: string;
       reasoningEffort: string;
       continued: boolean;
       report: string;
@@ -192,6 +193,7 @@ test('registered tool checks compatibility, runs isolated search, and persists i
       assert.match(researchCall.args.at(-1) ?? '', /native live web_search/);
       assert.equal(result.details.threadId, THREAD_ID);
       assert.equal(result.details.codexVersion, 'codex-cli 0.158.0');
+      assert.equal(result.details.depth, 'quick');
       assert.equal(result.details.reasoningEffort, 'medium');
       assert.equal(result.details.continued, false);
       assert.match(result.content[0].text, /A cited result/);
@@ -228,6 +230,7 @@ test('thread ID resumes the exact Codex research conversation', async () => {
     assert.equal(researchCall.args[6], 'model_reasoning_effort="high"');
     assert.equal(researchCall.args[10], 'resume');
     assert.equal(researchCall.args.at(-2), THREAD_ID);
+    assert.equal(result.details.depth, 'thorough');
     assert.equal(result.details.reasoningEffort, 'high');
     assert.equal(result.details.continued, true);
   });
