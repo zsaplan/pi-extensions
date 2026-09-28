@@ -30,6 +30,15 @@ const RESEARCH_SCHEMA = Type.Object({
         'quick favors a concise primary-source check; thorough performs broader comparison and reconciliation. Defaults to thorough.',
     }),
   ),
+  reasoningEffort: Type.Optional(
+    Type.Union(
+      [Type.Literal('low'), Type.Literal('medium'), Type.Literal('high')],
+      {
+        description:
+          'Codex model reasoning effort. Defaults to medium independently of research depth.',
+      },
+    ),
+  ),
   threadId: Type.Optional(
     Type.String({
       description:
@@ -56,6 +65,7 @@ export interface ResearchResult extends ResearchDocument {
   threadId: string;
   artifactPath: string;
   codexVersion: string;
+  reasoningEffort: 'low' | 'medium' | 'high';
   continued: boolean;
 }
 
@@ -181,6 +191,7 @@ export function buildCodexArgs(options: {
   schemaPath: string;
   outputPath: string;
   prompt: string;
+  reasoningEffort: 'low' | 'medium' | 'high';
   threadId?: string;
 }): string[] {
   const args = [
@@ -189,6 +200,8 @@ export function buildCodexArgs(options: {
     'read-only',
     '-a',
     'never',
+    '-c',
+    `model_reasoning_effort="${options.reasoningEffort}"`,
     '-C',
     options.workDir,
     'exec',
@@ -370,6 +383,7 @@ export async function runCodexResearch(options: {
         schemaPath,
         outputPath,
         prompt,
+        reasoningEffort: params.reasoningEffort ?? 'medium',
         threadId: params.threadId,
       }),
       {signal, timeout: MAX_EXECUTION_MS, cwd: workDir},
@@ -394,6 +408,7 @@ export async function runCodexResearch(options: {
       threadId,
       artifactPath,
       codexVersion: options.codexVersion,
+      reasoningEffort: params.reasoningEffort ?? 'medium',
       continued: Boolean(params.threadId),
     };
     await fs.writeFile(
@@ -437,6 +452,7 @@ function modelFacingResult(result: ResearchResult): string {
     threadId: result.threadId,
     continued: result.continued,
     codexVersion: result.codexVersion,
+    reasoningEffort: result.reasoningEffort,
     report,
     sources: result.sources.slice(0, MAX_MODEL_SOURCES).map(source => ({
       title: cleanModelText(source.title, 200),

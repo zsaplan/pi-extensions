@@ -8,7 +8,7 @@ Provide Pi with an explicit, bounded web-research capability backed by the offic
 
 `codex_web_research` starts one non-interactive `codex exec` turn with native live search enabled. Codex writes a schema-constrained final document and emits JSONL lifecycle events. The extension extracts the thread ID from those events, validates the final document, persists the complete result, and returns a bounded copy to Pi.
 
-A later invocation can supply that thread ID to run `codex exec resume`, preserving the research conversation without keeping a subprocess alive.
+A later invocation can supply that thread ID to run `codex exec resume`, preserving the research conversation without keeping a subprocess alive. Research depth controls breadth through the prompt, while a separate low/medium/high option explicitly sets Codex model reasoning effort; their defaults are thorough and medium.
 
 ## Boundaries
 

@@ -9,7 +9,8 @@ Pi extension that delegates public-web research to the locally installed and aut
 Inputs:
 
 - `question` — the research task
-- `depth` — `quick` or `thorough` (default)
+- `depth` — `quick` or `thorough` (default); controls research breadth
+- `reasoningEffort` — `low`, `medium` (default), or `high`; controls model deliberation independently of depth
 - `threadId` — optional Codex thread UUID returned by an earlier call
 
 The tool returns a report, sources, uncertainties, an artifact path, and a thread ID. Pass that thread ID in a later call to continue the same research conversation.

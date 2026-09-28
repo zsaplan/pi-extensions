@@ -13,7 +13,12 @@ const DEFAULT_REPORT = 'A cited result from [OpenAI](https://openai.com).';
 type RegisteredTool = {
   execute: (
     id: string,
-    params: {question: string; depth?: string; threadId?: string},
+    params: {
+      question: string;
+      depth?: string;
+      reasoningEffort?: string;
+      threadId?: string;
+    },
     signal: AbortSignal,
   ) => Promise<{
     content: Array<{type: string; text: string}>;
@@ -21,6 +26,7 @@ type RegisteredTool = {
       threadId: string;
       artifactPath: string;
       codexVersion: string;
+      reasoningEffort: string;
       continued: boolean;
       report: string;
     };
@@ -169,12 +175,14 @@ test('registered tool checks compatibility, runs isolated search, and persists i
       assert.deepEqual(calls[0].args, ['--version']);
       const researchCall = researchCalls(calls)[0];
       assert.equal(researchCall.command, '/test/bin/codex');
-      assert.deepEqual(researchCall.args.slice(0, 8), [
+      assert.deepEqual(researchCall.args.slice(0, 10), [
         '--search',
         '-s',
         'read-only',
         '-a',
         'never',
+        '-c',
+        'model_reasoning_effort="medium"',
         '-C',
         researchCall.options.cwd,
         'exec',
@@ -184,6 +192,7 @@ test('registered tool checks compatibility, runs isolated search, and persists i
       assert.match(researchCall.args.at(-1) ?? '', /native live web_search/);
       assert.equal(result.details.threadId, THREAD_ID);
       assert.equal(result.details.codexVersion, 'codex-cli 0.158.0');
+      assert.equal(result.details.reasoningEffort, 'medium');
       assert.equal(result.details.continued, false);
       assert.match(result.content[0].text, /A cited result/);
       assert.match(result.content[0].text, new RegExp(THREAD_ID));
@@ -207,13 +216,19 @@ test('thread ID resumes the exact Codex research conversation', async () => {
     const {tool, calls} = createRuntime();
     const result = await tool.execute(
       'call-2',
-      {question: 'Compare the alternatives.', threadId: THREAD_ID},
+      {
+        question: 'Compare the alternatives.',
+        reasoningEffort: 'high',
+        threadId: THREAD_ID,
+      },
       new AbortController().signal,
     );
 
     const researchCall = researchCalls(calls)[0];
-    assert.equal(researchCall.args[8], 'resume');
+    assert.equal(researchCall.args[6], 'model_reasoning_effort="high"');
+    assert.equal(researchCall.args[10], 'resume');
     assert.equal(researchCall.args.at(-2), THREAD_ID);
+    assert.equal(result.details.reasoningEffort, 'high');
     assert.equal(result.details.continued, true);
   });
 });
