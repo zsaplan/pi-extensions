@@ -139,6 +139,38 @@ Notes:
 - `response-review/web/app.js` is an untracked runtime artifact that is rebuilt on demand if missing or stale.
 - `response-review` owns its own web build, artifact checks, and `knip` validation inside `response-review/package.json`.
 
+## Pi 0.99.2 upgrade validation
+
+Pi development dependencies and the live CLI acceptance check target **0.99.2**.
+Host-provided packages, including `typebox`, belong in `peerDependencies` with
+`"*"` ranges; development dependencies support local checks without bundling them.
+
+Run from the repository root:
+
+```bash
+npm run verify
+npm run verify:upgrade
+npm run verify:live  # makes real subscription/paid model requests
+```
+
+Preparation results (Node 26.9.0, Pi 0.99.2):
+
+- [x] Repository lint, typechecks, package checks, and 158 tests passed.
+- [x] Offline acceptance passed: five isolated reviewers, 18 local HTTP requests,
+  and restored session context (`tmp/pi-upgrade-smoke.json`).
+- [x] Live CLI acceptance passed with `openai-codex/gpt-5.6-sol`: file read,
+  persisted-session resume, five review categories, and Rainman citation.
+  Evidence: `tmp/pi-live-qe0icB/report.json`; reruns retain new `tmp/pi-live-*` reports.
+- [x] Isolated CLI startup loaded the 13 configured packages with no stderr warnings.
+- [x] The separately maintained Slack worktree passed its 107 tests and package checks.
+- [ ] Merge preparation changes and refresh dependencies in the active checkout.
+- [ ] Upgrade Homebrew Pi, restart, and verify the installed executable and normal session.
+- [ ] Check image results and interactive approval dialogs without external writes.
+- [ ] Check compaction and branching on a copied session.
+
+Preparation does not change the daily installation, provider selection, or enable
+MCP/codemode. Interactive acceptance remains separate from automated checks.
+
 ## Source of truth for this initial import
 
 Initial package sources were copied from:
