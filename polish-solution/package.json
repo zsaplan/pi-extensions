@@ -34,7 +34,8 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
   },
   "scripts": {
     "lint": "gts lint",
@@ -45,9 +46,7 @@
   "devDependencies": {
     "@types/node": "^24.12.2",
     "gts": "^7.0.0",
+    "typebox": "^1.1.24",
     "typescript": "^5.9.3"
-  },
-  "dependencies": {
-    "typebox": "^1.1.24"
   }
 }
