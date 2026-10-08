@@ -1,0 +1,38 @@
+{
+  "name": "@zsaplan/pi-profile-subagent",
+  "version": "0.1.0",
+  "description": "Narrow, profile-defined Pi subagents with explicit tools and isolated context.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "keywords": [
+    "pi-package",
+    "pi-extension"
+  ],
+  "files": [
+    "src",
+    "profiles",
+    "benchmark",
+    "README.md",
+    "DESIGN.md",
+    "DELEGATION.md",
+    "RELEASE.md",
+    "RESEARCH.md",
+    "ORCHESTRATION.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "scripts": {
+    "lint": "gts lint",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.ts",
+    "verify": "npm run lint && npm run typecheck && npm run test"
+  }
+}

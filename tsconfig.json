@@ -14,6 +14,8 @@
     "jira/test/**/*.ts",
     "polish-solution/src/**/*.ts",
     "polish-solution/test/**/*.ts",
+    "profile-subagent/src/**/*.ts",
+    "profile-subagent/test/**/*.ts",
     "pr-worktree-status/src/**/*.ts",
     "pr-worktree-status/test/**/*.test.ts",
     "response-review/src/**/*.ts",
@@ -32,6 +34,7 @@
     "rainman/**",
     "response-review/web/**/*.js",
     "polish-solution/tmp/**",
+    "profile-subagent/tmp/**",
     "response-review/tmp/**",
     "src/**",
     "tmp/**"

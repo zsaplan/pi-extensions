@@ -31,6 +31,7 @@
     "discord-notify",
     "jira",
     "polish-solution",
+    "profile-subagent",
     "pr-worktree-status",
     "rain-core",
     "raincatcher",
@@ -40,7 +41,8 @@
     "session-file-footer",
     "DESIGN.md",
     "README.md",
-    "package.json"
+    "package.json",
+    "!**/tmp/**"
   ],
   "pi": {
     "extensions": [
@@ -48,6 +50,7 @@
       "./discord-notify/src/index.ts",
       "./jira/src/index.ts",
       "./polish-solution/src/index.ts",
+      "./profile-subagent/src/index.ts",
       "./pr-worktree-status/src/index.ts",
       "./raincatcher/src/index.ts",
       "./raindistiller/src/index.ts",
@@ -90,6 +93,7 @@
     "raindistiller",
     "rainman",
     "response-review",
-    "session-file-footer"
+    "session-file-footer",
+    "profile-subagent"
   ]
 }
