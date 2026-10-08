@@ -11,3 +11,9 @@
 - `response-review` owns its own web build, artifact checks, and `knip` validation inside `response-review/package.json`.
 - Use `npm run fix` from the repo root to apply gts formatting across the repo-root lint surface and then fan out workspace prepare hooks.
 - Before committing or opening a PR, run `npm run verify` from the repo root. For package-focused iterations, run the relevant package-local `npm run verify --workspace <package-dir>` first.
+
+## OpenSpec pilot
+
+- OpenSpec currently covers only the `profile-subagent` discovery increment. See [the active proposal](openspec/changes/search-trusted-specialists/proposal.md) and [acceptance tasks](openspec/changes/search-trusted-specialists/tasks.md).
+- Keep existing `profile-subagent/DESIGN.md` and `RESEARCH.md` as baseline/research references; do not treat proposed specs or completed planning artifacts as implemented or verified behavior.
+- Preserve unchecked acceptance work and execution evidence in the change. Do not sync/archive proposed behavior before its implementation and acceptance checks pass.

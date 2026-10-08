@@ -1,0 +1,9 @@
+schema: spec-driven
+
+context: |
+  This is an npm-workspaces repository of Pi extensions written in TypeScript.
+  The OpenSpec pilot covers only profile-subagent task-based specialist discovery.
+  Read AGENTS.md for repository checks. Existing baseline and research are in
+  profile-subagent/DESIGN.md and profile-subagent/RESEARCH.md; reference rather
+  than duplicate them. OpenSpec is development tooling, not a runtime dependency.
+  Proposed behavior belongs in changes until implementation and acceptance finish.
