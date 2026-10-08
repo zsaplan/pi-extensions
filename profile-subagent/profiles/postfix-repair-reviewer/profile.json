@@ -1,0 +1,22 @@
+{
+  "id": "postfix-repair-reviewer",
+  "description": "Independently challenge one proposed postfix repair package; never execute or approve it.",
+  "tags": ["postfix", "repair", "review", "independent", "SQL", "package", "challenge", "proposal"],
+  "agents": "AGENTS.md",
+  "skills": [
+    "skills/review-repair/SKILL.md"
+  ],
+  "builtinTools": [
+    "read",
+    "grep",
+    "find",
+    "ls"
+  ],
+  "parentTools": [
+    "bc_site_db_search_saved_queries",
+    "bc_site_db_run_saved_query",
+    "bc_site_db_query"
+  ],
+  "maxTurns": 20,
+  "timeoutSeconds": 600
+}

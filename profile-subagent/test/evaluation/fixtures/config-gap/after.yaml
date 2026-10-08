@@ -1,0 +1,15 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: example
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: app
+          image: app:v1
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi

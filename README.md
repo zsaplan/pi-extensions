@@ -8,6 +8,7 @@ Personal repo-backed source for pi extensions.
 - `discord-notify/` → `@zsaplan/pi-discord-notify`
 - `jira/` → `@zsaplan/pi-jira`
 - `polish-solution/` → `@zsaplan/pi-polish-solution`
+- `profile-subagent/` → `@zsaplan/pi-profile-subagent` — narrow, profile-defined delegation
 - `pr-worktree-status/` → `@zsaplan/pi-pr-worktree-status`
 - `rain-core/` → shared KB/file utilities used by Rain extensions
 - `raincatcher/` → `@zsaplan/pi-raincatcher`
@@ -42,6 +43,10 @@ pi-extensions/
 │   ├── skills/
 │   │   └── polish-solution/
 │   │       └── SKILL.md
+│   └── src/
+├── profile-subagent/
+│   ├── package.json
+│   ├── profiles/
 │   └── src/
 ├── pr-worktree-status/
 │   ├── package.json
@@ -87,6 +92,7 @@ pi -e ./codex-research
 pi -e ./discord-notify
 pi -e ./jira
 pi -e ./polish-solution
+pi -e ./profile-subagent
 pi -e ./pr-worktree-status
 pi -e ./raincatcher
 pi -e ./raindistiller
@@ -98,7 +104,7 @@ pi -e ./session-file-footer
 pi install .
 ```
 
-Note: `response-review/` has a runtime dependency on `glimpseui`, so direct source loading (`pi -e ./response-review`) needs dependencies installed first. Running `npm install` at the repo root is the simplest option; `pi install .` also handles package installs for you.
+Note: `response-review/` has a runtime dependency on `glimpseui`, so direct source loading (`pi -e ./response-review`) needs dependencies installed first. Running `npm install` at the repo root is the simplest option. For a local source, `pi install .` records the path; it does not install that directory's dependencies. If extensions are already installed individually, add only the new individual package rather than also loading the root package. See [specialist installation and rollback](profile-subagent/RELEASE.md).
 
 ## Development workflow
 
@@ -128,6 +134,7 @@ npm run verify --workspace response-review
 npm run verify --workspace rainman
 npm run verify --workspace session-file-footer
 npm run verify --workspace pr-worktree-status
+npm run verify --workspace profile-subagent
 ```
 
 Notes:
