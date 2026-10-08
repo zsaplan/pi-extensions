@@ -11,7 +11,7 @@ The runtime has tested authority, authentication, isolation, cancellation, concu
 - Validated with **Pi 0.99.2 / Node 26.10.0 on macOS**. Other platforms/Pi versions have not been validated against these SDK and nested-accounting APIs.
 - Children require **`openai-codex/gpt-6.1-sol`, medium thinking** and working credentials for that provider. There is no model fallback. The parent may use a different model/provider.
 - All five profiles require callable **`read`, `grep`, `find`, `ls`**. Stock Pi enables only `read`, `bash`, `edit`, `write`; installing this extension alone does not enable the other three tools.
-- The two file-only profiles work without BriteCore integrations. Postfix profiles additionally require the three approved `bc_site_db_*` tools listed in [README.md](README.md#tools). Missing tools make those profiles unavailable; do not enable broader substitutes.
+- The two file-only profiles work without BriteCore integrations. Postfix profiles additionally require the three approved `bc_site_db_*` tools listed in [README.md](README.md#tools-and-profiles). Missing tools make those profiles unavailable; do not enable broader substitutes.
 - Codemode is optional. Direct calls work without it. Its three-child limit is per loaded extension/Pi process, not a machine-wide budget.
 - The catalog is bundled and reviewed with the code. No operator/project profile directory, child-local codemode or recursive delegation is enabled.
 

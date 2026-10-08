@@ -1,4 +1,3 @@
-// One queue per loaded extension, shared by direct and nested invocations.
 export const maxConcurrentRuns = 3;
 
 export class RunQueue {

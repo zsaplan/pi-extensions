@@ -14,9 +14,7 @@ import test from 'node:test';
 import type {Message} from '@earendil-works/pi-ai';
 import {parentDelegationGuidance} from '../src/guidance.ts';
 
-// Failure cases are recorded before implementation in ORCHESTRATION.md.
-// Transport/DB responses are scripted; CLI, QuickJS, hooks, queue, SDK, and
-// artifact persistence are real. No production credentials or network needed.
+// Real CLI/QuickJS execution with scripted model and DB transport.
 const pkg = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repo = dirname(pkg);
 const out = join(pkg, 'tmp/e2e');

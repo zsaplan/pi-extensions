@@ -1,4 +1,3 @@
-// Model guidance only: never launches work, expands authority or changes limits.
 export const parentDelegationGuidance = [
   'Delegation is optional. Handle simple bounded checks directly when child setup would outweigh useful work.',
   'For substantial work sharing a target, source and evidence, prefer one combined assignment if the trusted role permits that scope and its budget fits. Never widen a role or its limits to combine work.',

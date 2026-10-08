@@ -12,9 +12,8 @@ import {
 
 export default function (pi: ExtensionAPI) {
   const runs = new RunQueue();
-  // Codemode may return as soon as its script aborts, before cancelled child
-  // calls finish. Drain our descendants before the outer result is persisted,
-  // so Pi's own nested-call recorder includes their final status and usage.
+  // Codemode can finish before cancelled children; drain descendants before
+  // Pi snapshots their final status and usage.
   const pending = new Map<string, {done: Promise<void>; finish: () => void}>();
   pi.on('tool_execution_start', event => {
     if (event.toolName !== 'profile_subagent_run' || !event.parentToolCallId)

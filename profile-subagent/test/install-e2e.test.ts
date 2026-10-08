@@ -6,11 +6,6 @@ import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 
-// Release failure cases: missing packed resources, accidental dependence on the
-// source checkout's node_modules, disabled default tools, unusable rollback,
-// and root-package inclusion of gitignored private evidence.
-// Exercise the actual packed package and Pi settings/loader; transport alone is
-// scripted. Nothing installs into the user's real agent directory.
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = dirname(packageRoot);
 const cli = join(
@@ -71,8 +66,7 @@ test(
       );
       await writeFile(join(privateFixture, 'evidence.json'), 'PRIVATE_FIXTURE');
       const rootPack = JSON.parse(
-        // A clean physical dependency tree takes longer to inspect than the
-        // development checkout's links. Keep this local pack operation offline.
+        // Packing a clean dependency tree can exceed the normal command timeout.
         await command(
           'root-pack',
           'npm',

@@ -78,6 +78,8 @@ Private `input.json`, `messages.json`, `result.md`, and `result.json` are saved 
 
 ## Verification
 
+Development checks require `python3` for the context-extractor tests and `tar` for the package-install test, in addition to Node/npm. These are test/analysis prerequisites, not dependencies of the running extension.
+
 From the repository root:
 
 ```bash

@@ -8,7 +8,6 @@ import test from 'node:test';
 
 const pkg = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-// Failure cases are recorded in benchmark/README.md before implementation.
 test('parent context extractor CLI E2E', async t => {
   const root = join(pkg, 'tmp/e2e');
   await mkdir(root, {recursive: true});
