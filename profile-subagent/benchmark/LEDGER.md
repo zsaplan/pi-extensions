@@ -1,0 +1,43 @@
+# Hypotheses and experiments
+
+Record the claim **before** testing. Execution success, answer quality, usefulness and rollout approval are separate decisions. Preserve negative/inconclusive results; a changed claim or intervention gets a new entry, not a rewritten victory condition. Raw sessions, operational targets and credentials never belong in this public ledger.
+
+Status vocabulary: **proposed**, **supported within tested scope**, **not supported**, **inconclusive**, **parked**. Supported never means universally true. Historical entries below are retrospective summaries, not invented preregistration.
+
+## Hypotheses
+
+| ID | Claim and success criterion | Experiments | Result and decision |
+|---|---|---|---|
+| H001 | Trusted-profile discovery can select suitable narrow roles and abstain on ambiguous/unsupported work, while preserving evidence gaps. Use frozen retrieval/quality criteria. | E001 | Supported within the synthetic corpus. Keep explicit roles, deterministic discovery and human-reviewed quality. Not proof of live SQL or general correctness. |
+| H002 | More children, especially parallel children, improve investigation efficiency over direct work. No material quality loss; lower elapsed time and total cost for comparable work. | E002–E003 | Not supported as a general policy. Parallelism reduced sequential child delay but duplicated setup and increased total cost. Do not maximize child count. |
+| H003 | Grouping shared-context work into one suitable child, with targeted parent verification, can improve time, total cost and parent context. | E004–E005 | Supported for one bounded live workload, not universal performance. Retain optional, context-aware allocation in the installed baseline. |
+| H004 | Adding a parent-prompt handoff cue improves efficient allocation during ordinary requests. Desired result: preserved quality/scope with a favorable time, total-cost and parent-context trade-off—not merely a child launch. | E006–E008 | Efficiency claim not supported by available results; matched-coverage effect remains inconclusive. Cue caused no runtime failure and delegation occurred, but broader coverage took more time/cost. **Park candidate `0144fd2`; keep baseline `62d06ab`.** Do not automatically add more routing guidance. |
+| H005 | Reusing a plan-driven runner and measurement path lets us vary tasks, variants and order without writing a new launcher/analyzer for each experiment. | E009 | Proposed. Demonstrate composition with the actual CLI and scripted transport; separately assess usability in the next authorized real experiment. Tooling success is not evidence for H004. |
+
+## Experiments and observations
+
+Costs are reported parent-plus-child model costs, not verified billing. Reviews were not blinded independent human reviews unless explicitly recorded otherwise.
+
+| ID | Method | Observed result | Limits / interpretation |
+|---|---|---|---|
+| E001 | Frozen 18-task corpus; two completed real-model sweeps, plus retained interrupted sweep. | Each completed sweep: 12/12 clear selections, 3/3 ambiguity/no-launch, 3/3 unsupported/no-launch, 6/6 complete quality cases and 3/3 evidence-gap cases. | Synthetic DB transport is not real SQL execution. Interrupted/provider failures retained. |
+| E002 | Initial direct / optional / forced-seven live comparison. | Direct 257.727s / $0.4344784; optional stayed direct 137.377s / $0.3444180; forced-seven sequential 908.223s / $1.2540460. | Optional arm cannot establish a delegation benefit when it launches no child. One workload; uncontrolled provider effects. |
+| E003 | Codemode-enabled comparison; forced-seven reached concurrency three. | Direct 344.081s / $0.4564128; optional stayed direct 224.092s / $0.3918528; forced-seven 508.059s / $1.4313976. | Parallelism alone did not remove duplicated setup/cost. Separate revision from E002. |
+| E004 | Shared-context grouping, including forced one-child diagnostic. | Direct 313.689s / $0.4165876; optional three groups 227.564s / $0.7450584; forced one child 233.159s / $0.4194152. | Forced grouping is diagnostic, not autonomous-routing evidence; coverage differed. |
+| E005 | Same bounded task/context, direct versus optional context-aware allocation. Optional selected one child. | 569.710s → 375.320s; $0.5845072 → $0.4680328; peak parent input 134,206 → 83,230. | Core conclusions agreed; secondary checks differed. One sequential unblinded pair, not general superiority. Details: [delegation evidence](../DELEGATION.md). |
+| E006 | First natural-use observation, followed by candidate cue trial on the same short request. | Original: 216.697s / $0.271448, one finding, no child. Candidate: 478.547s / $0.4964236, four findings, one child. Peak input 78,563 vs 78,154. | Different coverage and extra candidate trial boundaries; not a matched efficiency comparison. |
+| E007 | User-run fresh baseline/candidate pair, identical prompt, 68 identical tool declarations and system sections differing only by cue. | Baseline 74.250s / $0.2210228 / peak79,772; candidate 257.056s / $0.4287112 / peak72,356. Candidate used one child. | Baseline covered one finding; candidate four primary plus three older groups. 3.46× time, +94.0% cost, −9.3% peak context. Neither refreshed an earlier equivalent-outcome caveat. Park H004 rather than redefine success as delegation. |
+| E008 | Two separate trivial file-comparison controls using the cue candidate. | Both correct and direct: two reads, no discovery/child; 8.531s / $0.0336324 and 9.294s / $0.0676804. | Shows simple work can stay direct, not that substantial work becomes more efficient. No matched baseline in these controls. |
+| E009 | Reusable-tooling acceptance: different plans/cases/variants using one runner; CLI, evidence and failure-path tests with scripted model transport. | Pending implementation/validation. | No paid model experiment or live-site acceptance implied. |
+
+## Add the next hypothesis
+
+Use the next unused H/E IDs. Keep raw evidence in private experiment directories; add only an authorized sanitized result here.
+
+- **Hypothesis:** claim, intended users/workload, intervention, comparator.
+- **Success/falsification:** required coverage and quality floor, acceptable time/cost/context trade-off, stop criteria. Set before results.
+- **Experiment plan:** cases, variants, run order/repetitions, models, authority, frozen inputs and known uncontrolled factors.
+- **Results:** execution status, quality/coverage, scope violations, failures, total cost/time/context, missing evidence and review method.
+- **Decision:** supported/not supported/inconclusive; adopt, park, revise as a new hypothesis, or stop. Installation and external writes need separate approval.
+
+Do not compare a narrower answer's cost as if it delivered the same coverage. Do not discard failures or count nested usage twice. Do not resurrect H004 without an explicitly new claim or materially new evidence.
