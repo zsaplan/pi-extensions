@@ -1,5 +1,7 @@
 # Measuring delegation
 
+Use the [hypothesis ledger](LEDGER.md) and [reusable experiment CLI](EXPERIMENTS.md) for new work. Compose cases, variants and run order in a frozen plan; reuse the same execution and measurement code. Earlier one-off launchers remain historical evidence, not the starting point for new scripts.
+
 Compare useful work allocation, not child count. Prioritize correctness, elapsed time and total parent-plus-child reported cost; also measure parent context. The [delegation policy](../DELEGATION.md) includes a sanitized aggregate result from one live trial.
 
 ## Trial protocol
