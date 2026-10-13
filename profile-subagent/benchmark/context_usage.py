@@ -42,7 +42,7 @@ def active_branch(entries):
 
 def analyze(path):
     raw = path.read_bytes()
-    rows = [json.loads(line) for line in raw.decode().splitlines() if line.strip()]
+    rows = [json.loads(line) for line in raw.decode().split("\n") if line.strip()]
     if not rows or rows[0].get("type") != "session":
         raise ValueError(f"Missing session header: {path}")
     header = rows[0]

@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "id": "configuration-allocation-smoke",
+  "hypothesis": "H005 — compose a local direct/optional comparison without changing the runner",
+  "criterion": "Mechanics only: identical input/cwd; supported changes, no file/live mutations; accountable usage. No efficiency claim from this tiny task.",
+  "common": {
+    "extensions": [
+      "builtin:codemode",
+      "../../.."
+    ],
+    "provider": "openai-codex",
+    "model": "gpt-6.1-sol",
+    "thinking": "medium",
+    "timeoutSeconds": 180,
+    "resources": "isolated",
+    "inputs": [
+      "../../../../package-lock.json"
+    ]
+  },
+  "cases": {
+    "tiny": {
+      "cwd": ".",
+      "prompt": "prompt.md",
+      "authorization": "authorization.md",
+      "inputs": [
+        "before.yaml",
+        "after.yaml"
+      ]
+    }
+  },
+  "variants": {
+    "direct": {
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls",
+        "codemode"
+      ]
+    },
+    "optional": {
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls",
+        "codemode",
+        "profile_subagent_search",
+        "profile_subagent_list",
+        "profile_subagent_run"
+      ]
+    }
+  },
+  "trials": [
+    {
+      "id": "direct-1",
+      "case": "tiny",
+      "variant": "direct"
+    },
+    {
+      "id": "optional-1",
+      "case": "tiny",
+      "variant": "optional"
+    }
+  ]
+}

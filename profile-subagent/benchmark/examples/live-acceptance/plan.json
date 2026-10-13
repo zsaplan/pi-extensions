@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "id": "E010-live-tooling-acceptance",
+  "hypothesis": "H005: new real-model cases and variants run through the same frozen-plan launcher and measurement path without per-experiment code changes.",
+  "criterion": "All four trials: expected parent Sol/medium, exact case/cwd and tool selection, completed response, unchanged frozen inputs/settings, no writes/live-site calls, complete accounted cost. Tiny: replicas 2->3, timeout remains 30; optional may stay direct. Config diagnostic: exactly one direct configuration child. Docs diagnostic: exactly one codemode-nested documentation child; three supported contradictions and uptime guarantee unverified. Both children Sol/medium, matching parent IDs/digests, token/cost reconciliation and verifiable evidence. Review each run before the next; pause on unexpected scope, failures, or cumulative reported cost above $2 (review threshold, not a hard cap). No efficiency claim or rollout authorization.",
+  "common": {
+    "extensions": [
+      "builtin:codemode",
+      "../../.."
+    ],
+    "provider": "openai-codex",
+    "model": "gpt-6.1-sol",
+    "thinking": "medium",
+    "timeoutSeconds": 180,
+    "resources": "isolated",
+    "inputs": [
+      "../../../../package-lock.json"
+    ]
+  },
+  "cases": {
+    "tiny": {
+      "cwd": "../configuration",
+      "prompt": "../configuration/prompt.md",
+      "authorization": "authorization.md",
+      "inputs": [
+        "../configuration/before.yaml",
+        "../configuration/after.yaml"
+      ]
+    },
+    "configDiagnostic": {
+      "cwd": "../configuration",
+      "prompt": "config-handoff.md",
+      "authorization": "authorization.md",
+      "inputs": [
+        "../configuration/before.yaml",
+        "../configuration/after.yaml"
+      ]
+    },
+    "docsDiagnostic": {
+      "cwd": "docs",
+      "prompt": "docs-handoff.md",
+      "authorization": "authorization.md",
+      "inputs": [
+        "docs"
+      ]
+    }
+  },
+  "variants": {
+    "direct": {
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls",
+        "codemode"
+      ]
+    },
+    "optional": {
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls",
+        "codemode",
+        "profile_subagent_search",
+        "profile_subagent_list",
+        "profile_subagent_run"
+      ]
+    },
+    "directChild": {
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls",
+        "profile_subagent_search",
+        "profile_subagent_list",
+        "profile_subagent_run"
+      ]
+    }
+  },
+  "trials": [
+    {
+      "id": "tiny-direct",
+      "case": "tiny",
+      "variant": "direct"
+    },
+    {
+      "id": "tiny-optional",
+      "case": "tiny",
+      "variant": "optional"
+    },
+    {
+      "id": "config-direct-child",
+      "case": "configDiagnostic",
+      "variant": "directChild"
+    },
+    {
+      "id": "docs-nested-child",
+      "case": "docsDiagnostic",
+      "variant": "optional"
+    }
+  ]
+}

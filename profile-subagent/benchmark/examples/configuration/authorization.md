@@ -1,0 +1,1 @@
+Read-only comparison of before.yaml and after.yaml in the current directory. Do not modify files, access live services or post externally. Report only supported differences and preserve unknown runtime impact.
