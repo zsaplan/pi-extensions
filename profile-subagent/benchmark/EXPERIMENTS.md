@@ -95,7 +95,16 @@ Before this tooling is used for a paid/live experiment, verify these plausible f
 - [x] Private permissions, original-input preservation, package/root verification and public-content review pass.
 - [x] A separately authorized real-model experiment confirms the local-file workflow (E010). This does not cover every integration or replace the separate scripted failure-path checks.
 
-Evidence: `test/experiments-e2e.test.ts` (relative to `profile-subagent/`) runs eight scripted-transport checks; the package suite reports 93 passing Node tests, and repository-root verification passed. One existing `pr-worktree-status` cache-timing test failed on a later root run; its log was retained, and a targeted check plus one root retry passed without changing that code. Repeatable local artifact: `profile-subagent/tmp/e2e/experiments-evidence.json`, pointing to retained unique run directories. Offline remeasurement reproduced E007's recorded time/cost/context exactly; it did not repeat either investigation. E010 subsequently verified a prospective real-model batch; its narrower coverage is described below.
+Initial E009 evidence: `test/experiments-e2e.test.ts` (relative to `profile-subagent/`) ran eight scripted-transport checks; the package suite reported 93 passing Node tests, and repository-root verification passed. One existing `pr-worktree-status` cache-timing test failed on a later root run; its log was retained, and a targeted check plus one root retry passed without changing that code. Repeatable local artifact: `profile-subagent/tmp/e2e/experiments-evidence.json`, pointing to retained unique run directories. Offline remeasurement reproduced E007's recorded time/cost/context exactly; it did not repeat either investigation. E010 subsequently verified a prospective real-model batch; its narrower coverage is described below.
+
+### PR #41 review follow-up
+
+Local fault-injection review of `72e5ad8` found two gaps not covered by the passing suite. These are merge blockers, not evidence that the historical live trials were affected:
+
+- [x] Reconcile child cost against its own enclosing tool call, not the aggregate of all tools. Sum children sharing a call before checking its usage. The new E2E regression initially reproduced a falsely complete $0.100 result with a missing $0.024 child contribution. It now covers direct, nested and grouped children with an unrelated charged tool: valid totals remain complete; missing/underreported enclosing usage remains unknown, without adding child costs twice.
+- [ ] Finish process-group cleanup even if the CLI leader exits first. A bounded synthetic CLI exited on SIGINT while its child ignored SIGINT; the runner returned `timed-out` with `forcedKill: false` while the child remained alive. Check the owned group through the grace period and terminate survivors. Extend the lifecycle test to check descendants, not only the leader PID.
+
+The probes used no paid models or live services, left original evidence unchanged and explicitly terminated the surviving test process. Repeat package/root verification after remediation. Existing live acceptance below remains limited to its recorded cases.
 
 ### Real-model acceptance: E010
 

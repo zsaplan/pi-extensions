@@ -481,6 +481,121 @@ test(
         },
       );
       await t.test(
+        'unrelated charges cannot mask missing direct, nested or grouped child usage',
+        async () => {
+          const plan = structuredClone(config);
+          const call = `tools.profile_subagent_run(${JSON.stringify(childAction.args)})`;
+          plan.variants.nested.environment.PROFILE_E2E_ACTIONS = JSON.stringify(
+            [
+              {
+                name: 'codemode',
+                args: {
+                  code: `text(await Promise.allSettled([${call}, ${call}]));`,
+                },
+              },
+            ],
+          );
+          plan.trials = [{id: 'grouped', case: 'first', variant: 'nested'}];
+          const grouped = await prepare('grouped-usage', plan);
+          await invoke(['run', grouped, 'grouped']);
+          const groupedSummary = await summary(grouped);
+          assert.equal(groupedSummary.data.results[0].metrics.childCount, 2);
+          assert.equal(
+            groupedSummary.data.results[0].metrics.totalReportedCost,
+            0.048,
+          );
+          for (const layout of ['child', 'nested', 'grouped']) {
+            const run =
+              layout === 'grouped'
+                ? join(grouped, 'runs/grouped')
+                : join(root, 'matrix/runs', layout);
+            const original = await readFile(
+              join(run, 'parent-session.jsonl'),
+              'utf8',
+            );
+            for (const mode of ['valid', 'underreported', 'missing']) {
+              const rows = original
+                .split('\n')
+                .filter(line => line.trim())
+                .map(line => JSON.parse(line));
+              const caller = rows.find(e => e.message?.role === 'assistant');
+              const result = rows.find(e => e.message?.role === 'toolResult');
+              caller.message.content.push({
+                type: 'toolCall',
+                id: 'unrelated',
+                name: 'fixture_model_tool',
+                arguments: {},
+              });
+              const extra = structuredClone(result);
+              extra.id = 'unrelated-result';
+              extra.parentId = result.id;
+              extra.message = {
+                role: 'toolResult',
+                toolCallId: 'unrelated',
+                toolName: 'fixture_model_tool',
+                content: [{type: 'text', text: 'Synthetic charged tool'}],
+                isError: false,
+                usage: structuredClone(result.message.usage),
+              };
+              extra.message.usage.cost = {
+                input: 0.1,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                total: 0.1,
+              };
+              const index = rows.indexOf(result) + 1;
+              rows[index].parentId = extra.id;
+              rows.splice(index, 0, extra);
+              if (mode === 'missing') delete result.message.usage;
+              if (mode === 'underreported')
+                result.message.usage.cost.total =
+                  layout === 'grouped' ? 0.024 : 0;
+              const source = join(root, `${layout}-${mode}.jsonl`);
+              await writeFile(
+                source,
+                rows.map(row => JSON.stringify(row)).join('\n') + '\n',
+              );
+              const measured = await invoke([
+                'measure',
+                source,
+                join(root, `${layout}-${mode}`),
+                '--child-root',
+                join(agent, 'profile-subagent-runs'),
+                ...(layout === 'child'
+                  ? []
+                  : ['--events', join(run, 'events.jsonl')]),
+              ]);
+              const m = JSON.parse(measured.stdout);
+              assert.equal(m.accountingComplete, mode === 'valid');
+              if (mode === 'valid') {
+                assert.ok(
+                  Math.abs(
+                    m.totalReportedCost -
+                      (layout === 'grouped' ? 0.148 : 0.124),
+                  ) < 1e-9,
+                );
+              } else {
+                assert.equal(m.totalReportedCost, null);
+                assert.match(m.issues.join('\n'), /enclosing tool usage/);
+                assert.ok(
+                  Math.abs(
+                    m.recordedCostKnown -
+                      (layout === 'grouped' && mode === 'underreported'
+                        ? 0.124
+                        : 0.1),
+                  ) < 1e-9,
+                );
+              }
+            }
+            assert.equal(
+              await readFile(join(run, 'parent-session.jsonl'), 'utf8'),
+              original,
+            );
+          }
+        },
+      );
+      await t.test(
         'offline measurement handles inherited/abandoned/helper usage and Unicode LF framing',
         async () => {
           const session = join(root, 'import.jsonl');

@@ -152,8 +152,19 @@ def measure(session, output, child_root, events=None):
             row['error'] = str(error)
             issues.append('Missing/unusable child evidence; do not assume zero child cost')
     child_known = sum(c.get('usage', {}).get('known', 0) for c in children)
-    if child_known > tools['known'] + 1e-9:
-        issues.append('Child usage exceeds enclosing tool usage')
+    enclosed_costs = Counter()
+    for child in children:
+        matches = [r for r in results if child['callId'] == r['toolCallId']
+                   or child['callId'].startswith(r['toolCallId'] + '/')]
+        if len(matches) != 1:
+            issues.append(f'Missing or ambiguous enclosing tool usage: {child["callId"]}')
+            continue
+        enclosed_costs[matches[0]['toolCallId']] += child.get('usage', {}).get('known', 0)
+    for r in results:
+        required = enclosed_costs[r['toolCallId']]
+        reported = cost(r.get('usage'))
+        if required > 0 and (reported is None or required > reported + 1e-9):
+            issues.append(f'Child usage exceeds or lacks enclosing tool usage: {r["toolCallId"]}')
     complete = bool(assistants) and parent['complete'] and tools['complete'] and helpers['complete'] and not issues
     if not context['completed']:
         complete = False
