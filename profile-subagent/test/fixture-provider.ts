@@ -26,7 +26,11 @@ export default function (pi: ExtensionAPI) {
       process.env.PROFILE_E2E_RECORD!,
       `${JSON.stringify({at: Date.now(), ...(data as object)})}\n`,
     );
-  if (policyScenario === 'read-override') {
+  if (
+    ['read-override', 'file-evidence-image', 'file-evidence-cancel'].includes(
+      policyScenario,
+    )
+  ) {
     pi.registerTool({
       name: 'read',
       label: 'Parent read override',
@@ -34,8 +38,13 @@ export default function (pi: ExtensionAPI) {
       parameters: Type.Object({path: Type.String()}),
       async execute() {
         record({readOverride: true});
+        if (policyScenario === 'file-evidence-cancel')
+          await new Promise(resolve => setTimeout(resolve, 200));
         return {
-          content: [{type: 'text', text: 'PARENT_READ_OVERRIDE'}],
+          content:
+            policyScenario === 'file-evidence-image'
+              ? [{type: 'image', mimeType: 'image/png', data: 'aGVsbG8='}]
+              : [{type: 'text', text: 'PARENT_READ_OVERRIDE'}],
           details: undefined,
         };
       },
@@ -107,6 +116,8 @@ export default function (pi: ExtensionAPI) {
     if (scenario === 'cancel' && event.toolName === 'profile_subagent_run') {
       setTimeout(() => ctx.abort(), 1000);
     }
+    if (scenario === 'file-evidence-cancel' && event.toolName === 'read')
+      setTimeout(() => ctx.abort(), 25);
     if (['read', 'grep', 'find', 'ls'].includes(event.toolName)) {
       record({
         fileHook: event.toolName,
@@ -317,9 +328,15 @@ export default function (pi: ExtensionAPI) {
         if (options?.signal?.aborted) abort();
         else options?.signal?.addEventListener('abort', abort, {once: true});
         return stream;
-      } else if (scenario === 'provider-error' || taskKey === 'TASK_FAIL') {
+      } else if (
+        scenario === 'provider-error' ||
+        taskKey === 'TASK_FAIL' ||
+        (scenario === 'file-evidence-failed-after-read' && results.length > 0)
+      ) {
         message.stopReason = 'error';
         message.errorMessage = 'FIXTURE_PROVIDER_ERROR';
+      } else if (scenario === 'file-evidence-many' && results.length < 3) {
+        call('read', {path: 'evidence.txt', offset: 1, limit: 1});
       } else if (scenario === 'turn-limit' || results.length === 0) {
         if (
           child &&
@@ -340,9 +357,15 @@ export default function (pi: ExtensionAPI) {
             'read-override',
             'file-redaction',
             'file-block-read',
+            'file-evidence-large',
+            'file-evidence-image',
+            'file-evidence-failed-after-read',
+            'file-evidence-cancel',
           ].includes(scenario)
         )
           call('read', {path: 'evidence.txt'});
+        else if (scenario === 'file-evidence-missing')
+          call('read', {path: 'absent.txt'});
         else if (scenario === 'file-block-grep')
           call('grep', {pattern: 'LOCAL_EVIDENCE_CONTENT', path: '.'});
         else if (scenario === 'file-block-find')

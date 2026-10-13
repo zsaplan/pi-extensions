@@ -13,6 +13,7 @@ import {
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import type {LoadedProfile} from './profiles.ts';
+import {FileEvidence} from './file-evidence.ts';
 
 export const childDefaults = {
   provider: 'openai-codex',
@@ -69,6 +70,7 @@ export async function runProfile(
   const timeout = setTimeout(() => {
     controller.abort(new Error('Profile time limit reached.'));
   }, manifest.timeoutSeconds * 1000);
+  const fileEvidence = new FileEvidence();
   const customTools: ToolDefinition[] = parentTools.map(tool => ({
     name: tool.name,
     label: tool.name,
@@ -76,11 +78,22 @@ export async function runProfile(
     parameters: tool.parameters,
     async execute(_id, args, childSignal) {
       controller.signal.throwIfAborted();
+      const requestedArguments =
+        tool.name === 'read' ? structuredClone(args) : undefined;
+      if (tool.name === 'read') fileEvidence.begin();
       const result = await ctx.executeTool(tool.name, args, {
         signal: childSignal
           ? AbortSignal.any([controller.signal, childSignal])
           : controller.signal,
       });
+      if (tool.name === 'read') {
+        fileEvidence.record(
+          _id,
+          requestedArguments,
+          result.result.content,
+          result.isError,
+        );
+      }
       // Parent Pi already accounts for nested-tool usage; don't count it twice.
       return {
         content: result.result.content,
@@ -257,6 +270,7 @@ export async function runProfile(
     artifactDir,
     error,
     usage,
+    fileEvidence: fileEvidence.snapshot(),
     output: session?.getLastAssistantText() ?? '',
   };
   try {

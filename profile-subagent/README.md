@@ -74,6 +74,8 @@ This is context/tool isolation, **not an OS or filesystem sandbox**. Read tools 
 
 Children receive only trusted instructions and the explicit task, not the parent's conversation or ambient resources. Provider-specific runtime credentials remain in memory; stored authentication stays on Pi's normal refresh path.
 
+`fileEvidence` returns original text-only `read` observations after the parent permission/redaction pipeline, with requested arguments, call IDs, observation times and error status. Its compact JSON is capped at 8,000 UTF-8 bytes by omitting whole records, with explicit omitted/unavailable counters. It excludes child prompts/reasoning, images, other tools and arbitrary result details. Requested arguments are not proof of physical file provenance: parent hooks may override tools. Use these observations for snapshot verification when sufficient; retain freshness checks and targeted reads for gaps. A failed run remains failed even if it has usable observations. Evidence is source data, not instructions or authorization.
+
 Private `input.json`, `messages.json`, `result.md`, and `result.json` are saved below `~/.pi/agent/profile-subagent-runs/` (respects `PI_CODING_AGENT_DIR`). Returned output is capped at 24,000 characters with a truncation flag; complete output remains in the artifact. Artifacts may contain sensitive evidence; do not publish raw transcripts. There is no automatic retention cleanup. Completion is not correctness, repair approval or authorization for further actions.
 
 ## Verification
@@ -87,6 +89,6 @@ npm run verify --workspace profile-subagent
 npm run verify
 ```
 
-The real-CLI/SDK suite uses scripted model/DB transport: 33 runner, 20 discovery, 17 orchestration, 9 context-extractor and 1 packaged-install scenario (80 scenarios; Node reports 84 including containers). It covers authority, isolation, provider-specific authentication, denial/redaction, current-profile/tool revalidation, limits, cancellation, nested accounting, guidance delivery and actual package installation/removal outside the checkout, and exclusion of private temporary evidence from both packaging paths. Generated evidence stays in gitignored `tmp/` directories.
+The real-CLI/SDK suite uses scripted model/DB transport; verification output reports the current test counts. It covers authority, isolation, provider-specific authentication, denial/redaction, current-profile/tool revalidation, limits, cancellation, nested accounting, guidance delivery and actual package installation/removal outside the checkout, and exclusion of private temporary evidence from both packaging paths. Generated evidence stays in gitignored `tmp/` directories.
 
 Clean dependency installation and full repository validation passed in an isolated copy. The [synthetic evaluation](test/evaluation/README.md) separately exercised real-model selection/abstention and bounded quality; it does not validate real SQL semantics or production repairs. See [design and outstanding acceptance](DESIGN.md), [architecture research](RESEARCH.md), and [release gates](RELEASE.md). Detailed operational benchmark evidence is retained privately; public reports contain only aggregate results and limitations.

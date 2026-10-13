@@ -39,6 +39,12 @@ test('real Pi CLI and SDK delegation E2E', {timeout: 120000}, async t => {
     'local-read',
     'read-override',
     'file-redaction',
+    'file-evidence-large',
+    'file-evidence-many',
+    'file-evidence-missing',
+    'file-evidence-image',
+    'file-evidence-failed-after-read',
+    'file-evidence-cancel',
     'file-block-read',
     'file-block-grep',
     'file-block-find',
@@ -99,7 +105,14 @@ test('real Pi CLI and SDK delegation E2E', {timeout: 120000}, async t => {
           join(cwd, 'AGENTS.md'),
           'AMBIENT_PROJECT_INSTRUCTIONS_MUST_NOT_LEAK',
         );
-        await writeFile(join(cwd, 'evidence.txt'), 'LOCAL_EVIDENCE_CONTENT');
+        await writeFile(
+          join(cwd, 'evidence.txt'),
+          scenario === 'file-evidence-large'
+            ? 'X'.repeat(9000)
+            : scenario === 'file-evidence-many'
+              ? 'X'.repeat(3500)
+              : 'LOCAL_EVIDENCE_CONTENT',
+        );
         const manifestPath = join(
           extension,
           'profiles/postfix-repair-planner/profile.json',
@@ -286,6 +299,8 @@ test('real Pi CLI and SDK delegation E2E', {timeout: 120000}, async t => {
             'timeout',
             'cancel',
             'provider-error',
+            'file-evidence-failed-after-read',
+            'file-evidence-cancel',
             'empty',
             'length',
           ].includes(scenario);
@@ -363,6 +378,79 @@ test('real Pi CLI and SDK delegation E2E', {timeout: 120000}, async t => {
             }
             assert.ok(!result.stdout.includes(runtimeKey));
             assert.ok(!result.stderr.includes(runtimeKey));
+          }
+          const packet = summary.fileEvidence;
+          assert.ok(Buffer.byteLength(JSON.stringify(packet), 'utf8') <= 8000);
+          assert.deepEqual(toolResult.result.details.fileEvidence, packet);
+          for (const observation of packet.records) {
+            const original = messages.find(
+              (m: {role: string; toolCallId?: string}) =>
+                m.role === 'toolResult' && m.toolCallId === observation.callId,
+            );
+            assert.equal(original.toolName, 'read');
+            assert.deepEqual(observation.content, original.content);
+            assert.equal(observation.isError, original.isError);
+            const call = messages
+              .filter((m: {role: string}) => m.role === 'assistant')
+              .flatMap((m: {content: unknown[]}) => m.content)
+              .find((c: {id?: string}) => c.id === observation.callId);
+            assert.deepEqual(observation.requestedArguments, call.arguments);
+            assert.ok(Number.isFinite(Date.parse(observation.observedAt)));
+            assert.deepEqual(Object.keys(observation).sort(), [
+              'callId',
+              'content',
+              'isError',
+              'observedAt',
+              'requestedArguments',
+            ]);
+          }
+          if (
+            ['file-evidence-large', 'file-evidence-image'].includes(scenario)
+          ) {
+            assert.equal(packet.records.length, 0);
+            assert.equal(packet.omittedReadResults, 1);
+          }
+          if (scenario === 'file-evidence-cancel') {
+            assert.equal(summary.status, 'failed');
+            assert.equal(
+              packet.records.length + packet.unavailableReadResults,
+              1,
+            );
+            assert.equal(packet.omittedReadResults, 0);
+          }
+          if (scenario === 'file-evidence-failed-after-read') {
+            assert.equal(packet.records.length, 1);
+            assert.equal(summary.status, 'failed');
+            assert.equal(toolResult.isError, true);
+          }
+          if (scenario === 'file-evidence-many') {
+            assert.equal(packet.records.length, 2);
+            assert.equal(packet.omittedReadResults, 1);
+          }
+          if (['file-block-read', 'file-evidence-missing'].includes(scenario)) {
+            assert.ok(
+              packet.unavailableReadResults > 0 ||
+                packet.records.some((r: {isError: boolean}) => r.isError),
+            );
+            assert.ok(
+              !JSON.stringify(packet).includes('LOCAL_EVIDENCE_CONTENT'),
+            );
+          }
+          if (
+            ['local-read', 'read-override', 'file-redaction'].includes(scenario)
+          ) {
+            assert.equal(packet.records.length, 1);
+            const expected =
+              scenario === 'local-read'
+                ? 'LOCAL_EVIDENCE_CONTENT'
+                : scenario === 'read-override'
+                  ? 'PARENT_READ_OVERRIDE'
+                  : 'PARENT_REDACTED';
+            assert.ok(JSON.stringify(packet).includes(expected));
+            if (scenario !== 'local-read')
+              assert.ok(
+                !JSON.stringify(packet).includes('LOCAL_EVIDENCE_CONTENT'),
+              );
           }
           const childResults = messages.filter(
             (m: {role: string}) => m.role === 'toolResult',
