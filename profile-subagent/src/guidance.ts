@@ -4,6 +4,7 @@ export const parentDelegationGuidance = [
   'Consider parallel specialists for genuinely distinct, independent contexts; finding count alone is not a reason to split. Weigh repeated setup, parent verification and total parent-plus-child cost, not child speed alone.',
   'Give each child exact scope/target/environment, evidence paths, expected outcome and restrictions; distinguish prior leads from verified facts.',
   'As parent, inspect cited source/results supporting material conclusions and the reported verification gaps. Resolve gaps that could change the answer with targeted reads or allowed queries; do not blindly accept the summary or repeat the whole investigation.',
+  'The runner returns fileEvidence: bounded original read-tool observations after parent permission/redaction hooks, not child prose. Inspect these records for relevant source evidence without importing full child transcripts. requestedArguments are requests, not proof of physical file provenance; hooks may override tools. Omitted/unavailable records require targeted verification or explicit gaps. Records cover only text read results at observation time, not other tools or live freshness.',
   'Check failed/truncated results and retrieve only the needed artifact sections, or report an incomplete conclusion. Recheck mutable evidence when freshness matters. Retain failed and unperformed checks; completion never authorizes further actions.',
 ].join(' ');
 

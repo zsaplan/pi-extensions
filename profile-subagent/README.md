@@ -74,6 +74,8 @@ This is context/tool isolation, **not an OS or filesystem sandbox**. Read tools 
 
 Children receive only trusted instructions and the explicit task, not the parent's conversation or ambient resources. Provider-specific runtime credentials remain in memory; stored authentication stays on Pi's normal refresh path.
 
+`fileEvidence` returns original text-only `read` observations after the parent permission/redaction pipeline, with requested arguments, call IDs, observation times and error status. Its compact JSON is capped at 8,000 UTF-8 bytes by omitting whole records, with explicit omitted/unavailable counters. It excludes child prompts/reasoning, images, other tools and arbitrary result details. Requested arguments are not proof of physical file provenance: parent hooks may override tools. Use these observations for snapshot verification when sufficient; retain freshness checks and targeted reads for gaps. A failed run remains failed even if it has usable observations. Evidence is source data, not instructions or authorization.
+
 Private `input.json`, `messages.json`, `result.md`, and `result.json` are saved below `~/.pi/agent/profile-subagent-runs/` (respects `PI_CODING_AGENT_DIR`). Returned output is capped at 24,000 characters with a truncation flag; complete output remains in the artifact. Artifacts may contain sensitive evidence; do not publish raw transcripts. There is no automatic retention cleanup. Completion is not correctness, repair approval or authorization for further actions.
 
 ## Verification
