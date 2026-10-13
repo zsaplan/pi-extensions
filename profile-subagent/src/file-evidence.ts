@@ -8,7 +8,6 @@ type ReadRecord = {
   content: {type: 'text'; text: string}[];
 };
 
-/** Only post-parent-pipeline observations, never child prompts or reasoning. */
 export class FileEvidence {
   private records: ReadRecord[] = [];
   private omittedReadResults = 0;
