@@ -1,8 +1,8 @@
-# E013: promising first pair, paused for quality review
+# H008: screen coverage complete; original citation defect retained
 
-**Follow-up:** The user requested a recurrence diagnostic. [E014](CITATION-RETEST.md) found no recurrence in three unchanged candidate repeats; the original defect below remains retained, and this screen's acceptance status is unchanged.
+**Current status:** [E014](CITATION-RETEST.md) found no recurrence in three unchanged candidate repeats. After the user agreed to continue, [E015](REMAINING-CASES.md) completed the other three case pairs with correct findings, citations and uncertainty. Across the original four pairs, mean reported cost was 31.0% lower and parent peak context 35.1% lower; elapsed time was essentially unchanged. The original defect below is retained, not retroactively passed. Candidate remains unchanged and uninstalled; no automatic confirmation.
 
-**Not a validated win.** The first paired trial delivered the intended evidence without importing a transcript, with lower measured cost and parent context. However, the candidate child's changed-field line citations were systematically one line early. Its values and the final parent answer's facts were correct. The error is retained; full quality is not marked passed. Six trials and any confirmation remain unrun pending a decision on whether internal citation errors block acceptance when the parent produces a source-supported correct final answer.
+**Not a validated win.** The first paired trial delivered the intended evidence without importing a transcript, with lower measured cost and parent context. However, the candidate child's changed-field line citations were systematically one line early. Its values and the final parent answer's facts were correct. The error is retained; full quality is not marked passed. The remaining six trials were initially paused, then completed as E015 after user direction. Confirmation remains unrun; these subsequent results do not erase the original quality difference.
 
 | Mixed-configuration trial | Parent requests | Extra parent reads | Seconds | Total reported cost | Peak parent input |
 |---|---:|---:|---:|---:|---:|
@@ -27,7 +27,7 @@ For the candidate child, the gateway image row cited before:4 / after:31; the ac
 - [x] Candidate package and repository verification passed before paid work; baseline package/repository verification passed.
 - [x] First-pair source/packet fidelity, accounting, scope, frozen hashes and private permissions audited.
 - [ ] Resolve the internal-citation acceptance question; record any changed standard prospectively, not as a retroactive pass for this pair.
-- [ ] Complete the remaining screening only under an explicit, unchanged or newly predeclared quality rule; preserve this pair and its defect.
+- [x] Complete remaining screening under the unchanged quality rule; E015's three new pairs passed while this original pair and its defect were preserved.
 - [ ] Run confirmation only if the applicable complete screening gates pass.
 - [ ] Independent review, broader usefulness, and rollout approval remain separate; nothing installed or published.
 
