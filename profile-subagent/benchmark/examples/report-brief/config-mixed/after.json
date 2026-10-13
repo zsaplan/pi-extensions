@@ -1,0 +1,40 @@
+{
+  "workloads": [
+    {
+      "name": "reports",
+      "image": "demo/reports:1",
+      "replicas": 2,
+      "timeoutSeconds": 30,
+      "cpu": "500m",
+      "memory": "256Mi",
+      "cache": false
+    },
+    {
+      "name": "search",
+      "image": "demo/search:1",
+      "replicas": 2,
+      "timeoutSeconds": 30,
+      "cpu": "500m",
+      "memory": "512Mi",
+      "cache": false
+    },
+    {
+      "name": "batch",
+      "image": "demo/batch:1",
+      "replicas": 1,
+      "timeoutSeconds": 30,
+      "cpu": "500m",
+      "memory": "768Mi",
+      "cache": false
+    },
+    {
+      "name": "gateway",
+      "image": "demo/gateway:2",
+      "replicas": 4,
+      "timeoutSeconds": 30,
+      "cpu": "500m",
+      "memory": "256Mi",
+      "cache": true
+    }
+  ]
+}
