@@ -370,7 +370,7 @@ test(
           const wrapper = join(root, 'fail-evidence-write.py');
           await writeFile(
             wrapper,
-            `import sys, pathlib, json\nsys.dont_write_bytecode = True\nsys.path.insert(0, ${JSON.stringify(join(pkg, 'benchmark'))})\nimport experiments\noriginal = experiments.save\ndef fail(path, value):\n    if path.name == 'process.json':\n        original(path.with_name('injected-process.json'), value)\n        raise OSError('Injected evidence-write failure')\n    original(path, value)\nexperiments.save = fail\nsys.exit(experiments.main())\n`,
+            `import sys, pathlib, json\nsys.dont_write_bytecode = True\nsys.path.insert(0, ${JSON.stringify(join(pkg, 'benchmark'))})\nimport experiments\nkillpg = experiments.os.killpg\nprobe_denied = False\ndef probe(pgid, sig):\n    global probe_denied\n    if sig == 0 and not probe_denied:\n        probe_denied = True\n        raise PermissionError(1, 'Injected transient group probe failure')\n    return killpg(pgid, sig)\nexperiments.os.killpg = probe\noriginal = experiments.save\ndef fail(path, value):\n    if path.name == 'process.json':\n        original(path.with_name('injected-process.json'), value)\n        raise OSError('Injected evidence-write failure')\n    original(path, value)\nexperiments.save = fail\nsys.exit(experiments.main())\n`,
           );
           const failed = spawnSync(
             'python3',
@@ -392,6 +392,110 @@ test(
           assert.throws(() => process.kill(failedProcess.pid, 0), {
             code: 'ESRCH',
           });
+        },
+      );
+      await t.test(
+        'cleanup stops descendants after timeout or normal CLI leader exit',
+        async () => {
+          for (const mode of [
+            'timeout',
+            'exit',
+            'cooperative',
+            'cancel-cleanup',
+          ]) {
+            const directory = join(root, `lifecycle-${mode}`);
+            await mkdir(directory);
+            const pidPath = join(directory, 'child.pid');
+            const stub = join(directory, 'cli.py');
+            const childCode = [
+              'import os, signal, time',
+              'from pathlib import Path',
+              `signal.signal(signal.SIGINT, signal.${mode === 'cooperative' ? 'SIG_DFL' : 'SIG_IGN'})`,
+              `Path(${JSON.stringify(pidPath)}).write_text(str(os.getpid()))`,
+              'time.sleep(30)',
+            ].join('\n');
+            await writeFile(
+              stub,
+              `import signal, subprocess, sys, time
+from pathlib import Path
+signal.signal(signal.SIGINT, lambda *_: sys.exit(0))
+subprocess.Popen([sys.executable, '-c', ${JSON.stringify(childCode)}])
+while not Path(${JSON.stringify(pidPath)}).exists(): time.sleep(0.01)
+if ${JSON.stringify(mode)} in ('exit', 'cancel-cleanup'): sys.exit(0)
+while True: time.sleep(0.1)
+`,
+            );
+            const plan = structuredClone(config);
+            plan.cli = ['python3', stub];
+            plan.common.timeoutSeconds = 1;
+            plan.trials = [{id: 'lifecycle', case: 'first', variant: 'direct'}];
+            const group = await prepare(`lifecycle-${mode}-group`, plan);
+            let pgid: number | undefined;
+            try {
+              if (mode === 'cancel-cleanup') {
+                const args = ['run', group, 'lifecycle'];
+                const running = spawn('python3', [cli, ...args], {
+                  cwd: repo,
+                  stdio: 'ignore',
+                });
+                const exit = new Promise<number | null>(resolve =>
+                  running.once('exit', resolve),
+                );
+                try {
+                  for (let i = 0; i < 150; i++) {
+                    if (await stat(pidPath).catch(() => null)) break;
+                    await sleep(50);
+                  }
+                  await stat(pidPath);
+                  await sleep(150);
+                  running.kill('SIGTERM');
+                  const status = await exit;
+                  evidence.push({args, status, signalDuringCleanup: 'SIGTERM'});
+                  assert.equal(status, 1);
+                } finally {
+                  running.kill('SIGKILL');
+                }
+              } else {
+                await invoke(['run', group, 'lifecycle'], mode === 'exit');
+              }
+              const processInfo = JSON.parse(
+                await readFile(
+                  join(group, 'runs/lifecycle/process.json'),
+                  'utf8',
+                ),
+              );
+              pgid = processInfo.pid;
+              const pid = Number(await readFile(pidPath, 'utf8'));
+              const record = JSON.parse(
+                await readFile(
+                  join(group, 'runs/lifecycle/execution.json'),
+                  'utf8',
+                ),
+              );
+              assert.equal(record.forcedKill, mode !== 'cooperative');
+              assert.equal(
+                record.status,
+                mode === 'exit'
+                  ? 'exited'
+                  : mode === 'cancel-cleanup'
+                    ? 'cancelled'
+                    : 'timed-out',
+              );
+              assert.throws(() => process.kill(pid, 0), {code: 'ESRCH'});
+              assert.throws(() => process.kill(-processInfo.pid, 0), {
+                code: 'ESRCH',
+              });
+              await assert.rejects(stat(join(group, '.running')));
+            } finally {
+              if (pgid !== undefined) {
+                try {
+                  process.kill(-pgid, 'SIGKILL');
+                } catch (error) {
+                  assert.equal((error as NodeJS.ErrnoException).code, 'ESRCH');
+                }
+              }
+            }
+          }
         },
       );
       await t.test(

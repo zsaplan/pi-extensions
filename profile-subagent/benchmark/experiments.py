@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
@@ -240,19 +241,35 @@ def invocation(plan, trial, run):
 
 
 def stop_process(process):
-    if process.poll() is not None:
-        return False
-    try:
-        os.killpg(process.pid, signal.SIGINT)
-    except ProcessLookupError:
-        pass
-    try:
-        process.wait(timeout=10)
-        return False
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
-        process.wait()
-        return True
+    def group_exists():
+        process.poll()  # Reap the leader so its zombie does not keep the group alive.
+        try:
+            os.killpg(process.pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            # A denied existence probe is not proof that the group is gone.
+            return True
+
+    forced = False
+    for sig, grace in ((signal.SIGINT, 10), (signal.SIGKILL, 1)):
+        if not group_exists():
+            return forced
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            process.poll()
+            return forced
+        forced = sig == signal.SIGKILL
+        deadline = time.monotonic() + grace
+        while group_exists():
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.05)
+    if group_exists():
+        raise OSError('Owned process group remains after SIGKILL; inspect before continuing')
+    return forced
 
 
 def run_trial(group, name):
@@ -260,7 +277,6 @@ def run_trial(group, name):
     trial = next((t for t in plan['trials'] if t['id'] == name), None)
     if trial is None:
         raise ValueError('Unknown trial ID')
-    # A group lock prevents accidental concurrent arms, not machine-wide scheduling.
     lock = group / '.running'
     fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     os.write(fd, json.dumps({'pid': os.getpid(), 'trial': name, 'startedAt': now()}).encode())
@@ -290,15 +306,23 @@ def run_trial(group, name):
                 record['launched'] = True
                 try:
                     save(run / 'process.json', {'pid': process.pid, 'startedAt': now()})
-                    record['exitCode'] = process.wait(timeout=v['timeoutSeconds'])
+                    process.wait(timeout=v['timeoutSeconds'])
                     record['status'] = 'exited'
                 except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
                     record['status'] = 'timed-out' if isinstance(error, subprocess.TimeoutExpired) else 'cancelled'
-                    record['forcedKill'] = stop_process(process)
-                    record['exitCode'] = process.returncode
                 finally:
-                    # An evidence-write error must not leave a paid CLI running.
-                    stop_process(process)
+                    # Finish bounded cleanup even if another interrupt arrives.
+                    def cleanup_interrupt(_signal, _frame):
+                        if record['status'] == 'exited':
+                            record['status'] = 'cancelled'
+                    handlers = {sig: signal.signal(sig, cleanup_interrupt)
+                                for sig in (signal.SIGINT, signal.SIGTERM)}
+                    try:
+                        record['forcedKill'] = stop_process(process)
+                        record['exitCode'] = process.returncode
+                    finally:
+                        for sig, handler in handlers.items():
+                            signal.signal(sig, handler)
             record['processStatus'] = record['status']
             record['changedInputs'] = drift(plan)
             if record['changedInputs']:
