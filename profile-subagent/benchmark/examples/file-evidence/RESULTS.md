@@ -1,5 +1,7 @@
 # E013: promising first pair, paused for quality review
 
+**Follow-up:** The user requested a recurrence diagnostic. [E014](CITATION-RETEST.md) found no recurrence in three unchanged candidate repeats; the original defect below remains retained, and this screen's acceptance status is unchanged.
+
 **Not a validated win.** The first paired trial delivered the intended evidence without importing a transcript, with lower measured cost and parent context. However, the candidate child's changed-field line citations were systematically one line early. Its values and the final parent answer's facts were correct. The error is retained; full quality is not marked passed. Six trials and any confirmation remain unrun pending a decision on whether internal citation errors block acceptance when the parent produces a source-supported correct final answer.
 
 | Mixed-configuration trial | Parent requests | Extra parent reads | Seconds | Total reported cost | Peak parent input |
