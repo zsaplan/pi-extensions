@@ -11,6 +11,7 @@
   "files": [
     "src",
     "profiles",
+    "skills",
     "benchmark",
     "README.md",
     "DESIGN.md",
@@ -25,6 +26,9 @@
   "pi": {
     "extensions": [
       "./src/index.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "peerDependencies": {

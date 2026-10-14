@@ -70,7 +70,8 @@
       "./session-file-footer/src/index.ts"
     ],
     "skills": [
-      "./polish-solution/skills"
+      "./polish-solution/skills",
+      "./profile-subagent/skills"
     ]
   },
   "dependencies": {
