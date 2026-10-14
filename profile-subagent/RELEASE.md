@@ -6,11 +6,17 @@ Suitable for an initial rollout of **optional, read-only specialist delegation**
 
 The runtime has tested authority, authentication, isolation, cancellation, concurrency and accounting safeguards. In the latest live shared-context A/B trial, the parent independently chose one combined investigator and verified its evidence; time fell 34.1%, total reported cost 19.9%, and peak parent input 38.0%. Core conclusions agreed, but secondary coverage differed. See [DELEGATION.md](DELEGATION.md) for evidence and remaining uncertainty. Repeated and different-context comparisons remain future work, not claims made by this release.
 
+## Checked Luna pilot is a separate opt-in
+
+The additive pilot's scope, evidence, tests and **unperformed live/install acceptance** are tracked in [PILOT.md](PILOT.md). The historical readiness checks below apply to the original five roles, not automatic acceptance of this new integration. Starting without `--profile-subagent-checked-pilot` leaves the five original roles unchanged. The flag adds only the checker-backed Luna role; it does not install the experimental lifecycle policy or qualify other roles on Luna.
+
+After separately approved merge/installation, start a fresh flagged session and use explicit `snapshots: {before, after}` arguments as shown in [README.md](README.md#opt-in-checked-luna-pilot). Confirm outgoing Luna/medium/priority-requested metadata, intact inventories or safe reported failures, parent read permissions and private artifacts. Priority fulfillment remains unconfirmed unless separately established; reported pricing is not billing proof. Stop on source-scope, model identity, integrity or accounting gaps; never use a fallback. Restart without the flag for pilot rollback; do not remove unrelated profiles or erase retained evidence.
+
 ## Installation contract
 
 - Validated with **Pi 0.99.2 / Node 26.10.0 on macOS**. Other platforms/Pi versions have not been validated against these SDK and nested-accounting APIs.
-- Children require **`openai-codex/gpt-6.1-sol`, medium thinking** and working credentials for that provider. There is no model fallback. The parent may use a different model/provider.
-- All five profiles require callable **`read`, `grep`, `find`, `ls`**. Stock Pi enables only `read`, `bash`, `edit`, `write`; installing this extension alone does not enable the other three tools.
+- The original five profiles require **`openai-codex/gpt-6.1-sol`, medium thinking** and working credentials for that provider. There is no model fallback. The parent may use a different model/provider.
+- All five original profiles require callable **`read`, `grep`, `find`, `ls`**. Stock Pi enables only `read`, `bash`, `edit`, `write`; installing this extension alone does not enable the other three tools.
 - The two file-only profiles work without BriteCore integrations. Postfix profiles additionally require the three approved `bc_site_db_*` tools listed in [README.md](README.md#tools-and-profiles). Missing tools make those profiles unavailable; do not enable broader substitutes.
 - Codemode is optional. Direct calls work without it. Its three-child limit is per loaded extension/Pi process, not a machine-wide budget.
 - The catalog is bundled and reviewed with the code. No operator/project profile directory, child-local codemode or recursive delegation is enabled.

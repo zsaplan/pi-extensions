@@ -1,6 +1,11 @@
 import {Type} from 'typebox';
 import type {ExtensionAPI} from '@earendil-works/pi-coding-agent';
-import {listProfiles, loadProfile} from './profiles.ts';
+import {checkedProfileId, listProfiles, loadProfile} from './profiles.ts';
+import {
+  createSnapshotChecker,
+  resolveSnapshotPaths,
+  SnapshotPathsSchema,
+} from './snapshot-tool.ts';
 import {runProfile} from './runner.ts';
 import {parentDelegationGuidance} from './guidance.ts';
 import {maxConcurrentRuns, RunQueue} from './run-queue.ts';
@@ -12,6 +17,18 @@ import {
 
 export default function (pi: ExtensionAPI) {
   const runs = new RunQueue();
+  const checker = createSnapshotChecker(pi);
+  pi.registerFlag('profile-subagent-checked-pilot', {
+    type: 'boolean',
+    default: false,
+    description:
+      'Opt in to the bounded Luna JSON-review pilot (priority requested, not guaranteed).',
+  });
+  const pilotEnabled = () =>
+    pi.getFlag('profile-subagent-checked-pilot') === true;
+  pi.on('session_start', () => {
+    if (pilotEnabled()) checker.register();
+  });
   // Codemode can finish before cancelled children; drain descendants before
   // Pi snapshots their final status and usage.
   const pending = new Map<string, {done: Promise<void>; finish: () => void}>();
@@ -50,6 +67,7 @@ export default function (pi: ExtensionAPI) {
         query,
         limit,
         ctx.tools.map(tool => tool.name),
+        pilotEnabled(),
       );
       return {
         content: [{type: 'text', text: JSON.stringify(details)}],
@@ -64,7 +82,7 @@ export default function (pi: ExtensionAPI) {
       'List the bundled subagent profiles, exact tools, resource paths, limits, and content hashes. Does not start an agent.',
     parameters: Type.Object({}),
     async execute() {
-      const profiles = await listProfiles();
+      const profiles = await listProfiles(pilotEnabled());
       const details = profiles.map(({manifest, digest}) => ({
         ...manifest,
         digest,
@@ -84,18 +102,38 @@ export default function (pi: ExtensionAPI) {
       `Callable directly or from parent codemode while enabled. At most ${maxConcurrentRuns} runs execute concurrently per loaded extension; additional calls wait in a cancellable queue. In codemode, await Promise.allSettled for independent assignments, retain failures, and JSON.parse each successful JSON-text result. Do not launch dependent work together. ` +
       parentDelegationGuidance +
       ' ' +
-      'Run one fresh specialist by trusted profile ID. Discover a role with profile_subagent_search for a new delegated task; a known role can run directly. Choose only a suitable role with all required tools, clarify insufficient scope, and decline delegation if none fits. Supply a self-contained task, scope, evidence paths and expected outcome. No parent history is inherited. The profile fixes instructions/tools; startup revalidates the current profile and parent capabilities, not a prior search result. Returns bounded output and private evidence paths. Completed means execution finished, not verified correctness, human approval, or authorization for further actions.',
+      'Run one fresh specialist by trusted profile ID. Discover a role with profile_subagent_search for a new delegated task; a known role can run directly. Choose only a suitable role with all required tools, clarify insufficient scope, and decline delegation if none fits. Supply a self-contained task, scope, evidence paths and expected outcome. No parent history is inherited. The profile fixes instructions/tools; startup revalidates the current profile and parent capabilities, not a prior search result. Returns bounded output and private evidence paths. Completed means execution finished, not verified correctness, human approval, or authorization for further actions. The opt-in configuration-checked-reviewer pilot additionally requires explicit snapshots={before,after}; task prose cannot change that pair. Use its runtime-owned comparisonSummary and, for completed results, checkedSnapshot facts. On unavailable results preserve comparisonFailure.reason as the checker-reported reason, never invent counts or infer file existence. Child prose remains unverified; priority is requested, not guaranteed.',
     parameters: Type.Object(
       {
         profile: Type.String({pattern: '^[a-z][a-z0-9-]{0,63}$'}),
         task: Type.String({minLength: 1, maxLength: 30000}),
+        snapshots: Type.Optional(SnapshotPathsSchema),
       },
       {additionalProperties: false},
     ),
-    async execute(_id, {profile, task}, signal, _onUpdate, ctx) {
+    async execute(id, {profile, task, snapshots}, signal, _onUpdate, ctx) {
       if (!task.trim()) throw new Error('Provide a nonempty task.');
+      const checked = profile === checkedProfileId;
+      if (checked && (!pilotEnabled() || !snapshots))
+        throw new Error(
+          'Checked pilot is disabled or snapshots={before,after} is missing.',
+        );
+      if (!checked && snapshots)
+        throw new Error(
+          'Snapshot arguments are only valid for the checked pilot.',
+        );
+      const paths = snapshots
+        ? resolveSnapshotPaths(snapshots, ctx.cwd)
+        : undefined;
       return runs.run(
-        async () => runProfile(await loadProfile(profile), task, ctx, signal),
+        async () =>
+          runProfile(
+            await loadProfile(profile, pilotEnabled()),
+            task,
+            ctx,
+            signal,
+            paths ? {checker, callId: id, paths} : undefined,
+          ),
         signal,
       );
     },
