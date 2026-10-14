@@ -1,6 +1,6 @@
 import {Type} from 'typebox';
 import {Check} from 'typebox/value';
-import {loadCatalog, profilesRoot} from './profiles.ts';
+import {checkedProfileId, loadCatalog, profilesRoot} from './profiles.ts';
 import {resolve} from 'node:path';
 
 export const SearchSchema = Type.Object(
@@ -36,9 +36,10 @@ export async function searchProfiles(
   query: string,
   limit = 3,
   availableTools: readonly string[] = [],
+  includeCheckedPilot = false,
 ) {
   prepareSearchArguments({query, limit});
-  const {profiles, diagnostics} = await loadCatalog();
+  const {profiles, diagnostics} = await loadCatalog(includeCheckedPilot);
   const terms = tokens(query);
   const ranked = profiles
     .map(({manifest, digest}) => {
@@ -55,7 +56,11 @@ export async function searchProfiles(
         0,
       );
       const exact = query.trim().toLowerCase() === manifest.id;
-      const requiredTools = [...manifest.builtinTools, ...manifest.parentTools];
+      const requiredTools = [
+        ...manifest.builtinTools,
+        ...manifest.parentTools,
+        ...(manifest.id === checkedProfileId ? ['read'] : []),
+      ];
       return {
         exact,
         score,

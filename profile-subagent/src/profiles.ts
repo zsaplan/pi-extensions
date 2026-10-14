@@ -103,7 +103,9 @@ export interface CatalogDiagnostic {
   error: string;
 }
 
-export async function loadCatalog() {
+export const checkedProfileId = 'configuration-checked-reviewer';
+
+export async function loadCatalog(includeCheckedPilot = false) {
   const registry = await realpath(profilesRoot);
   const entries = await readdir(registry, {withFileTypes: true});
   const diagnostics: CatalogDiagnostic[] = [];
@@ -112,6 +114,7 @@ export async function loadCatalog() {
     a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
   )) {
     if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+    if (entry.name === checkedProfileId && !includeCheckedPilot) continue;
     try {
       if (!/^[a-z][a-z0-9-]{0,63}$/.test(entry.name))
         throw new Error('Invalid profile directory ID.');
@@ -164,10 +167,13 @@ export async function loadCatalog() {
   return {profiles, diagnostics};
 }
 
-export async function loadProfile(id: string): Promise<LoadedProfile> {
+export async function loadProfile(
+  id: string,
+  includeCheckedPilot = false,
+): Promise<LoadedProfile> {
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(id))
     throw new Error('Invalid profile ID.');
-  const {profiles, diagnostics} = await loadCatalog();
+  const {profiles, diagnostics} = await loadCatalog(includeCheckedPilot);
   const profile = profiles.find(p => p.manifest.id === id);
   if (!profile) {
     const diagnostic = diagnostics.find(d => d.entry === id);
@@ -176,8 +182,10 @@ export async function loadProfile(id: string): Promise<LoadedProfile> {
   return profile;
 }
 
-export async function listProfiles(): Promise<LoadedProfile[]> {
-  const {profiles, diagnostics} = await loadCatalog();
+export async function listProfiles(
+  includeCheckedPilot = false,
+): Promise<LoadedProfile[]> {
+  const {profiles, diagnostics} = await loadCatalog(includeCheckedPilot);
   if (diagnostics.length)
     throw new Error(`Invalid registry: ${JSON.stringify(diagnostics)}`);
   return profiles;

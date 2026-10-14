@@ -17,7 +17,10 @@
     "DELEGATION.md",
     "RELEASE.md",
     "RESEARCH.md",
-    "ORCHESTRATION.md"
+    "ORCHESTRATION.md",
+    "PILOT.md",
+    "experimental/snapshot-checker/CONTRACT.md",
+    "!**/tmp/**"
   ],
   "pi": {
     "extensions": [

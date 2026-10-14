@@ -15,17 +15,17 @@ pi install ./profile-subagent # Register the local package
 
 Local installation records a path; it does not install dependencies. If other extensions are already installed individually, do not also load the entire repository and duplicate their tools.
 
-Every profile needs callable `read`, `grep`, `find`, and `ls`. Normal Pi defaults do not enable the last three; add them to the operator's tool selection without replacing existing settings. The extension never enables tools automatically. A restrictive project setting or `--tools` override can still make a profile unavailable.
+Each of the original five profiles needs callable `read`, `grep`, `find`, and `ls`. Normal Pi defaults do not enable the last three; add them to the operator's tool selection without replacing existing settings. The extension never enables tools automatically. A restrictive project setting or `--tools` override can still make a profile unavailable.
 
 ## Child model
 
-Children independently use **`openai-codex/gpt-6.1-sol`, medium thinking**. The parent may use another model/provider. There is no silent fallback or task-supplied override. Missing model/authentication or unsupported thinking fails visibly.
+The original five profiles independently use **`openai-codex/gpt-6.1-sol`, medium thinking**. The separately opted-in checked pilot below uses Luna; it does not change those defaults. The parent may use another model/provider. There is no silent fallback or task-supplied override. Missing model/authentication or unsupported thinking fails visibly.
 
 ## Tools and profiles
 
 - `profile_subagent_search({query, limit?})`: bounded task-ranked discovery, without launching a child. Nonblank query up to 2,048 characters; integer limit 1–5, default 3.
 - `profile_subagent_list({})`: inspect bundled manifests, tools, limits and content digests.
-- `profile_subagent_run({profile, task})`: run a named specialist with one self-contained assignment. Available directly or through parent codemode when enabled.
+- `profile_subagent_run({profile, task, snapshots?})`: run a named specialist with one self-contained assignment. Available directly or through parent codemode when enabled.
 
 | Profile | Assignment |
 |---|---|
@@ -65,6 +65,32 @@ text(result);
 ```
 
 For independent assignments, await `Promise.allSettled`, parse successful results and preserve failures. Dependent work waits for prerequisites. At most three children execute per loaded extension/Pi process; additional calls wait in a cancellable FIFO queue. Separate terminals do not share that limit. Timeout starts after admission; cancellation/cleanup is cooperative, not a process kill. See [orchestration](ORCHESTRATION.md).
+
+## Opt-in checked Luna pilot
+
+The additive [pilot and acceptance checklist](PILOT.md) is off unless the operator starts Pi with `--profile-subagent-checked-pilot`. The original five profiles keep their availability, resources and Sol/medium settings. No lifecycle-policy changes are included. After installing the reviewed package, start a fresh session with:
+
+```bash
+pi --profile-subagent-checked-pilot
+```
+
+The pilot needs callable parent `read` plus its registered internal `compare_json_snapshots` tool, not grep/find/ls or database integrations. If using an explicit `--tools` allowlist, include `read`, `profile_subagent_run` and `compare_json_snapshots`. The internal checker is callable through the parent pipeline but rejects calls without an active specialist assignment; it is not a standalone direct-tool rollout.
+
+```json
+{
+  "profile": "configuration-checked-reviewer",
+  "snapshots": {"before": "./before.json", "after": "./after.json"},
+  "task": "Compare only this authorized non-sensitive JSON pair. Report every changed pointer, type/value/presence, source lines and coverage counts. If unavailable, preserve the checker-reported reason; do not infer file existence or invent counts."
+}
+```
+
+`snapshots` is required only for this role and rejected for other roles. It binds the ordered pair independently of task prose. The child has only the checker, exactly one attempt, six turns/120 seconds, and no fallback. See the [strict JSON limits](experimental/snapshot-checker/CONTRACT.md). Profile changes during execution, wrong model metadata, changed/redacted checker results, repeated calls and incomplete/oversized handoffs prevent acceptance.
+
+This child alone uses **`openai-codex/gpt-6-luna` / medium / priority requested**. `service` records bounded outgoing/terminal metadata, not a promise of fast service. Default or missing returned tiers remain unconfirmed; native reported costs may still apply requested-priority pricing and are not invoices. Missing Luna fails rather than selecting Sol.
+
+Use `comparisonSummary` for runtime-owned paths/status. Only a completed, untruncated result with `checkedSnapshot` supplies the checked inventory. An unavailable result can carry `comparisonFailure` with the intact checker-reported reason and paths, never counts or changes. If that receipt was altered or unavailable, the runtime keeps only a generic unavailable summary. The child's `output` remains separately `unverified-report`, even if it contradicts the inventory. Do not restore redacted data or turn hashes into physical-provenance/freshness claims.
+
+Rollback: finish/cancel active work and restart **without the flag**. The new role disappears and its checker is not registered; the original five remain available. `/reload` retains CLI flags and is not this rollback. Actual installation/live acceptance remain tracked separately in PILOT.md.
 
 ## Trust and evidence
 
