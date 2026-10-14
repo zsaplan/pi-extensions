@@ -92,6 +92,22 @@ Use `comparisonSummary` for runtime-owned paths/status. Only a completed, untrun
 
 Rollback: finish/cancel active work and restart **without the flag**. The new role disappears and its checker is not registered; the original five remain available. `/reload` retains CLI flags and is not this rollback. Actual installation/live acceptance remain tracked separately in PILOT.md.
 
+## Request a new specialist
+
+The bundled [request-specialist skill](skills/request-specialist/SKILL.md) helps a parent session check existing roles and draft a bounded development request. It includes a capability guide and request template; it does not create, enable or automatically run a profile.
+
+After updating this package, existing sessions can use `/reload`, then:
+
+```text
+/skill:request-specialist Draft a request for the investigation work we just did.
+```
+
+The skill is available without the checked-pilot flag. Sessions must load package skills (not `--no-skills` or a package `skills: []` filter); resolve duplicate skill-name warnings rather than assuming the right copy loaded. It is exported by both the standalone and root packages—install only the package form appropriate to your setup, not both.
+
+By default the requester saves one private, uniquely named `REQUEST.md` under the Pi agent directory's `profile-requests/` folder. It reports the actual absolute path for the user to pass to the developing session. There is no queue, cross-session messaging, automatic approval or dynamic profile loading. Other machines/users may not share those paths. If safe local saving is unavailable, the skill provides a sanitized inline draft instead.
+
+The request records the job, existing-role gap, example assignment, evidence/access boundaries, expected handoff, proposed acceptance cases and actual authorization. Unknowns remain explicit. Live tests, paid trials, merge, installation and enablement require their own authorization; asking for a request does not grant them.
+
 ## Trust and evidence
 
 Profiles are trusted bundled code. Tasks cannot select profile paths, tools, model, working directory, instructions or limits. No project-local/remote/generated profiles are discovered. All child tools—including file access—execute through the parent's permission, validation, redaction and accounting pipeline. Missing tools fail closed.
