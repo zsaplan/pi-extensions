@@ -1,0 +1,44 @@
+{
+  "name": "@zsaplan/pi-task-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone Slack-first task assistant with a durable local queue and supervised single-task sessions.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zsaplan/pi-extensions.git",
+    "directory": "task-assistant"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "pi-task-assistant": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "DESIGN.md"
+  ],
+  "scripts": {
+    "lint": "gts lint",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
+    "test": "npm run build && node --test test/*.test.ts",
+    "verify": "npm run lint && npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "@types/proper-lockfile": "^4.1.4",
+    "gts": "^7.0.0",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "proper-lockfile": "^4.1.2",
+    "typebox": "1.1.38",
+    "yaml": "2.9.0"
+  }
+}

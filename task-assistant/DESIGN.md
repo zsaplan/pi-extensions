@@ -1,0 +1,60 @@
+# Task assistant design
+
+## Scope
+
+A standalone, single-coordinator npm package, with one worker by default and an opt-in two-worker mode. Nothing starts on import or ordinary Pi loading. Each task retains its own Slack thread, exact Pi session and authority boundary. Bounded trials, explicitly approved regular use and an optional macOS background service share the same coordinator. Multi-site telemetry, Jira synchronization and unrestricted implementation are outside the current scope.
+
+## Ownership
+
+- `config.ts`, `cli.ts`: explicit commands, validated configuration, sanitized output.
+- `slack.ts`, `preflight.ts`: fixed-origin read-only Slack methods, identity/access checks, cancellation and shared persisted rate limits where configured.
+- `store.ts`, `queue-cli.ts`: JSON queue boundary, deterministic source identity, complete staged publication, directory-derived status, atomic metadata writes, one maintained filesystem lock.
+- `intake.ts`, `intake-cli.ts`: paginated mention/DM/thread polling, per-feed checkpoints, durable source receipts, self-message filtering, independent failures.
+- `worker.ts`, `worker-cli.ts`: bounded classification, the coordinator-only `enqueue_task` adapter, exact Pi session creation/reopen, scoped task tools, outcomes and interrupted-run recovery.
+- `task-slack.ts`: stored-destination-only parent/reply operations, serialized writes, durable posting intent, reconciliation, notification policy, unchanged-render suppression.
+- `cadence.ts`: monotonic 150-second start-to-start intake timer; skips missed ticks without overlap.
+- `worker-pool.ts`: a bounded queue snapshot, one or two concurrent task sessions, slot refill, per-task settlement, and abort/await on fatal errors.
+- `auto-trial.ts`, `trial-renewal.ts`: durable total-admission reservations, protected source threads, exact deadlines, closed-run rejection and separately approved same-task continuation windows.
+- `regular-use.ts`: explicit transition from closed trial history to bounded ongoing admission, preserving inherited identities and reservations across restarts.
+- `background.ts`: explicit macOS LaunchAgent installation, app snapshots, private credentials, bounded logs, stop/start/status controls and a failure latch.
+- `serve.ts`: independent intake, serial classification between worker batches, per-task publication through the shared serialized messenger, coalesced follow-up batches and shutdown ownership.
+
+Packages are declared dependencies, not imports from another worktree. TypeScript builds to JavaScript under `dist/`; tests execute that packaged form.
+
+## Durable boundaries
+
+The state root has status folders plus `staging/`, `intake/`, `sessions/`, and `runs/`. `task.json` contains identity, request/outcome, source and inbox references, Slack parent mapping, exact Pi session ID/file, update/next action, and a pending question. It never contains a duplicated status field.
+
+The root coordinator holds `proper-lockfile` ownership. Source identity is workspace/channel/message timestamp. Records are complete before a same-filesystem rename exposes them in `queued/`. Queue commands and the enqueue tool use the same engine. Source collisions spanning multiple tasks fail rather than silently merging work. Session files never move with task folders.
+
+Intake writes a receipt per source-message identity/content revision before advancing a feed. Searches and individual threads have independent checkpoints; a failed page leaves earlier receipts durable but the feed checkpoint unchanged. Classification decisions are saved before task effects, and candidates are refreshed against the current task set so earlier items in the same batch can establish relationships. Blocked items remain visible. No model runs on an unchanged idle poll. Results already superseded during classification are skipped before task effects; revision-guarded receipt commits keep later edits pending. Atomic per-file updates merge concurrent cooldown changes and preserve completed decisions for unchanged receipts. Task-directory snapshots and publication/status renames share a short catalog queue; network/model calls never hold it.
+
+Receipts optionally record `content_source` (`search` or `conversation`); older records gain this metadata when next observed by a conversation feed. Once full conversation content is stored, indexed search cannot replace it or reset its decision. Same-content observations retain classification and only upgrade provenance. A search filter for missing literal mention markup is reconsidered when the same message is valid tracked-thread context. Text is not guessed at or decoded to reconcile API differences; real conversation edits still change the content revision. Search-only discoveries remain available even when a separate thread feed fails.
+
+A queued task is claimed by checking it, saving a fresh `claim_id` and renaming it to `active/` in one catalog transaction, before session/model setup. The run journal carries the same claim ID. Recovery may apply a settled outcome only when it belongs to the current claim; a crash between claiming and writing a new journal must not apply the previous run's result over an unhandled owner reply. Legacy records without either claim ID retain their original recovery behavior. A second claim cannot create another writer for that task. Recovery is coordinator-startup-only; it must not requeue active peers between dispatches. Classification and source-alias updates remain between batches, avoiding concurrent classification writes to worker-owned metadata.
+
+A task run has a separate durable journal; an `active/` directory is not proof of a live worker. A completed outcome is recorded before applying the task update/status move, allowing idempotent recovery. Replies arriving during recovery are routed only after settled outcomes have been applied. New input is handled after the previous run settles, not as in-flight steering.
+
+Automatic discovery trials require a fresh root. `runs/auto-trial.json` binds the task limit, duration, DM, discovery inputs and protected thread identities. The coordinator alone reserves each deterministic source/task ID before enqueue; reservations survive interrupted publication and count even if no task directory was created. All root tasks must match a reservation before recovery or work. Classification derives candidates from actual owner/source-thread identity, not cached candidate IDs. Only eligible mentions/new watched-channel roots can consume unused slots; overflow and unrelated DM history are deferred before model calls. Any incomplete intake stops automatic work before new classification or publication. Closed/expired ledgers and omitted scope cannot become ordinary unbounded serve/step calls. Crash recovery retains the same expiry instead of starting a new clock. This remains a code-level authority boundary, not protection against arbitrary host filesystem changes.
+
+## Capability and publication boundary
+
+Workers use explicit SDK resources/settings and a tool allowlist, with no discovered extensions, skills, MCP, project context, or general shell/filesystem tools. The first worker can draft from supplied evidence, read stored source threads in bounded pages, write Markdown artifacts inside its task, record an outcome, and request task-specific communication. It cannot choose arbitrary destinations or execute external operations. This is not OS isolation; the host and trusted SDK still run with the launching user's permissions.
+
+Only the owner supplies task decisions; source-thread content is evidence. Model classification cannot authorize external actions. The operator must explicitly enable Slack writes for the supervised runtime. The destination is the previously selected owner/bot DM, revalidated with the bot identity and conversation metadata. No general Slack/Jira write tool is exposed.
+
+`task_sync_slack(task_id)` creates/edits one parent and includes the actual SDK session ID. `task_reply(task_id,text,needs_response)` resolves the stored thread and adds only the stored owner mention when a response is needed. Supplied text is escaped to prevent injected mentions. Model tool calls are bound to their current task ID.
+
+Before a post, a durable intent records the destination, content and client message ID. On an uncertain outcome, history/thread matching must find exactly one bot message; otherwise writes stop rather than guessing. All outstanding uncertain intents for that task are checked before subsequent publication. Writes within a process are serialized, and shared method cooldowns survive process restarts. No exactly-once external-delivery guarantee is claimed.
+
+## Bounded operation and limitations
+
+Intake uses legacy Slack search. It uses overlapping calendar-date bounds and local exact filtering, but Slack indexing/coalescing and old edit/deletion limitations remain. Source reads identify pagination, clipped text, and unread attachments. Passing access probes does not establish complete recall.
+
+Foreground intake starts every 150 seconds independently of task work. Intake never overlaps; slow polls skip missed ticks rather than bursting to catch up. Cooldowns delay only affected methods. This is not a hard real-time or sleeping-host guarantee. A busy batch coalesces poll requests into one subsequent batch; batches never overlap. Opt-in `--workers 2` processes at most ten tasks from the captured queue, with at most two workers and one claim per task. A freed slot takes another captured task while its peer continues. Per-task replies can publish immediately after settlement. Incoming replies wait for classification after the batch, which may increase continuation latency despite healthy intake. Classification is bounded to ten pending items per pass and 60 seconds per call. Worker runs have 120-second/eight-turn bounds, not a dollar cap. Shutdown cancels all worker lanes and waits for settlement before releasing the root lock. A task-level failure does not retry itself or overwrite peers; a fatal setup/pool error cancels peers and awaits them before propagating. Publication errors hold further dispatch, retaining settled outcomes for the next guarded publication pass. `serve --once` remains a single settled cycle. Separate intake and task-cycle reports expose progress/failures; the preflight-only `run` command retains its older completion-to-start schedule.
+
+The first worker is deliberately a source-context investigator/local drafter, not an unrestricted coding or operations agent. Filesystem sandboxing and broad tool expansion remain deferred. The optional local service supervisor does not widen worker capabilities. Two-worker mode rejects the legacy single-task selector and telemetry flags. The new `--task-ids` allowlist admits one to three already published tasks, validates the entire root before recovery, and requires a single cycle or the existing pilot deadline. Selection, cached classification results, dispatch and publication stay inside the approved IDs. Multi-task scope admits actual stored-source updates as well as owner-thread replies; the legacy single-task mode stays owner-thread-only. Unrelated pending input and incomplete/error cycles still stop a pilot. Broad discovery is read-only preparation, not execution authority. Per-task multi-site telemetry and actual live approval remain separate.
+
+## Verification
+
+Use compiled-CLI E2E tests, real Pi session storage, and deterministic Slack/model transports for destructive/retry scenarios. Evidence records routing IDs, session paths, state changes, test context, and unchecked live work without credentials or unrelated source bodies. Opt-in real-provider synthetic replays can check model behavior without live Slack writes. Live parent rendering, natural owner replies, notifications, restart behavior and longer-term reliability must be accepted separately in the selected deployment. Keep the resulting records outside Git; see [private records and publication](README.md#private-records-and-publication).
