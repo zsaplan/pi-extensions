@@ -16,6 +16,10 @@ Status vocabulary: **proposed**, **supported within tested scope**, **not suppor
 | H006 | A shorter structured specialist handoff reduces repeated parent investigation without losing evidence or uncertainty. Predeclared gates: ≥25% fewer duplicate parent reads, ≥20% shorter median child report, no >10% mean paired cost/time/peak-context regression, all quality checks passed. | E011 | Not supported in screening; candidate parked. Parent reopened nine successful files in each arm; median report words fell 32.8% with required quality preserved. One native provider retry left usage unknown, so overall efficiency is inconclusive. [Protocol](examples/report-brief/PROTOCOL.md), [results](examples/report-brief/RESULTS.md). |
 | H007 | Chaining a specialist run with retrieval of its original read records removes a parent verification request cycle without weakening evidence review. | E012 | Parked after first-pair evidence-handling failure: candidate printed the full child transcript rather than filtered read records. One parent request was saved, but peak context rose 18.1% and cost 8.3%; baseline source rereads were already zero. [Protocol](examples/evidence-reuse/PROTOCOL.md), [results](examples/evidence-reuse/RESULTS.md). |
 | H008 | A bounded original-read evidence packet returned by the runner lowers verification cost/context without importing child transcripts. | E013–E015 | Screen coverage complete; promising, not fully accepted. E015's three remaining pairs passed quality review. Original four-pair mean cost/context fell 31.0%/35.1%, with time essentially unchanged and parent requests 16→13. Original citation defect retained; E014 clean repeats not substituted. Candidate unchanged/uninstalled; independent review and acceptance remain open. [Protocol](examples/file-evidence/PROTOCOL.md), [status](examples/file-evidence/RESULTS.md), [retest](examples/file-evidence/CITATION-RETEST.md), [remaining cases](examples/file-evidence/REMAINING-CASES.md). |
+| H009 | Optional specialists improve useful allocation versus matched direct file work, with quality first and cost/context savings. | E016 + authorized E018; E017 ineligible | Not supported by the screen. All four optional arms stayed direct; original direct configuration citation defects remain failures. No delegation benefit established. |
+| H010 | A lead-oriented parent identity alone improves allocation and outcomes with identical optional tools. | E019; E020 ineligible | Not supported by the screen. Eight reports passed factual/citation review, but neither arm discovered or launched specialists. Cost/context gates missed; identity candidate parked. |
+| H011 | Explicit allocation responsibility and/or visible trusted capabilities changes optional delegation; influence and usefulness are separate outcomes. | E021–E022 | Combined framing produced a repeated, task-dependent routing signal, not a demonstrated efficiency win. Single factors did not trigger delegation in the screen; all tiny/gap cases stayed direct. No installed prompt change. |
+| H012 | A targeted-citation assignment rule reduces duplicated specialist output and total handoff cost without weakening verification. | E023 stopped; E024 ineligible; E025 complete | Not supported on the focused documentation workload; cue parked. E025 reduced grep output but increased model turns and total cost/time versus current delegation. Direct work remained cheaper/faster. E023's incomplete measurement is preserved, not replaced. |
 
 ## Experiments and observations
 
@@ -40,6 +44,39 @@ Costs are reported parent-plus-child model costs, not verified billing. Reviews 
 | E014 | User-authorized citation recurrence diagnostic: three new pairs on the unchanged mixed-configuration case, with alternating order and unchanged candidate. | Original error did not recur: 0/3 new candidate reports, 0/3 new baseline reports; all final facts correct. Total reported cost $0.290058. | All 60 changed-field source addresses correct, not 60 independent trials. Candidate parents omitted line numbers rather than repeating errors. Complete accounting/packet fidelity; one baseline child added grep checks. Original E013 failure retained, no acceptance changes or broader runs. [Review](examples/file-evidence/CITATION-RETEST.md). |
 
 | E015 | User-approved continuation: three remaining original case pairs, unchanged candidate, prompts, fixtures and quality rule, new frozen group. | All six new child/parent reports passed findings/citation/uncertainty review. New reported cost $0.218482; complete accounting and faithful packets including ENOENT. | Original E013 defect retained in descriptive four-pair performance, not replaced by E014 repeats. Candidate parent independently rechecked the missing file; no transcript imports. No automatic confirmation, code changes or installation. [Review](examples/file-evidence/REMAINING-CASES.md). |
+
+## Later local-file studies
+
+This is a retrospective distillation of separately frozen studies, not new preregistration or a change to their gates. Parents/children used Sol/medium with fixed read-only scope; reviews were assistant-led and unblinded. Experimental prompts were not installed. Small repeated static cases, fresh lean contexts, adaptive study selection and uncontrolled provider/cache effects limit generalization.
+
+| Study | Result and retained limits |
+|---|---|
+| E016 / E018 | Eight original direct/optional trials across tiny, configuration, documentation and missing-history cases; no specialist searches or runs. The direct configuration report had correct values but four wrong line citations. Authorized remaining cases did not replace this failure. Total reported cost $0.2325244; descriptive optional/direct cost 0.9516, peak-context 1.2870, elapsed 0.9353. E017 ineligible. |
+| E019 | Eight fresh identity comparisons; all factual/citation reviews passed, no discovery or children. Lead/baseline cost 0.9110, peak-context 1.0315, elapsed 0.8652. Cost/context gates missed; E020 ineligible. One sequential independent-reread process deviation retained. |
+| E021 / E022 | Four-arm framing screen, then predeclared eligible-arm repeat. Only combined responsibility/capability framing delegated in the screen: configuration and documentation. Documentation delegated again; configuration did not. All 22 parent and three child factual/citation reviews passed. Combined/control screen cost/time 1.5667/2.1356; repeat 0.9813/1.4813. Behavioral influence was not a utility win. |
+| E023 | Twelve-trial citation-work screen stopped after four trials. A native WebSocket failure recovered to a correct answer but left parent usage unknown. Known subtotal $0.1464424 plus an unmeasured request; eight trials remain unrun. No candidate specialist ran. E024 remains ineligible. |
+| E025 | Separately authorized documentation-only study: six fresh trials in reversed triple order, with unchanged cue/defaults. All six parent and four child factual/citation reviews passed; accounting complete, no transport failures, total reported cost $0.5093096. No replacements, installation or automatic follow-up. |
+
+E025's fixed order and full parent-plus-child measurements:
+
+| Trial | Reported cost | Seconds | Peak parent input |
+|---|---:|---:|---:|
+| docs1-direct | $0.0446632 | 35.662 | 16,216 |
+| docs1-control | $0.0979032 | 78.081 | 12,928 |
+| docs1-citation-cue | $0.1250676 | 99.846 | 18,938 |
+| docs2-citation-cue | $0.0935604 | 89.812 | 17,534 |
+| docs2-control | $0.1053180 | 84.382 | 16,592 |
+| docs2-direct | $0.0427972 | 29.005 | 15,537 |
+
+Both optional arms naturally launched one documentation specialist in both rounds; both candidates forwarded the citation rule. Candidate/control aggregate cost ratio was 1.075813, elapsed 1.167392, mean paired peak input 1.260828. Against fresh direct references the ratios were 2.499737, 2.932841 and 1.148195. Both comparisons missed the cost/time <=0.90 and context <=1.10 gates. Round-two cost improved versus control, but elapsed did not; neither round beat direct work.
+
+Child full-file `grep '^'` replays fell from 5/4 to 0/0, and returned grep characters from 56,206 to 43,850 overall. However, child requests rose 3→5 in each round and cumulative input traffic rose 44,681→71,954. The latter sums input plus cache-read/write tokens over requests, not unique source size. All packets retained claims, collector source and guidance; README/runner and the candidate's later bounded reads were omitted. Parents still reread README/runner. Smaller grep output did not remove the handoff penalty.
+
+E025's new bounded failure-continuation rule was declared before launch but not exercised. It does not amend E023 or turn its unknown usage into zero. An audit-only probe for nonexistent child `events.jsonl` was retained and corrected to documented artifacts without rerunning trials.
+
+Detailed frozen protocols/results remain in the local experiment history (`68b3175`, `3ec2a6c`, `beb5091`, `1bd690d`, `0905087`); raw evidence stays in private ignored directories. Those experiment commits and prompt shims are not included in this documentation-only distillation. E025 verified 132 unchanged frozen paths, scope, packet fidelity and complete child reconciliation. Package and repository checks passed; these are not independent quality acceptance.
+
+The H008 row above records its experimental-stage status. The evidence runtime was subsequently merged and installed with approval at `c7462ef`; that does not erase earlier citation defects or establish general usefulness. Independent quality review, broader everyday workloads, spontaneous timestamp interpretation and long-running parent-context effects remain open. No new identity, routing cue, model or packet-policy change follows these results.
 
 ## Add the next hypothesis
 

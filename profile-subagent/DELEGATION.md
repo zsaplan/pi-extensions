@@ -59,4 +59,16 @@ No material classification error was found. Core conclusions agreed, but seconda
 
 This supports the current policy on shared-context work—not causal proof, identical coverage, verified billing, parallel speedup or general superiority. Model/provider load, caching and mutable evidence were not controlled. Earlier revisions used different instructions and are historical context, not controlled comparators.
 
+## Later file-review evidence
+
+The favorable live result above is not a default expectation. Later fresh-session file studies found that suitable specialists and successful handoffs did not necessarily improve efficiency. Explicit allocation responsibility plus a capability brief influenced delegation on some tasks, but did not establish a cost/time benefit; identity wording alone did not trigger delegation in its screen.
+
+In E025, two reversed-order comparisons reviewed the same twelve documentation claims. Both optional approaches naturally delegated in both rounds. Direct review averaged $0.044 and 32 seconds; current delegation $0.102 and 81 seconds; delegation with a targeted-citation rule $0.109 and 95 seconds. All six parent and four child reports passed assistant-led factual/citation review, with complete accounting.
+
+The rule reduced child grep output by about 22%, but child requests rose from three to five and cumulative processed input rose about 61%. Parents still reread the two large source files omitted from the evidence packets. Against current delegation, total cost rose 7.6%, elapsed time 16.7%, and mean paired peak parent input 26.1%. One pair improved cost, but neither improved elapsed time. Direct review remained cheaper and faster in both rounds.
+
+Keep delegation optional and judge the entire handoff, including verification. Do not add routing pressure or mandate selective citation searches from these results. They support direct work for this bounded workload, not a blanket rule against shared-context delegation. The experimental cues are parked; runtime instructions, models and evidence limits remain unchanged.
+
+These small repeated static cases used lean sessions and unblinded review, with uncontrolled cache/provider effects. Independent quality review, broader workloads and established-context usefulness remain open. See the [later-study ledger](benchmark/LEDGER.md#later-local-file-studies) for results and retained failures.
+
 Full original/failure evidence, source hashes and review records remain private. Public summaries intentionally omit target identities, database findings and investigation references. [Benchmark methodology](benchmark/README.md) describes repeatable measurement without requiring those private records. [Release gates](RELEASE.md) keep normal installed-session and production acceptance separate.

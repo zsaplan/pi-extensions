@@ -18,6 +18,15 @@ Optional forced-delegation arms can diagnose one combined versus several indepen
 
 Operational launchers and recording-stub checks tied to private sessions are deliberately not distributed. Repeating a workload requires an operator-owned authorized task/context and a new run identifier; do not reopen someone else's session or reuse private targets.
 
+## Lessons for future comparisons
+
+- Separate routing, answer quality and efficiency. A cue that produces more specialist calls has changed behavior, not necessarily improved outcomes. Keep a fresh direct-work reference when evaluating net payoff, as well as an unchanged delegation control when evaluating a handoff change.
+- Measure model turns and cumulative processed input alongside returned text size. In E025, selective citation work reduced child grep output about 22%, but additional turns increased child input traffic about 61%. Smaller output did not yield lower total cost or time.
+- Include parent verification and packet omissions in the work breakdown. E025's packets omitted the two large source files in every delegated run; candidate follow-up reads were also omitted. A bounded evidence packet is not proof that the parent has enough evidence. Do not remove necessary verification to manufacture a saving.
+- Declare failure handling before launch. Safety, scope, setup or evidence-integrity failures require stopping. An isolated transport or accounting failure may permit remaining safe trials only under an explicit, bounded continuation rule with confirmed cleanup. Retain the invalid measurement, unknown cost and unperformed work; no selective replacement or success-driven retry. Missing usage invalidates the affected cost/context comparison, even when native recovery produces a correct answer.
+
+E025 allowed one affected trial before a second would stop the study, but all six completed without transport failures: that continuation rule was not live-tested. It is a study-specific example, not a runtime retry policy or permission to rewrite earlier stop rules. E023 remains stopped under its original rule. See the [study ledger](LEDGER.md#later-local-file-studies).
+
 ## Parent input context — v1
 
 For each fresh parent assistant request:
