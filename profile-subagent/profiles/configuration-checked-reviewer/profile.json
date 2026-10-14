@@ -1,0 +1,18 @@
+{
+  "id": "configuration-checked-reviewer",
+  "description": "Opt-in Luna pilot: one bounded JSON structural comparison using the checker. Machine-produced inventory is separate from unverified model prose. No semantic array matching, YAML or runtime impact claims.",
+  "tags": [
+    "configuration",
+    "json",
+    "checked",
+    "snapshots"
+  ],
+  "agents": "AGENTS.md",
+  "skills": [],
+  "builtinTools": [],
+  "parentTools": [
+    "compare_json_snapshots"
+  ],
+  "maxTurns": 6,
+  "timeoutSeconds": 120
+}

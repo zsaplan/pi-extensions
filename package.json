@@ -39,10 +39,21 @@
     "rainman",
     "response-review",
     "session-file-footer",
+    "task-assistant",
     "DESIGN.md",
     "README.md",
     "package.json",
-    "!**/tmp/**"
+    "!**/tmp/**",
+    "!task-assistant/DEPENDENCY_REVIEW.md",
+    "!task-assistant/IMPLEMENTATION_PLAN.md",
+    "!task-assistant/RESEARCH.md",
+    "!task-assistant/RUNBOOK.md",
+    "!task-assistant/operations/**",
+    "!task-assistant/.local/**",
+    "!task-assistant/state/**",
+    "!task-assistant/node_modules/**",
+    "!task-assistant/.env",
+    "!task-assistant/.env.*"
   ],
   "pi": {
     "extensions": [
@@ -94,6 +105,7 @@
     "rainman",
     "response-review",
     "session-file-footer",
-    "profile-subagent"
+    "profile-subagent",
+    "task-assistant"
   ]
 }

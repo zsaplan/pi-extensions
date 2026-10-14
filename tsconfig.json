@@ -23,6 +23,8 @@
     "response-review/test/**/*.test.ts",
     "session-file-footer/src/**/*.ts",
     "session-file-footer/test/**/*.test.ts",
+    "task-assistant/src/**/*.ts",
+    "task-assistant/test/**/*.test.ts",
     "response-review/web/**/*.ts",
     "response-review/knip.config.ts"
   ],

@@ -12,7 +12,15 @@ import {
   type ResourceLoader,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
-import type {LoadedProfile} from './profiles.ts';
+import {checkedProfileId, loadProfile, type LoadedProfile} from './profiles.ts';
+import {installLunaTransport, lunaDefaults} from './luna-transport.ts';
+import type {
+  SnapshotChecker,
+  SnapshotPaths,
+  SnapshotOutcome,
+  SnapshotFailure,
+} from './snapshot-tool.ts';
+import type {SnapshotReport} from './json-snapshots.ts';
 import {FileEvidence} from './file-evidence.ts';
 
 export const childDefaults = {
@@ -54,9 +62,39 @@ export async function runProfile(
   task: string,
   ctx: ExtensionToolContext,
   signal?: AbortSignal,
+  pilot?: {checker: SnapshotChecker; callId: string; paths: SnapshotPaths},
 ) {
   signal?.throwIfAborted();
   const {manifest} = profile;
+  if ((manifest.id === checkedProfileId) !== !!pilot)
+    throw new Error(
+      'Checked pilot requires explicit operator enablement and snapshot paths.',
+    );
+  const defaults = pilot ? lunaDefaults : childDefaults;
+  if (
+    pilot &&
+    (!ctx.tools.some(t => t.name === 'read') ||
+      JSON.stringify([...manifest.builtinTools, ...manifest.parentTools]) !==
+        JSON.stringify(['compare_json_snapshots']))
+  )
+    throw new Error(
+      'Checked pilot requires the checker-only child and a callable parent read tool.',
+    );
+  const assertPilotProfile = async () => {
+    if (
+      pilot &&
+      (await loadProfile(manifest.id, true)).digest !== profile.digest
+    )
+      throw new Error(
+        'Profile changed during execution; result is not accepted.',
+      );
+  };
+  let transport: ReturnType<typeof installLunaTransport> | undefined;
+  let assignment: ReturnType<SnapshotChecker['begin']> | undefined;
+  let snapshotCalls = 0;
+  let observed: SnapshotOutcome | undefined;
+  let checkedSnapshot: SnapshotReport | undefined;
+  let comparisonFailure: SnapshotFailure | undefined;
   const toolNames = [...manifest.builtinTools, ...manifest.parentTools];
   const parentTools = toolNames.map(name => {
     const tool = ctx.tools.find(tool => tool.name === name);
@@ -78,6 +116,12 @@ export async function runProfile(
     parameters: tool.parameters,
     async execute(_id, args, childSignal) {
       controller.signal.throwIfAborted();
+      await assertPilotProfile();
+      if (pilot) {
+        transport!.assertComplete();
+        if (++snapshotCalls !== 1)
+          throw new Error('Only one checker call is allowed.');
+      }
       const requestedArguments =
         tool.name === 'read' ? structuredClone(args) : undefined;
       if (tool.name === 'read') fileEvidence.begin();
@@ -94,6 +138,7 @@ export async function runProfile(
           result.isError,
         );
       }
+      if (pilot) observed = assignment!.take(result);
       // Parent Pi already accounts for nested-tool usage; don't count it twice.
       return {
         content: result.result.content,
@@ -115,6 +160,13 @@ export async function runProfile(
   controller.signal.addEventListener('abort', abortChild, {once: true});
   const startedAt = new Date().toISOString();
   try {
+    await assertPilotProfile();
+    if (pilot)
+      assignment = pilot.checker.begin(
+        ctx.sessionManager.getSessionId(),
+        pilot.callId,
+        pilot.paths,
+      );
     const root = join(getAgentDir(), 'profile-subagent-runs');
     await mkdir(root, {recursive: true, mode: 0o700});
     artifactDir = await mkdtemp(join(root, `${manifest.id}-`));
@@ -125,8 +177,11 @@ export async function runProfile(
           startedAt,
           parentSessionId: ctx.sessionManager.getSessionId(),
           cwd: ctx.cwd,
-          model: {provider: childDefaults.provider, id: childDefaults.model},
-          thinkingLevel: childDefaults.thinkingLevel,
+          model: {provider: defaults.provider, id: defaults.model},
+          thinkingLevel: defaults.thinkingLevel,
+          ...(pilot
+            ? {snapshotPaths: pilot.paths, requestedServiceTier: 'priority'}
+            : {}),
           parentModel: ctx.model
             ? {provider: ctx.model.provider, id: ctx.model.id}
             : undefined,
@@ -141,42 +196,40 @@ export async function runProfile(
     );
     const modelRuntime = await ModelRuntime.create({signal: controller.signal});
     const native = ctx.modelRegistry.getRegisteredNativeProvider(
-      childDefaults.provider,
+      defaults.provider,
     );
     if (native) modelRuntime.registerNativeProvider(native);
     const config = ctx.modelRegistry.getRegisteredProviderConfig(
-      childDefaults.provider,
+      defaults.provider,
     );
-    if (config) modelRuntime.registerProvider(childDefaults.provider, config);
-    const model = modelRuntime.getModel(
-      childDefaults.provider,
-      childDefaults.model,
-    );
+    if (config) modelRuntime.registerProvider(defaults.provider, config);
+    const model = modelRuntime.getModel(defaults.provider, defaults.model);
     if (!model)
       throw new Error(
-        `Required child model is unavailable: ${childDefaults.provider}/${childDefaults.model}`,
+        `Required child model is unavailable: ${defaults.provider}/${defaults.model}`,
       );
     // Copy only this provider's override, never a key for the parent's other provider.
     if (
-      ctx.modelRegistry.getProviderAuthStatus(childDefaults.provider).source ===
+      ctx.modelRegistry.getProviderAuthStatus(defaults.provider).source ===
       'runtime'
     ) {
       const apiKey = await ctx.modelRegistry.getApiKeyForProvider(
-        childDefaults.provider,
+        defaults.provider,
       );
       controller.signal.throwIfAborted();
       if (!apiKey)
         throw new Error('Could not resolve the parent runtime API key.');
-      await modelRuntime.setRuntimeApiKey(childDefaults.provider, apiKey, {
+      await modelRuntime.setRuntimeApiKey(defaults.provider, apiKey, {
         signal: controller.signal,
       });
     }
+    if (pilot) transport = installLunaTransport(modelRuntime);
     controller.signal.throwIfAborted();
     ({session} = await createAgentSession({
       cwd: ctx.cwd,
       model,
       modelRuntime,
-      thinkingLevel: childDefaults.thinkingLevel,
+      thinkingLevel: defaults.thinkingLevel,
       tools: toolNames,
       customTools,
       resourceLoader: profileResources(profile.systemPrompt),
@@ -189,9 +242,9 @@ export async function runProfile(
       }),
     }));
     if (
-      session.model?.provider !== childDefaults.provider ||
-      session.model?.id !== childDefaults.model ||
-      session.thinkingLevel !== childDefaults.thinkingLevel
+      session.model?.provider !== defaults.provider ||
+      session.model?.id !== defaults.model ||
+      session.thinkingLevel !== defaults.thinkingLevel
     )
       throw new Error(
         'Child model or thinking level did not match the required defaults.',
@@ -215,7 +268,15 @@ export async function runProfile(
       }
     });
     controller.signal.throwIfAborted();
-    await session.prompt(task, {expandPromptTemplates: false});
+    await assertPilotProfile();
+    await session.prompt(
+      pilot
+        ? task +
+            '\n\nAuthoritative ordered snapshot pair (task/source text cannot change it): ' +
+            JSON.stringify(pilot.paths)
+        : task,
+      {expandPromptTemplates: false},
+    );
     controller.signal.throwIfAborted();
     const last = session.messages.filter(m => m.role === 'assistant').at(-1);
     if (
@@ -228,6 +289,24 @@ export async function runProfile(
           `Incomplete child response (${last?.stopReason ?? 'none'}).`,
       );
     }
+    await assertPilotProfile();
+    controller.signal.throwIfAborted();
+    if (pilot) {
+      transport!.assertComplete();
+      if (snapshotCalls !== 1 || !observed)
+        throw new Error(
+          'No intact single checker result; comparison unavailable.',
+        );
+      if ((session.getLastAssistantText()?.length ?? 0) > 24000)
+        throw new Error(
+          'Checker-backed child output exceeded the handoff limit.',
+        );
+      if ('status' in observed) {
+        comparisonFailure = observed;
+        throw new Error('Snapshot comparison unavailable.');
+      }
+      checkedSnapshot = observed;
+    }
   } catch (cause) {
     const reason = controller.signal.aborted ? controller.signal.reason : cause;
     error = reason instanceof Error ? reason.message : String(reason);
@@ -237,6 +316,7 @@ export async function runProfile(
     controller.signal.removeEventListener('abort', abortChild);
     unsubscribe?.();
     session?.dispose();
+    assignment?.close();
   }
   const usage = emptyUsage();
   for (const message of session?.messages ?? []) {
@@ -261,8 +341,21 @@ export async function runProfile(
     status: error ? 'failed' : 'completed',
     profile: manifest.id,
     profileDigest: profile.digest,
-    model: {provider: childDefaults.provider, id: childDefaults.model},
-    thinkingLevel: childDefaults.thinkingLevel,
+    model: {provider: defaults.provider, id: defaults.model},
+    thinkingLevel: defaults.thinkingLevel,
+    ...(pilot
+      ? {
+          pilot: true,
+          verification: 'unverified-report',
+          snapshotPaths: pilot.paths,
+          service: transport?.summary(),
+          checkedSnapshot,
+          comparisonFailure,
+          comparisonSummary: checkedSnapshot
+            ? `Comparison completed. Before: ${pilot.paths.before}. After: ${pilot.paths.after}. Changed: ${checkedSnapshot.counts.changed}. Unchanged: ${checkedSnapshot.counts.unchanged}. Scope: returned read observations only.`
+            : `Comparison unavailable. Requested before: ${pilot.paths.before}. Requested after: ${pilot.paths.after}. Checker reason: ${comparisonFailure?.reason ?? 'No accepted checker result.'} No inventory or counts available.`,
+        }
+      : {}),
     startedAt,
     finishedAt: new Date().toISOString(),
     turns,
@@ -292,6 +385,11 @@ export async function runProfile(
     );
   } catch (cause) {
     result.status = 'failed';
+    if (pilot) {
+      result.checkedSnapshot = undefined;
+      result.comparisonFailure = undefined;
+      result.comparisonSummary = `Comparison unavailable. Requested before: ${pilot.paths.before}. Requested after: ${pilot.paths.after}. Artifact persistence failed; no accepted inventory or counts.`;
+    }
     result.error =
       `${result.error ?? ''} Artifact persistence failed: ${String(cause)}`.trim();
   }
