@@ -8,3 +8,14 @@ response-review/web/app.js
 
 # Ignore agent memory / scratch docs in any tmp directory
 tmp/
+
+# Task assistant operational records stay local, never in public history.
+/task-assistant/DEPENDENCY_REVIEW.md
+/task-assistant/IMPLEMENTATION_PLAN.md
+/task-assistant/RESEARCH.md
+/task-assistant/RUNBOOK.md
+/task-assistant/operations/
+/task-assistant/.local/
+/task-assistant/state/
+/task-assistant/.env
+/task-assistant/.env.*

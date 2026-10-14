@@ -16,6 +16,7 @@ Personal repo-backed source for pi extensions.
 - `rainman/` → `@zsaplan/pi-rainman`
 - `response-review/` → `@zsaplan/pi-response-review`
 - `session-file-footer/` → `@zsaplan/pi-session-file-footer`
+- `task-assistant/` → `@zsaplan/pi-task-assistant` — standalone Slack-first task queue and supervised single-task runner; not loaded by `pi -e .`
 
 Extension packages keep their own `package.json` and `pi` manifest. `rain-core/` is the shared deterministic utility layer; model policy and runtime orchestration stay in the extension packages.
 
