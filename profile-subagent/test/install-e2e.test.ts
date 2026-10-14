@@ -86,6 +86,15 @@ test(
         (file: {path: string}) => file.path,
       );
       assert.ok(rootPaths.includes('profile-subagent/src/index.ts'));
+      assert.ok(
+        rootPaths.includes(
+          'profile-subagent/skills/request-specialist/SKILL.md',
+        ),
+      );
+      const rootManifest = JSON.parse(
+        await readFile(join(repoRoot, 'package.json'), 'utf8'),
+      );
+      assert.ok(rootManifest.pi.skills.includes('./profile-subagent/skills'));
       assert.ok(!rootPaths.some((path: string) => /(^|\/)tmp\//.test(path)));
       const pack = JSON.parse(
         await command('pack', 'npm', [
@@ -99,6 +108,8 @@ test(
       );
       const paths = pack[0].files.map((file: {path: string}) => file.path);
       assert.ok(paths.includes('src/index.ts'));
+      for (const file of ['SKILL.md', 'CAPABILITIES.md', 'REQUEST_TEMPLATE.md'])
+        assert.ok(paths.includes(`skills/request-specialist/${file}`));
       assert.ok(
         !paths.some((path: string) => /^(tmp|node_modules|test)\//.test(path)),
       );
@@ -140,6 +151,17 @@ test(
           (source: string) => resolve(agent, source) === installed,
         ),
       );
+      // Exercise package skill discovery and the same session.reload path as /reload.
+      const skillReload = JSON.parse(
+        await command('skill-reload', process.execPath, [
+          join(packageRoot, 'test/skill-reload.ts'),
+          installed,
+          agent,
+          cwd,
+        ]),
+      );
+      assert.equal(skillReload.passed, true);
+      evidence.push({name: 'skill-reload', ...skillReload});
       const run = async (
         name: string,
         actions: unknown[],
