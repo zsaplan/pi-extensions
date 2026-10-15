@@ -69,8 +69,9 @@ Existing local Git/HTTP and SDK tests cover scope, history/rename, pagination, r
 
 ## Token-access acceptance
 
-- [x] Packed E2Es: all fifteen local SDK/WebSocket scenarios passed, covering multi-repository discovery/resolution/reads/history/discussions, immutable citations, denied access, empty repositories, sensitive/unsafe paths, parent hooks and rejection of obsolete access options before inference/HTTP.
-- [x] Full repository verification after removing the alternate grant mode: 246 profile tests passed; one unrelated optional task-assistant test skipped. An earlier run failed in an unchanged task-assistant fixture with a null child exit; the full rerun and final verification passed. Its cause was not investigated.
+- [x] Packed E2Es: all fourteen local SDK/WebSocket scenarios passed, covering multi-repository discovery/resolution/reads/history/discussions, immutable citations, denied access, empty repositories, sensitive/unsafe paths, parent hooks and rejection of obsolete access options before inference/HTTP.
+- [x] Review fixes: overlapping first reads share one default-branch resolution; failure provenance and cancellation remain covered. Valid `.github`, underscore and hyphen names work in discovery and direct reads; dot-segment, encoded and backslash names remain refused. Duplicate hook tests were consolidated without losing cross-repository denial/redaction checks.
+- [x] Full repository verification after the review fixes: 246 profile tests passed; one unrelated optional task-assistant test skipped. An earlier run failed in an unchanged task-assistant fixture with a null child exit; the full rerun and final verification passed. Its cause was not investigated.
 - [ ] Broader-access live behavior and interactive Pi activation, if separately requested. Scripted fixtures do not qualify the model's ability to follow efficiency guidance; historical grant-scoped live runs do not establish token-mode acceptance.
 
 Historical prototype studies are preserved privately in their original worktrees, not published with this package. Prior successes are not blanket repository grants or broad reliability evidence.

@@ -184,17 +184,21 @@ export default async function (pi: ExtensionAPI) {
         } else message.content = [{type: 'text', text: 'PARENT_DONE'}];
       } else if (
         results.length === 0 &&
-        ['failure-concurrent', 'failure-cancel', 'request-limit'].includes(
-          cfg.scenario,
-        )
+        [
+          'failure-concurrent',
+          'failure-cancel',
+          'default-head-concurrent',
+          'request-limit',
+        ].includes(cfg.scenario)
       ) {
         message.stopReason = 'toolUse';
         // Two calls in the first turn let the ceiling test finish within the
         // unchanged ten-turn limit. Do not raise the production turn budget.
-        const actions =
-          cfg.scenario === 'request-limit'
-            ? cfg.actions.slice(0, 2)
-            : cfg.actions;
+        const actions = ['request-limit', 'default-head-concurrent'].includes(
+          cfg.scenario,
+        )
+          ? cfg.actions.slice(0, 2)
+          : cfg.actions;
         message.content = actions.map((action, index) => ({
           type: 'toolCall' as const,
           id: `child-${index}`,

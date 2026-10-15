@@ -83,7 +83,11 @@ export const GithubReadSchema = Type.Union([
   ),
 ]);
 export type GithubReadArgs = Static<typeof GithubReadSchema>;
-type Repository = {repository: string; head?: string};
+type Repository = {
+  repository: string;
+  head?: string;
+  resolvingHead?: Promise<void>;
+};
 export interface GithubTransport {
   token: (signal: AbortSignal) => Promise<string>;
   // Trusted host injection for offline fixtures; not exposed to model arguments.
@@ -91,7 +95,7 @@ export interface GithubTransport {
 }
 const shaPattern = /^[a-f0-9]{40}$/;
 const repositoryPattern =
-  /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/;
+  /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/;
 type RequestFailure = {
   requestId: number;
   firstObservedAt: string;
@@ -377,6 +381,21 @@ export function createGithubReader(transport: GithubTransport) {
     );
     return id;
   }
+  async function defaultHead(g: Repository, signal: AbortSignal) {
+    while (g.resolvingHead) await waitForRequest(g.resolvingHead, signal);
+    signal.throwIfAborted();
+    if (g.head) return g.head;
+    let release!: () => void;
+    g.resolvingHead = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    try {
+      return (g.head = await resolveCommit(g, undefined, signal));
+    } finally {
+      g.resolvingHead = undefined;
+      release();
+    }
+  }
   async function listing(
     g: Repository,
     commit: string,
@@ -626,9 +645,7 @@ export function createGithubReader(transport: GithubTransport) {
       if (args.since && args.until && args.since > args.until)
         throw new BoundaryError('Invalid history date range.');
     }
-    const commit =
-      args.commit ??
-      (g.head || (g.head = await resolveCommit(g, undefined, signal)));
+    const commit = args.commit ?? (await defaultHead(g, signal));
     if (args.operation === 'list')
       return {
         ...(await listing(g, commit, path, signal)),

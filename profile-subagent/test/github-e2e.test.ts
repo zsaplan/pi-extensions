@@ -277,6 +277,26 @@ test(
         return;
       }
       if (endpoint === 'commits') {
+        if (url.searchParams.get('per_page') === '1') {
+          assert.equal(scenario, 'default-head-concurrent');
+          const resolutions = requests.filter(
+            r =>
+              r.scenario === scenario &&
+              new URL(r.path, origin).searchParams.get('per_page') === '1',
+          ).length;
+          const resolved = resolutions === 1 ? head : before;
+          timer = setTimeout(
+            () =>
+              send([
+                {
+                  sha: resolved,
+                  commit: {tree: objects.get(`commit:${resolved}`)!.tree},
+                },
+              ]),
+            100,
+          );
+          return;
+        }
         const at = url.searchParams.get('sha')!,
           path = url.searchParams.get('path')!;
         if (
@@ -385,6 +405,11 @@ test(
         read('config/app.yml', introduced),
         read('config/app.yml', before),
       ],
+      'default-head-concurrent': Array.from({length: 3}, () => ({
+        operation: 'file',
+        repository: base.repository,
+        path: 'sites/uat.yml',
+      })),
       'directory-slash': [
         {...base, operation: 'list', path: 'config'},
         {...base, operation: 'list', path: 'config/'},
@@ -601,7 +626,13 @@ test(
         module: join(extension, 'src/github-research.ts'),
         record: join(dir, 'provider.jsonl'),
         server: origin,
-        actions: cases[scenario],
+        actions: ['failure-concurrent', 'failure-cancel'].includes(scenario)
+          ? cases[scenario].map(action => {
+              const args = {...action};
+              delete args.commit;
+              return args;
+            })
+          : cases[scenario],
         ...(scenario === 'timeout'
           ? {deadlineMs: 15500}
           : scenario === 'expired'
@@ -911,6 +942,12 @@ test(
               assert.equal(result.logs.filter(l => l.transport).length, 1);
           }
           if (['failure-concurrent', 'failure-cancel'].includes(scenario)) {
+            assert.equal(
+              new URL(result.requests[0].path, origin).searchParams.get(
+                'per_page',
+              ),
+              '1',
+            );
             const hooks = result.logs.filter(l => l.hook);
             assert.equal(hooks.length, 2);
             assert.ok(
@@ -993,6 +1030,23 @@ test(
                   i => i.commit === head,
                 ),
               ),
+            );
+          }
+          if (scenario === 'default-head-concurrent') {
+            assert.ok(observations.every(o => o.status === 'ok'));
+            assert.deepEqual(
+              observations.map(o => o.commit),
+              [head, head, head],
+            );
+            const resolutions = result.requests.filter(
+              r => new URL(r.path, origin).searchParams.get('per_page') === '1',
+            );
+            assert.equal(resolutions.length, 1);
+            const hooks = result.logs.filter(l => l.hook);
+            assert.equal(hooks.length, 3);
+            assert.ok(
+              Number(hooks[1].at) < Number(resolutions[0].finishedAt),
+              'Initial default-head reads must overlap before resolution completes',
             );
           }
           if (scenario === 'directory-slash') {
