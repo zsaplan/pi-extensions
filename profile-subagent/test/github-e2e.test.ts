@@ -393,8 +393,6 @@ test(
         read('config/app.yml', introduced),
         read('config/app.yml', before),
       ],
-      // Q001 failure: directory grants advertise a trailing slash. Accept one
-      // optional trailing slash for directory operations, never normalize traversal.
       'directory-slash': [
         {...base, operation: 'list', path: 'config'},
         {...base, operation: 'list', path: 'config/'},
@@ -477,9 +475,6 @@ test(
         read('sites/no-eol.txt'),
       ],
       'aggregate-bytes': Array.from({length: 9}, () => discussion('comments')),
-      // Q003: directory-grant roots were rejected by history. Failure modes:
-      // spelling mismatch, broadening exact-file/nested grants, malformed paths,
-      // lost date/page/history-permission bounds, or overstating folder evidence.
       'history-root': [history('config/'), history('config')],
       'history-exact-file': [
         history('config/service.yml'),
@@ -523,10 +518,6 @@ test(
         term: 'budget_entry',
       })),
     };
-    // Failure modes: sequential/cross-operation and concurrent repeated failures;
-    // loss of original error provenance; cancellation while waiting; credential/
-    // transport/time-limit failures; stale state leaking into a new assignment;
-    // search swallowing cached-failure metadata; success caching mutable evidence.
     for (const name of [
       'failure-sequential',
       'failure-concurrent',
@@ -1265,7 +1256,7 @@ test(
             );
           }
           if (scenario === 'request-within-limit') {
-            // Four metadata GETs plus nine five-file scans: no early stop at 24.
+            // Four metadata GETs plus nine five-file scans.
             assert.equal(result.requests.length, 49);
             assert.equal(observations.length, 9);
             assert.ok(
@@ -1318,7 +1309,6 @@ test(
       }
       assert.equal(redirectHits, 0);
       assert.equal(active, 0);
-      // Restart/direct access was exercised in a fresh CLI; no stale assignment or delivery exists.
       assert.ok(
         requests.every(
           r =>

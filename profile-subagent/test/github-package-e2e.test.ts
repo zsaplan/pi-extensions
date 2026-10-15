@@ -67,6 +67,8 @@ test(
       'missing-usage',
       'cancel',
       'delayed-close',
+      'connection-audit-failure',
+      'close-deadline',
     ]) {
       await t.test(scenario, async () => {
         const output = join(root, scenario),
@@ -99,7 +101,59 @@ test(
           await readFile(join(output, 'result.json'), 'utf8'),
         );
         assert.equal(value.activeHttp, 0);
-        if (['provider-error', 'missing-usage', 'cancel'].includes(scenario)) {
+        if (scenario === 'connection-audit-failure') {
+          assert.equal(value.attempts.length, 2);
+          const [failed, recovered] = value.attempts;
+          assert.equal(failed.report.status, 'failed');
+          assert.equal(failed.auditFailures, 1);
+          assert.equal(failed.connections, 0);
+          assert.equal(failed.frames, 0);
+          assert.equal(failed.wireGithub, 0);
+          assert.equal(failed.openClientSockets, 0);
+          assert.equal(failed.report.research.cleanupComplete, true);
+          assert.equal(failed.report.research.accountingComplete, false);
+          assert.equal(recovered.report.status, 'completed');
+          assert.equal(recovered.connections, 1);
+          assert.equal(recovered.frames, 2);
+          assert.equal(recovered.wireGithub, 3);
+          assert.equal(recovered.openClientSockets, 0);
+          assert.equal(recovered.auditFailures, 1);
+          assert.equal(recovered.report.research.cleanupComplete, true);
+          assert.equal(recovered.report.research.accountingComplete, true);
+          assert.deepEqual(recovered.enclosingUsage, recovered.report.usage);
+        } else if (scenario === 'close-deadline') {
+          assert.equal(value.attempts.length, 2);
+          const [failed, refused] = value.attempts;
+          assert.equal(failed.report.status, 'failed');
+          assert.equal(failed.report.research.cleanupComplete, false);
+          assert.equal(failed.report.research.accountingComplete, true);
+          assert.equal(failed.connections, 1);
+          assert.equal(failed.frames, 2);
+          assert.equal(failed.wireGithub, 3);
+          assert.equal(failed.openClientSockets, 1);
+          assert.ok(failed.closeRequests > 0);
+          assert.ok(failed.finishedAt >= failed.deadlineAt);
+          assert.equal(refused.report.status, 'failed');
+          assert.match(
+            refused.report.error,
+            /Standard research transport already active/,
+          );
+          assert.equal(refused.connections, failed.connections);
+          assert.equal(refused.frames, failed.frames);
+          assert.equal(refused.wireGithub, failed.wireGithub);
+          assert.equal(refused.openClientSockets, 1);
+          assert.equal(refused.report.research.accountingComplete, false);
+          assert.notEqual(
+            refused.report.binding.reservationId,
+            failed.report.binding.reservationId,
+          );
+          assert.notEqual(
+            refused.report.binding.sessionId,
+            failed.report.binding.sessionId,
+          );
+        } else if (
+          ['provider-error', 'missing-usage', 'cancel'].includes(scenario)
+        ) {
           assert.notEqual(value.report?.status, 'completed');
           if (value.report)
             assert.equal(value.report.research.accountingComplete, false);

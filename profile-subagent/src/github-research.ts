@@ -50,7 +50,6 @@ function hasClipping(value: unknown): boolean {
   );
 }
 
-// Import-only development component. The normal extension does not register it.
 // getBinding is trusted host policy, never a tool or data supplied by the child.
 export function registerGithubResearch(
   pi: ExtensionAPI,
@@ -113,7 +112,6 @@ export function registerGithubResearch(
     name: 'github_research_run',
     label: 'Development GitHub researcher',
     exposure: 'direct',
-    // No codemode orchestration in this development contract: host awaits inline.
     description:
       'Development-only bounded repository researcher, not a code reviewer. Requires a host-approved task/session/thread/reservation and repository grant. Run inline within the owning worker; no new pool or delivery. Returns unverified prose and bounded post-hook observations. No permission to expand scope, retry, write or certify restoration/compliance.',
     parameters: Type.Object(
@@ -234,7 +232,6 @@ export function registerGithubResearch(
           assignment.observations.push(observation);
         else assignment.omitted++;
       };
-      // Pi context capabilities include non-enumerable getters. Preserve them.
       const executeObserved: ExtensionToolContext['executeTool'] = async (
         name,
         args,
@@ -266,6 +263,7 @@ export function registerGithubResearch(
           pending.delete(call);
         }
       };
+      // Pi context capabilities include non-enumerable getters. Preserve them.
       const scopedContext = Object.create(ctx, {
         executeTool: {value: executeObserved},
       }) as ExtensionToolContext;
@@ -293,7 +291,6 @@ export function registerGithubResearch(
               }
             : undefined,
         );
-        // Wait for parent-mediated tool completion before releasing the worker slot.
         await Promise.allSettled([...pending]);
         const details = {
           ...result.details,

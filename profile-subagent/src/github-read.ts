@@ -5,7 +5,6 @@ import {Check} from 'typebox/value';
 const text = Type.String({minLength: 1, maxLength: 1024});
 const shaSchema = Type.String({pattern: '^[a-f0-9]{40}$'});
 const common = {repository: text, commit: Type.Optional(shaSchema), path: text};
-// Explicit operations, not arbitrary URLs, REST paths, methods or search syntax.
 export const GithubReadSchema = Type.Union([
   Type.Object(
     {...common, operation: Type.Literal('list')},
@@ -177,7 +176,6 @@ export function validateGrants(input: RepositoryGrant[]): RepositoryGrant[] {
 const encodePath = (path: string) =>
   path.split('/').map(encodeURIComponent).join('/');
 
-// A new reader per assignment: no cross-task cache, credentials, retry or scope.
 export function createGithubReader(
   input: RepositoryGrant[],
   transport: GithubTransport,
@@ -756,7 +754,7 @@ export function createGithubReader(
         ...result,
         observedAt: new Date().toISOString(),
       };
-      // Never echo this adapter's credentials, even if an upstream body contains them.
+      // Also redact credentials in metadata, not just file/discussion text.
       let encoded = JSON.stringify(outcome);
       for (const credential of credentials) {
         const needle = JSON.stringify(credential).slice(1, -1);

@@ -84,9 +84,9 @@ export async function installResearchTransport(
       )
         fail('Research socket destination/retry refused.');
       connected.add(requests);
+      record('connection-attempt', {request: requests});
       const socket = Reflect.construct(target, args) as WebSocket;
       sockets.add(socket);
-      record('connection', {request: requests});
       const send = socket.send.bind(socket);
       socket.send = data => {
         if (typeof data !== 'string') return fail('Unexpected research frame.');

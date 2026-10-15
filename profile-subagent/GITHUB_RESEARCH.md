@@ -45,7 +45,7 @@ Inspect `github-result.json` as the final wrapper handoff; the base runner's `re
 
 ## Accounting and operational limits
 
-The native candidate records request/terminal/close metadata without credentials or raw provider frames. It reconciles token/cost totals and waits for owned socket close events within the original deadline. Cleanup failure prevents successful completion; unresolved sockets poison native admission until process restart. Cancellation is cooperative, not remote settlement proof.
+The native candidate records request/terminal/close metadata without credentials or raw provider frames. It persists `connection-attempt` before constructing a socket; that record does not prove an established connection. It reconciles token/cost totals and waits for owned socket close events within the original deadline. Cleanup failure prevents successful completion; unresolved sockets poison native admission until process restart. Cancellation is cooperative, not remote settlement proof.
 
 A $0.25 known SDK child-cost threshold stops further requests; it is **not** an invoice cap. Preserve partial usage and mark unknown totals unknown. Count the enclosing child tool usage once, not again from its nested details. Requested tier, returned tier, delivered service and invoices are different; routing and billing are not independently certified. Parent preparation/review effort and whole-workflow savings remain unmeasured.
 
@@ -62,9 +62,11 @@ npm run verify
 
 Existing local Git/HTTP and SDK tests cover scope, history/rename, pagination, redaction, failed-request reuse, cancellation, artifact failure, capacity and unchanged default discovery. Packed-package tests must exercise the compiled exports and native candidate, not a copied transport implementation.
 
-- [x] Clean package import/default-off and native protocol E2E: seven packed-module scenarios plus the existing adapter/capacity/default-discovery checks.
-- [x] One bounded read-only live smoke through the exact packed module: two public repository files at a pinned commit, two native responses, ten successful GETs, 16.93 seconds host time and $0.0009037 SDK child estimate. Original observations support the reported model, tool permissions and limits. Native close was normal and usage reconciled. The host was scripted; this is not a savings or reliability estimate. Child prose omitted the README clipping caveat; the host packet explicitly preserved it. Parents must inspect that packet.
-- [x] Full repository verification, including 241 profile tests; one unrelated optional task-assistant test skipped.
+- [x] Clean package import/default-off and native protocol E2E: nine packed-module scenarios plus the existing adapter/capacity/default-discovery checks.
+- [x] One bounded read-only live smoke through the packed module before the cleanup fix (revision `3be8054`; no new live run after remediation): two public repository files at a pinned commit, two native responses, ten successful GETs, 16.93 seconds host time and $0.0009037 SDK child estimate. Original observations support the reported model, tool permissions and limits. Native close was normal and usage reconciled. The host was scripted; this is not a savings or reliability estimate. Child prose omitted the README clipping caveat; the host packet explicitly preserved it. Parents must inspect that packet.
+- [x] Full repository verification after remediation, including 243 profile tests; one unrelated optional task-assistant test skipped.
+- [x] `connection-audit-failure` packed E2E: injected write failure opens no socket, completes cleanup and permits a new assignment in the same process.
+- [x] `close-deadline` packed E2E: unresolved close fails by the inherited deadline; a separate assignment in the same process is refused without another socket, inference frame or GitHub request. These fault cases use local fixtures, not live services.
 - [ ] Final material code review before merge.
 - [ ] Separate host integration, installation and wider live acceptance if requested later.
 
