@@ -4,8 +4,32 @@ import {Check} from 'typebox/value';
 
 const text = Type.String({minLength: 1, maxLength: 1024});
 const shaSchema = Type.String({pattern: '^[a-f0-9]{40}$'});
+const dateSchema = Type.String({
+  pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$',
+});
 const common = {repository: text, commit: Type.Optional(shaSchema), path: text};
 export const GithubReadSchema = Type.Union([
+  Type.Object(
+    {
+      operation: Type.Literal('repositories'),
+      query: Type.String({
+        minLength: 1,
+        maxLength: 100,
+        description:
+          'Focused repository search, e.g. platform org:example. Not an organization inventory.',
+      }),
+      page: Type.Optional(Type.Integer({minimum: 1, maximum: 2})),
+    },
+    {additionalProperties: false},
+  ),
+  Type.Object(
+    {
+      operation: Type.Literal('resolve'),
+      repository: text,
+      ref: Type.Optional(Type.String({minLength: 1, maxLength: 200})),
+    },
+    {additionalProperties: false},
+  ),
   Type.Object(
     {...common, operation: Type.Literal('list')},
     {additionalProperties: false},
@@ -35,9 +59,11 @@ export const GithubReadSchema = Type.Union([
         minLength: 1,
         maxLength: 1024,
         description:
-          'Path within the grant, or an explicitly granted directory root with or without its trailing slash. Folder history can include unrelated changes; date/page limits still apply.',
+          'Repository-relative path or root ".". Folder history can include unrelated changes; page/date limits still apply.',
       }),
       page: Type.Optional(Type.Integer({minimum: 1, maximum: 2})),
+      since: Type.Optional(dateSchema),
+      until: Type.Optional(dateSchema),
     },
     {additionalProperties: false},
   ),
@@ -57,15 +83,11 @@ export const GithubReadSchema = Type.Union([
   ),
 ]);
 export type GithubReadArgs = Static<typeof GithubReadSchema>;
-export interface RepositoryGrant {
+type Repository = {
   repository: string;
-  head: string;
-  paths: string[]; // trailing slash = directory; otherwise one exact file
-  history: boolean;
-  since?: string;
-  until?: string;
-  discussions: number[];
-}
+  head?: string;
+  resolvingHead?: Promise<void>;
+};
 export interface GithubTransport {
   token: (signal: AbortSignal) => Promise<string>;
   // Trusted host injection for offline fixtures; not exposed to model arguments.
@@ -73,7 +95,7 @@ export interface GithubTransport {
 }
 const shaPattern = /^[a-f0-9]{40}$/;
 const repositoryPattern =
-  /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/;
+  /^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/(?!\.{1,2}$)[A-Za-z0-9_.-]{1,100}$/;
 type RequestFailure = {
   requestId: number;
   firstObservedAt: string;
@@ -120,68 +142,15 @@ function sensitive(path: string): boolean {
     path,
   );
 }
-export function validateGrants(input: RepositoryGrant[]): RepositoryGrant[] {
-  if (!Array.isArray(input) || !input.length || input.length > 2)
-    throw new Error('Provide one or two explicit repository grants.');
-  const grants = structuredClone(input);
-  for (const g of grants) {
-    if (
-      !g ||
-      typeof g !== 'object' ||
-      Object.keys(g).some(
-        key =>
-          ![
-            'repository',
-            'head',
-            'paths',
-            'history',
-            'since',
-            'until',
-            'discussions',
-          ].includes(key),
-      ) ||
-      !repositoryPattern.test(g.repository) ||
-      !shaPattern.test(g.head) ||
-      typeof g.history !== 'boolean' ||
-      !Array.isArray(g.paths) ||
-      !g.paths.length ||
-      g.paths.length > 4 ||
-      g.paths.some(
-        p =>
-          typeof p !== 'string' ||
-          !pathIsSafe(p.replace(/\/$/, '')) ||
-          sensitive(p.replace(/\/$/, '')),
-      ) ||
-      !Array.isArray(g.discussions) ||
-      g.discussions.length > 10 ||
-      g.discussions.some(n => !Number.isSafeInteger(n) || n < 1 || n > 10000000)
-    )
-      throw new Error('Invalid bounded GitHub grant.');
-    for (const date of [g.since, g.until])
-      if (
-        date !== undefined &&
-        (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(date) ||
-          !Number.isFinite(Date.parse(date)) ||
-          new Date(date).toISOString().replace('.000Z', 'Z') !== date)
-      )
-        throw new Error('Use explicit UTC history dates.');
-    if (g.since && g.until && g.since > g.until)
-      throw new Error('Invalid history date range.');
-    g.repository = g.repository.toLowerCase();
-  }
-  if (new Set(grants.map(g => g.repository)).size !== grants.length)
-    throw new Error('Duplicate repository grant.');
-  return grants;
-}
 const encodePath = (path: string) =>
   path.split('/').map(encodeURIComponent).join('/');
 
-export function createGithubReader(
-  input: RepositoryGrant[],
-  transport: GithubTransport,
-) {
-  const grants = validateGrants(input);
-  const known = new Map(grants.map(g => [g.repository, new Set([g.head])]));
+export function createGithubReader(transport: GithubTransport) {
+  if (!transport || typeof transport.token !== 'function')
+    throw new Error(
+      'A GitHub token supplier is required; repository grants are not supported.',
+    );
+  const repositories = new Map<string, Repository>();
   const trees = new Map<string, unknown>();
   const roots = new Map<string, string>();
   const credentials = new Set<string>();
@@ -210,12 +179,12 @@ export function createGithubReader(
     }
   }
   async function get(
-    g: RepositoryGrant,
+    g: Repository | undefined,
     endpoint: string,
     signal: AbortSignal,
   ) {
     signal.throwIfAborted();
-    const key = `${g.repository}/${endpoint}`;
+    const key = g ? `repos/${g.repository}/${endpoint}` : endpoint;
     while (pendingRequests.has(key)) {
       await waitForRequest(pendingRequests.get(key)!, signal);
       signal.throwIfAborted();
@@ -268,7 +237,7 @@ export function createGithubReader(
     }
   }
   async function request(
-    g: RepositoryGrant,
+    g: Repository | undefined,
     endpoint: string,
     signal: AbortSignal,
   ) {
@@ -289,7 +258,7 @@ export function createGithubReader(
         'Assignment response-byte budget exhausted; no further HTTP request.',
       );
     const response = await (transport.fetch ?? globalThis.fetch)(
-      `https://api.github.com/repos/${g.repository}/${endpoint}`,
+      `https://api.github.com/${g ? `repos/${g.repository}/` : ''}${endpoint}`,
       {
         method: 'GET',
         redirect: 'error',
@@ -339,15 +308,10 @@ export function createGithubReader(
       next: /rel="next"/.test(response.headers.get('link') ?? ''),
     };
   }
-  function allowed(g: RepositoryGrant, path: string, directory = false) {
-    if (!pathIsSafe(path) || sensitive(path)) return false;
-    return g.paths.some(p =>
-      p.endsWith('/')
-        ? path.startsWith(p) || (directory && path === p.slice(0, -1))
-        : !directory && path === p,
-    );
+  function allowed(path: string, directory = false) {
+    return (directory && path === '') || (pathIsSafe(path) && !sensitive(path));
   }
-  async function tree(g: RepositoryGrant, id: string, signal: AbortSignal) {
+  async function tree(g: Repository, id: string, signal: AbortSignal) {
     const key = `${g.repository}:${id}`;
     if (!trees.has(key)) {
       const data = record((await get(g, `git/trees/${id}`, signal)).value);
@@ -361,7 +325,7 @@ export function createGithubReader(
     }
     return (trees.get(key) as unknown[]).map(record);
   }
-  async function root(g: RepositoryGrant, commit: string, signal: AbortSignal) {
+  async function root(g: Repository, commit: string, signal: AbortSignal) {
     const key = `${g.repository}:${commit}`;
     if (!roots.has(key)) {
       const data = record(
@@ -373,7 +337,7 @@ export function createGithubReader(
     return roots.get(key)!;
   }
   async function lookup(
-    g: RepositoryGrant,
+    g: Repository,
     commit: string,
     path: string,
     signal: AbortSignal,
@@ -395,30 +359,72 @@ export function createGithubReader(
     }
     return fail('Path unavailable.');
   }
+  async function resolveCommit(
+    g: Repository,
+    ref: string | undefined,
+    signal: AbortSignal,
+  ) {
+    if (ref !== undefined && (!ref.trim() || containsControl(ref)))
+      throw new BoundaryError('Invalid GitHub reference.');
+    const query = new URLSearchParams({per_page: '1'});
+    if (ref !== undefined) query.set('sha', ref);
+    const data = await get(g, `commits?${query}`, signal);
+    if (!Array.isArray(data.value) || data.value.length !== 1)
+      fail('Commit resolution unavailable; no pinned version established.');
+    const item = record(data.value[0]),
+      id = sha(item.sha);
+    if (ref && shaPattern.test(ref) && ref !== id)
+      fail('GitHub commit identity mismatch.');
+    roots.set(
+      `${g.repository}:${id}`,
+      sha(record(record(item.commit).tree).sha),
+    );
+    return id;
+  }
+  async function defaultHead(g: Repository, signal: AbortSignal) {
+    while (g.resolvingHead) await waitForRequest(g.resolvingHead, signal);
+    signal.throwIfAborted();
+    if (g.head) return g.head;
+    let release!: () => void;
+    g.resolvingHead = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    try {
+      return (g.head = await resolveCommit(g, undefined, signal));
+    } finally {
+      g.resolvingHead = undefined;
+      release();
+    }
+  }
   async function listing(
-    g: RepositoryGrant,
+    g: Repository,
     commit: string,
     path: string,
     signal: AbortSignal,
   ) {
-    const entry = await lookup(g, commit, path, signal);
+    const entry =
+      path === ''
+        ? {type: 'tree', mode: '040000', sha: await root(g, commit, signal)}
+        : await lookup(g, commit, path, signal);
     if (entry.type !== 'tree' || entry.mode !== '040000')
-      throw new BoundaryError('List/search requires an approved directory.');
+      throw new BoundaryError('List/search requires a directory.');
     const entries = (await tree(g, sha(entry.sha), signal)).filter(
       e =>
         typeof e.path === 'string' &&
         pathIsSafe(e.path) &&
         !e.path.includes('/'),
     );
+    const childPath = (name: unknown) =>
+      path ? `${path}/${name}` : String(name);
     const visible = entries.filter(
       e =>
-        allowed(g, `${path}/${e.path}`, e.type === 'tree') &&
+        allowed(childPath(e.path), e.type === 'tree') &&
         ((e.type === 'tree' && e.mode === '040000') ||
           (e.type === 'blob' && ['100644', '100755'].includes(String(e.mode)))),
     );
     return {
       entries: visible.slice(0, 20).map(e => ({
-        path: `${path}/${e.path}`,
+        path: childPath(e.path),
         type: String(e.type),
         sha: sha(e.sha),
       })),
@@ -426,7 +432,7 @@ export function createGithubReader(
     };
   }
   async function contents(
-    g: RepositoryGrant,
+    g: Repository,
     commit: string,
     path: string,
     signal: AbortSignal,
@@ -486,12 +492,76 @@ export function createGithubReader(
     const clean = (value: unknown) =>
       typeof value === 'string' ? redact(value) : '';
     const clip = (value: unknown, max: number) => clean(value).slice(0, max);
-    const g = grants.find(g => g.repository === args.repository.toLowerCase());
-    if (!g) throw new BoundaryError('Repository is outside the host grant.');
+    if (args.operation === 'repositories') {
+      if (!args.query.trim() || containsControl(args.query))
+        throw new BoundaryError('Provide a focused repository search.');
+      const page = args.page ?? 1;
+      const query = new URLSearchParams({
+        q: args.query,
+        per_page: '5',
+        page: String(page),
+      });
+      const data = await get(undefined, `search/repositories?${query}`, signal);
+      const value = record(data.value);
+      if (
+        !Array.isArray(value.items) ||
+        typeof value.incomplete_results !== 'boolean'
+      )
+        fail('Unsupported GitHub repository search response.');
+      return {
+        items: value.items.slice(0, 5).map(item => {
+          const repo = record(item);
+          if (
+            typeof repo.full_name !== 'string' ||
+            containsControl(repo.full_name) ||
+            !repositoryPattern.test(repo.full_name)
+          )
+            fail('Unsupported GitHub repository identity.');
+          const description = clean(repo.description);
+          return {
+            repository: repo.full_name.toLowerCase(),
+            description: description.slice(0, 300),
+            descriptionTruncated: description.length > 300,
+            citation: `https://github.com/${repo.full_name.toLowerCase()}`,
+          };
+        }),
+        coverage: {
+          page,
+          hasNext: data.next,
+          earlierPagesNotObserved: page > 1,
+          incompleteResults: value.incomplete_results,
+          collectionLimited: value.items.length > 5,
+          completeInventory: false,
+          searchIndex: 'GitHub search results, not proof of absence or access',
+        },
+      };
+    }
+    if (
+      containsControl(args.repository) ||
+      !repositoryPattern.test(args.repository)
+    )
+      throw new BoundaryError('Invalid GitHub repository name.');
+    const repository = args.repository.toLowerCase();
+    let g = repositories.get(repository);
+    if (!g) {
+      g = {repository};
+      repositories.set(repository, g);
+    }
     const base = `https://github.com/${g.repository}`;
+    if (args.operation === 'resolve') {
+      const commit = await resolveCommit(g, args.ref, signal);
+      return {
+        commit,
+        ref: args.ref ?? 'default branch',
+        citation: `${base}/commit/${commit}`,
+        coverage: {
+          mutableRef: args.ref === undefined || !shaPattern.test(args.ref),
+          instruction:
+            'Use the returned commit for subsequent reads of this version.',
+        },
+      };
+    }
     if (args.operation === 'discussion') {
-      if (!g.discussions.includes(args.number))
-        throw new BoundaryError('Discussion number is outside the host grant.');
       const page = args.page ?? 1;
       const endpoints = {
         issue: `issues/${args.number}`,
@@ -548,33 +618,40 @@ export function createGithubReader(
         },
       };
     }
-    const commit = args.commit ?? g.head;
-    if (!known.get(g.repository)!.has(commit))
-      throw new BoundaryError(
-        'Commit is not the pinned head or observed permitted history. Branch/tag resolution is not supported.',
-      );
-    // History may address an explicitly granted directory root, not the parent
-    // of an exact-file grant. Leave all other history spellings unchanged.
     const historyRoot =
       args.operation === 'history' &&
-      g.paths.some(
-        p =>
-          p.endsWith('/') && (args.path === p || args.path === p.slice(0, -1)),
-      );
+      (args.path === '.' || args.path.endsWith('/'));
     const directory =
       args.operation === 'list' || args.operation === 'search' || historyRoot;
     // Remove only one slash; malformed paths are never broadly normalized.
-    const path = directory ? args.path.replace(/\/$/, '') : args.path;
-    if (!allowed(g, path, directory))
+    const path =
+      directory && args.path === '.'
+        ? ''
+        : directory
+          ? args.path.replace(/\/$/, '')
+          : args.path;
+    if ((!path && args.path !== '.') || !allowed(path, directory))
       throw new BoundaryError(
-        'Path is outside scope or is a prohibited sensitive path.',
+        'Path is unsafe or is a prohibited sensitive path.',
       );
+    if (args.operation === 'history') {
+      for (const date of [args.since, args.until])
+        if (
+          date !== undefined &&
+          (!Number.isFinite(Date.parse(date)) ||
+            new Date(date).toISOString().replace('.000Z', 'Z') !== date)
+        )
+          throw new BoundaryError('Use valid explicit UTC history dates.');
+      if (args.since && args.until && args.since > args.until)
+        throw new BoundaryError('Invalid history date range.');
+    }
+    const commit = args.commit ?? (await defaultHead(g, signal));
     if (args.operation === 'list')
       return {
         ...(await listing(g, commit, path, signal)),
         commit,
         coverage:
-          'Shallow directory only; omitted entries may be unsafe, out of scope or over the 20-entry bound.',
+          'Shallow directory only; omitted entries may be unsafe or over the 20-entry bound.',
       };
     if (args.operation === 'file') {
       const file = await contents(g, commit, args.path, signal, redact),
@@ -655,8 +732,6 @@ export function createGithubReader(
         },
       };
     }
-    if (!g.history)
-      throw new BoundaryError('History is not in the host grant.');
     const page = args.page ?? 1,
       query = new URLSearchParams({
         sha: commit,
@@ -664,8 +739,8 @@ export function createGithubReader(
         per_page: '10',
         page: String(page),
       });
-    if (g.since) query.set('since', g.since);
-    if (g.until) query.set('until', g.until);
+    if (args.since) query.set('since', args.since);
+    if (args.until) query.set('until', args.until);
     const data = await get(g, `commits?${query}`, signal);
     if (!Array.isArray(data.value))
       fail('Unsupported GitHub history response.');
@@ -686,21 +761,16 @@ export function createGithubReader(
         citation: `${base}/commit/${id}`,
       };
     });
-    for (const item of items) {
-      known.get(g.repository)!.add(item.commit);
-      item.parents.forEach(p => known.get(g.repository)!.add(p));
-    }
     return {
       path,
       items,
       coverage: {
-        directoryGrantRoot: historyRoot,
         page,
         hasNext: data.next,
         earlierPagesNotObserved: page > 1,
         collectionLimited: data.value.length > 10,
-        since: g.since,
-        until: g.until,
+        since: args.since,
+        until: args.until,
         renameFollowing: false,
         originalIntroductionVerified: false,
       },
@@ -730,7 +800,7 @@ export function createGithubReader(
         result = {
           status: 'ok',
           operation: input.operation,
-          repository: input.repository,
+          ...('repository' in input ? {repository: input.repository} : {}),
           ...(await operate(input, signal, redact)),
         };
       } catch (error) {

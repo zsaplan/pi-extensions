@@ -14,7 +14,6 @@ import {
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
-import type {RepositoryGrant} from '../src/github-read.ts';
 import {loadCatalog} from '../src/profiles.ts';
 
 const pkg = resolve(dirname(fileURLToPath(import.meta.url)), '..'),
@@ -112,13 +111,6 @@ test(
       'unrelated: true\nrestore_policy: hourly\n',
     );
     const head = commit('Edit setting', 14);
-    const grant: RepositoryGrant = {
-      repository: 'fixture/research',
-      head,
-      paths: ['config/', 'sites/'],
-      history: true,
-      discussions: [7],
-    };
     const objects = new Map<string, Json>();
     const tree = (id: string) => {
       if (objects.has(`tree:${id}`)) return;
@@ -285,6 +277,26 @@ test(
         return;
       }
       if (endpoint === 'commits') {
+        if (url.searchParams.get('per_page') === '1') {
+          assert.equal(scenario, 'default-head-concurrent');
+          const resolutions = requests.filter(
+            r =>
+              r.scenario === scenario &&
+              new URL(r.path, origin).searchParams.get('per_page') === '1',
+          ).length;
+          const resolved = resolutions === 1 ? head : before;
+          timer = setTimeout(
+            () =>
+              send([
+                {
+                  sha: resolved,
+                  commit: {tree: objects.get(`commit:${resolved}`)!.tree},
+                },
+              ]),
+            100,
+          );
+          return;
+        }
         const at = url.searchParams.get('sha')!,
           path = url.searchParams.get('path')!;
         if (
@@ -363,7 +375,7 @@ test(
     assert.ok(address && typeof address !== 'string');
     const origin = `http://127.0.0.1:${address.port}`;
     const evidence: Array<Record<string, unknown>> = [];
-    const base = {repository: grant.repository};
+    const base = {repository: 'fixture/research', commit: head};
     const read = (path: string, commit?: string) => ({
       ...base,
       operation: 'file',
@@ -377,7 +389,7 @@ test(
       ...(commit ? {commit} : {}),
     });
     const discussion = (kind: string, page = 1) => ({
-      ...base,
+      repository: base.repository,
       operation: 'discussion',
       number: 7,
       kind,
@@ -393,6 +405,11 @@ test(
         read('config/app.yml', introduced),
         read('config/app.yml', before),
       ],
+      'default-head-concurrent': Array.from({length: 3}, () => ({
+        operation: 'file',
+        repository: base.repository,
+        path: 'sites/uat.yml',
+      })),
       'directory-slash': [
         {...base, operation: 'list', path: 'config'},
         {...base, operation: 'list', path: 'config/'},
@@ -404,16 +421,6 @@ test(
           path => ({...base, operation: 'list', path}),
         ),
         read('config/service.yml/'),
-        history('config/service.yml/'),
-      ],
-      'exact-file-directory': [
-        {...base, operation: 'list', path: 'config/service.yml/'},
-        {
-          ...base,
-          operation: 'search',
-          path: 'config/service.yml/',
-          term: 'restore_policy',
-        },
       ],
       soc2: [
         {...base, operation: 'search', path: 'sites', term: 'initialSnapshot'},
@@ -442,8 +449,14 @@ test(
         {...base, operation: 'write', path: 'sites/uat.yml'},
         read('sites/%2e%2e/secret'),
         {...read('sites/uat.yml'), commit: 'main'},
-        {...discussion('issue'), number: 8},
         {...discussion('issue'), number: 7.9},
+        {...history('config/'), since: '2026-02-30T00:00:00Z'},
+        {
+          ...history('config/'),
+          since: '2026-09-01T00:00:00Z',
+          until: '2026-08-01T00:00:00Z',
+        },
+        {...history('config/'), since: 'not-a-date'},
         {
           ...base,
           operation: 'file',
@@ -490,8 +503,13 @@ test(
         history('config/'),
         history('config/retired-neighbor'),
       ],
-      'history-disabled': [history('config/service.yml'), history('config/')],
-      'dated-history': [history('config/service.yml'), history('config/')],
+      'dated-history': [history('config/service.yml'), history('config/')].map(
+        args => ({
+          ...args,
+          since: '2026-08-01T00:00:00Z',
+          until: '2026-09-30T23:59:59Z',
+        }),
+      ),
       pagination: [
         history('config/service.yml'),
         {...history('config/service.yml'), page: 2},
@@ -556,7 +574,6 @@ test(
         'config/%2e%2e/',
         'config\\bad/',
         'config/.env/',
-        'config-neighbor/',
         'config/./',
       ].map(path => ({
         ...base,
@@ -580,10 +597,9 @@ test(
       'credential-error',
       'cancel',
       'timeout',
-      'no-grant',
-      'extra-grant-field',
+      'no-binding',
+      'legacy-policy',
       'wrong-session',
-      'invalid-head',
       'expired',
       'repeat',
       'stale-direct',
@@ -610,24 +626,13 @@ test(
         module: join(extension, 'src/github-research.ts'),
         record: join(dir, 'provider.jsonl'),
         server: origin,
-        grant: {
-          ...grant,
-          ...(scenario === 'invalid-head' ? {head: 'main'} : {}),
-          ...(scenario === 'extra-grant-field'
-            ? {token: 'FIXTURE_SCOPE_SECRET'}
-            : {}),
-          ...(scenario === 'history-disabled' ? {history: false} : {}),
-          ...(['exact-file-directory', 'history-exact-file'].includes(scenario)
-            ? {paths: ['config/service.yml']}
-            : {}),
-          ...(scenario === 'history-nested-root'
-            ? {paths: ['config/retired/']}
-            : {}),
-          ...(scenario === 'dated-history'
-            ? {since: '2026-08-01T00:00:00Z', until: '2026-09-30T23:59:59Z'}
-            : {}),
-        },
-        actions: cases[scenario],
+        actions: ['failure-concurrent', 'failure-cancel'].includes(scenario)
+          ? cases[scenario].map(action => {
+              const args = {...action};
+              delete args.commit;
+              return args;
+            })
+          : cases[scenario],
         ...(scenario === 'timeout'
           ? {deadlineMs: 15500}
           : scenario === 'expired'
@@ -858,11 +863,10 @@ test(
             {observations, reports, packet} = result;
           if (
             [
-              'no-grant',
-              'extra-grant-field',
+              'no-binding',
+              'legacy-policy',
               'missing-adapter',
               'wrong-session',
-              'invalid-head',
               'expired',
               'stale-direct',
             ].includes(scenario)
@@ -938,6 +942,12 @@ test(
               assert.equal(result.logs.filter(l => l.transport).length, 1);
           }
           if (['failure-concurrent', 'failure-cancel'].includes(scenario)) {
+            assert.equal(
+              new URL(result.requests[0].path, origin).searchParams.get(
+                'per_page',
+              ),
+              '1',
+            );
             const hooks = result.logs.filter(l => l.hook);
             assert.equal(hooks.length, 2);
             assert.ok(
@@ -1022,6 +1032,23 @@ test(
               ),
             );
           }
+          if (scenario === 'default-head-concurrent') {
+            assert.ok(observations.every(o => o.status === 'ok'));
+            assert.deepEqual(
+              observations.map(o => o.commit),
+              [head, head, head],
+            );
+            const resolutions = result.requests.filter(
+              r => new URL(r.path, origin).searchParams.get('per_page') === '1',
+            );
+            assert.equal(resolutions.length, 1);
+            const hooks = result.logs.filter(l => l.hook);
+            assert.equal(hooks.length, 3);
+            assert.ok(
+              Number(hooks[1].at) < Number(resolutions[0].finishedAt),
+              'Initial default-head reads must overlap before resolution completes',
+            );
+          }
           if (scenario === 'directory-slash') {
             assert.ok(observations.every(o => o.status === 'ok'));
             assert.deepEqual(observations[0].entries, observations[1].entries);
@@ -1039,7 +1066,6 @@ test(
           }
           if (
             scenario.startsWith('directory-unsafe-') ||
-            scenario === 'exact-file-directory' ||
             scenario === 'directory-target-types'
           ) {
             assert.ok(observations.every(o => o.status === 'refused'));
@@ -1102,7 +1128,6 @@ test(
             assert.ok(
               observations.every(
                 o =>
-                  (o.coverage as Json).directoryGrantRoot === true &&
                   (o.coverage as Json).originalIntroductionVerified === false,
               ),
             );
@@ -1115,38 +1140,16 @@ test(
             );
           }
           if (scenario === 'history-exact-file') {
-            assert.deepEqual(
-              observations.map(o => o.status),
-              ['ok', 'refused', 'refused', 'refused', 'refused'],
-            );
-            assert.equal(result.requests.length, 1);
-            assert.equal(
-              new URL(result.requests[0].path, origin).searchParams.get('path'),
-              'config/service.yml',
-            );
-            assert.equal(
-              (observations[0].coverage as Json).directoryGrantRoot,
-              false,
-            );
+            assert.ok(observations.every(o => o.status === 'ok'));
+            assert.equal(result.requests.length, 5);
+            assert.deepEqual(observations[0].items, observations[3].items);
+            assert.deepEqual(observations[1].items, observations[2].items);
           }
           if (scenario === 'history-nested-root') {
-            assert.deepEqual(
-              observations.map(o => o.status),
-              ['ok', 'ok', 'refused', 'refused', 'refused'],
-            );
+            assert.ok(observations.every(o => o.status === 'ok'));
+            assert.equal(result.requests.length, 5);
             assert.deepEqual(observations[0].items, []);
-            assert.equal(result.requests.length, 2);
-            assert.ok(
-              result.requests.every(
-                r =>
-                  new URL(r.path, origin).searchParams.get('path') ===
-                  'config/retired',
-              ),
-            );
-          }
-          if (scenario === 'history-disabled') {
-            assert.ok(observations.every(o => o.status === 'refused'));
-            assert.equal(result.requests.length, 0);
+            assert.deepEqual(observations[2].items, observations[3].items);
           }
           if (scenario === 'dated-history') {
             assert.equal(result.requests.length, 2);
@@ -1182,6 +1185,14 @@ test(
               cases[scenario].length,
             );
             if (scenario !== 'bounds') assert.equal(result.requests.length, 0);
+            else {
+              assert.ok(
+                observations.slice(0, 5).every(o => o.status === 'refused'),
+              );
+              assert.ok(
+                observations.slice(5).every(o => o.status === 'unavailable'),
+              );
+            }
             assert.ok(
               !JSON.stringify(observations).includes(
                 'FIXTURE_SECRET_MUST_NOT_BE_READ',
@@ -1196,10 +1207,6 @@ test(
             );
             assert.equal(packet!.childToolFailures.length, 1);
             assert.equal(result.requests.length, 6);
-            assert.equal(
-              (observations[4].coverage as Json).directoryGrantRoot,
-              true,
-            );
             assert.equal((observations[4].coverage as Json).hasNext, true);
             assert.equal(
               (observations[5].coverage as Json).earlierPagesNotObserved,
@@ -1309,12 +1316,10 @@ test(
       }
       assert.equal(redirectHits, 0);
       assert.equal(active, 0);
-      assert.ok(
-        requests.every(
-          r =>
-            !r.path.includes('evil.invalid') &&
-            !r.path.includes('other/repository'),
-        ),
+      assert.ok(requests.every(r => !r.path.includes('evil.invalid')));
+      assert.equal(
+        requests.filter(r => r.path.includes('other/repository')).length,
+        1,
       );
       passed =
         evidence.length === Object.keys(cases).length &&
