@@ -10,6 +10,7 @@ import {WebSocket, WebSocketServer} from 'ws';
 import {createAssistantMessageEventStream} from '@earendil-works/pi-ai';
 import {
   createAgentSession,
+  createCodemodeExtension,
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
@@ -19,6 +20,8 @@ process.umask(0o077);
 const cfg = JSON.parse(await readFile(process.argv[2], 'utf8'));
 assert.ok(['fixture', 'live'].includes(cfg.mode));
 const live = cfg.mode === 'live';
+const interactive = Boolean(cfg.interactiveModule);
+if (interactive) assert.equal(live, false);
 if (live) assert.equal(cfg.confirmLive, true);
 const auditFailure = !live && cfg.scenario === 'connection-audit-failure';
 const closeDeadline = !live && cfg.scenario === 'close-deadline';
@@ -46,6 +49,31 @@ const {registerGithubResearch} = await import(pathToFileURL(cfg.module).href);
 await mkdir(cfg.output, {recursive: true, mode: 0o700});
 const agent = cfg.output + '/agent';
 await mkdir(agent, {mode: 0o700});
+if (interactive) {
+  process.env.PI_CODING_AGENT_DIR = agent;
+  delete process.env.GH_TOKEN;
+  delete process.env.GITHUB_TOKEN;
+  if (cfg.credentialSource === 'cli' || cfg.credentialSource === 'missing') {
+    const bin = cfg.output + '/bin';
+    await mkdir(bin, {mode: 0o700});
+    await writeFile(
+      bin + '/gh',
+      `#!${process.execPath}\n` +
+        `import assert from 'node:assert/strict';\n` +
+        `assert.deepEqual(process.argv.slice(2), ['auth','token','--hostname','github.com']);\n` +
+        (cfg.credentialSource === 'missing'
+          ? `process.stderr.write('SECRET_CREDENTIAL_DIAGNOSTIC'); process.exit(1);\n`
+          : `process.stdout.write('fixture-token\\n');\n`),
+      {mode: 0o700},
+    );
+    process.env.PATH = bin + ':' + process.env.PATH;
+  } else if (cfg.credentialSource === 'github-env') {
+    process.env.GITHUB_TOKEN = 'fixture-token';
+  } else {
+    process.env.GH_TOKEN = 'fixture-token';
+    process.env.GITHUB_TOKEN = 'must-not-be-used';
+  }
+}
 const nativeFetch = globalThis.fetch,
   NativeSocket = globalThis.WebSocket;
 let server,
@@ -61,6 +89,7 @@ const events = [],
 const clientSockets = new Set();
 let session,
   report,
+  lastResearchReport,
   attempt = 0,
   deadlineAt,
   closeRequests = 0;
@@ -96,6 +125,7 @@ if (!live) {
     assert.equal(new URL(url).origin, 'https://api.github.com');
     assert.equal(options.method, 'GET');
     assert.equal(options.redirect, 'error');
+    assert.equal(options.headers.Authorization, 'Bearer fixture-token');
     wireGithub++;
     const target = new URL(url);
     if (target.pathname === '/search/repositories') {
@@ -258,7 +288,7 @@ if (!live) {
             path: 'README.md',
           },
         ];
-        const action = actions[frames - 1] ?? null;
+        const action = actions[(frames - 1) % (actions.length + 1)] ?? null;
         const id = 'item_' + frames,
           text =
             'Observed setting: example. Configuration only; runtime behavior is unverified.';
@@ -408,8 +438,12 @@ const provider = {
             {
               type: 'toolCall',
               id: 'research',
-              name: 'github_research_run',
-              arguments: {task: cfg.task},
+              name: cfg.viaCodemode ? 'codemode' : 'github_research_run',
+              arguments: cfg.viaCodemode
+                ? {
+                    code: `return await tools.github_research_run(${JSON.stringify({task: cfg.task})});`,
+                  }
+                : {task: cfg.task},
             },
           ],
       usage: {
@@ -439,53 +473,61 @@ const loader = new DefaultResourceLoader({
   agentDir: agent,
   settingsManager: settings(),
   noExtensions: true,
+  additionalExtensionPaths: interactive ? [cfg.interactiveModule] : [],
   noSkills: true,
   noPromptTemplates: true,
   noThemes: true,
   noContextFiles: true,
   extensionFactories: [
+    ...(cfg.viaCodemode ? [createCodemodeExtension()] : []),
     pi => {
-      registerGithubResearch(pi, {
-        standardPilot: {
-          artifactRoot: cfg.output + '/children',
-          authPath: live ? cfg.authPath : agent + '/auth.json',
-        },
-        getBinding: (ctx, id) => ({
-          taskId: `package-smoke-${attempt}`,
-          sessionId: ctx.sessionManager.getSessionId(),
-          threadKey: 'no-delivery',
-          reservationId: `package-${attempt}-${id}`,
-          deadlineAt,
-          ...(cfg.legacyRepositories !== undefined
-            ? {repositories: cfg.legacyRepositories}
-            : {}),
-        }),
-        token: async () => token,
-        fetch: async (url, options) => {
-          if (live) wireGithub++;
-          activeHttp++;
-          record('github-request', {
-            path: new URL(url).pathname,
-            query: new URL(url).search,
-          });
-          try {
-            const response = await globalThis.fetch(url, options);
-            record('github-response', {status: response.status});
-            return response;
-          } finally {
-            activeHttp--;
-          }
-        },
-      });
+      if (!interactive)
+        registerGithubResearch(pi, {
+          standardPilot: {
+            artifactRoot: cfg.output + '/children',
+            authPath: live ? cfg.authPath : agent + '/auth.json',
+          },
+          getBinding: (ctx, id) => ({
+            taskId: `package-smoke-${attempt}`,
+            sessionId: ctx.sessionManager.getSessionId(),
+            threadKey: 'no-delivery',
+            reservationId: `package-${attempt}-${id}`,
+            deadlineAt,
+            ...(cfg.legacyRepositories !== undefined
+              ? {repositories: cfg.legacyRepositories}
+              : {}),
+          }),
+          token: async () => token,
+          fetch: async (url, options) => {
+            if (live) wireGithub++;
+            activeHttp++;
+            record('github-request', {
+              path: new URL(url).pathname,
+              query: new URL(url).search,
+            });
+            try {
+              const response = await globalThis.fetch(url, options);
+              record('github-response', {status: response.status});
+              return response;
+            } finally {
+              activeHttp--;
+            }
+          },
+        });
       pi.on('tool_call', event => {
         if (event.toolName === 'github_research_read') {
-          assert.equal(event.parentToolCallId, 'research');
+          assert.equal(
+            event.parentToolCallId,
+            cfg.viaCodemode ? 'research/1' : 'research',
+          );
           record('parent-hook', {id: event.toolCallId});
           if (cfg.scenario === 'blocked')
             return {block: true, reason: 'HOST_DENIED'};
         }
       });
       pi.on('tool_result', event => {
+        if (event.toolName === 'github_research_run')
+          lastResearchReport = event.details;
         if (
           event.toolName === 'github_research_read' &&
           cfg.scenario === 'redacted'
@@ -513,7 +555,11 @@ try {
     modelsPath: null,
   });
   runtime.registerProvider('package-host', provider);
-  for (; attempt < (auditFailure || closeDeadline ? 2 : 1); attempt++) {
+  for (
+    ;
+    attempt < (cfg.attempts ?? (auditFailure || closeDeadline ? 2 : 1));
+    attempt++
+  ) {
     const startedAt = Date.now();
     deadlineAt =
       startedAt +
@@ -524,11 +570,29 @@ try {
       modelRuntime: runtime,
       model: runtime.getModel('package-host', 'host'),
       thinkingLevel: 'off',
-      tools: ['github_research_run', 'github_research_read'],
+      tools: [
+        'github_research_run',
+        'github_research_read',
+        ...(cfg.viaCodemode ? ['codemode'] : []),
+      ],
       resourceLoader: loader,
       settingsManager: settings(),
       sessionManager: SessionManager.inMemory(cfg.output),
     }));
+    if (interactive) {
+      await session.bindExtensions({mode: cfg.extensionMode ?? 'tui'});
+      if (cfg.reload) {
+        await session.reload();
+        assert.deepEqual(loader.getExtensions().errors, []);
+        await session.bindExtensions({mode: cfg.extensionMode ?? 'tui'});
+      }
+      assert.ok(session.getActiveToolNames().includes('github_research_run'));
+      assert.equal(
+        session.getAllTools().filter(t => t.name === 'github_research_read')
+          .length,
+        1,
+      );
+    }
     const abort = () => void session.abort();
     controller.signal.addEventListener('abort', abort, {once: true});
     try {
@@ -538,12 +602,20 @@ try {
     }
     if (fixtureFailure) throw fixtureFailure;
     const outer = session.messages.find(
-      m => m.role === 'toolResult' && m.toolName === 'github_research_run',
+      m =>
+        m.role === 'toolResult' &&
+        m.toolName === (cfg.viaCodemode ? 'codemode' : 'github_research_run'),
     );
     let attemptReport = null;
     if (outer) {
       try {
-        attemptReport = JSON.parse(outer.content[0].text);
+        attemptReport = cfg.viaCodemode
+          ? lastResearchReport
+          : JSON.parse(outer.content[0].text);
+        if (cfg.viaCodemode)
+          assert.ok(
+            JSON.stringify(outer.content).includes('unverified-report'),
+          );
       } catch (error) {
         if (!outer.isError) throw error;
         attemptReport = {error: outer.content[0].text};
@@ -552,6 +624,7 @@ try {
     attempts.push({
       report: attemptReport,
       enclosingUsage: outer?.usage,
+      parentSessionId: session.sessionManager.getSessionId(),
       startedAt,
       deadlineAt,
       finishedAt: Date.now(),
