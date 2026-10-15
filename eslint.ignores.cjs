@@ -9,6 +9,7 @@ module.exports = [
   'response-review/web/**/*.js',
   'response-review/tmp/**',
   'profile-subagent/tmp/**',
+  'profile-subagent/dist/**',
   'task-assistant/tmp/**',
   'task-assistant/dist/**',
   'src/**',
