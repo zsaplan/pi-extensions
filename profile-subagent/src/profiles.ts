@@ -104,8 +104,13 @@ export interface CatalogDiagnostic {
 }
 
 export const checkedProfileId = 'configuration-checked-reviewer';
+export const githubResearchProfileId = 'github-researcher';
 
-export async function loadCatalog(includeCheckedPilot = false) {
+// Research is import-only during development; the normal entry never opts in.
+export async function loadCatalog(
+  includeCheckedPilot = false,
+  includeGithubResearch = false,
+) {
   const registry = await realpath(profilesRoot);
   const entries = await readdir(registry, {withFileTypes: true});
   const diagnostics: CatalogDiagnostic[] = [];
@@ -115,6 +120,8 @@ export async function loadCatalog(includeCheckedPilot = false) {
   )) {
     if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
     if (entry.name === checkedProfileId && !includeCheckedPilot) continue;
+    if (entry.name === githubResearchProfileId && !includeGithubResearch)
+      continue;
     try {
       if (!/^[a-z][a-z0-9-]{0,63}$/.test(entry.name))
         throw new Error('Invalid profile directory ID.');
@@ -170,10 +177,14 @@ export async function loadCatalog(includeCheckedPilot = false) {
 export async function loadProfile(
   id: string,
   includeCheckedPilot = false,
+  includeGithubResearch = false,
 ): Promise<LoadedProfile> {
   if (!/^[a-z][a-z0-9-]{0,63}$/.test(id))
     throw new Error('Invalid profile ID.');
-  const {profiles, diagnostics} = await loadCatalog(includeCheckedPilot);
+  const {profiles, diagnostics} = await loadCatalog(
+    includeCheckedPilot,
+    includeGithubResearch,
+  );
   const profile = profiles.find(p => p.manifest.id === id);
   if (!profile) {
     const diagnostic = diagnostics.find(d => d.entry === id);
