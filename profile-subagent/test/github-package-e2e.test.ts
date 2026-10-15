@@ -149,6 +149,8 @@ test(
       'delayed-close',
       'connection-audit-failure',
       'close-deadline',
+      'work-deadline',
+      'abnormal-close',
       ...Object.keys(tokenCases),
       'legacy-policy',
     ]) {
@@ -333,6 +335,23 @@ test(
           assert.equal(failed.report.status, 'failed');
           assert.equal(failed.report.research.cleanupComplete, false);
           assert.equal(failed.report.research.accountingComplete, true);
+          assert.equal(
+            failed.report.error,
+            'Research socket close deadline reached.',
+          );
+          assert.equal(failed.report.research.error, failed.report.error);
+          assert.ok(
+            failed.report.handoffIssues.includes(
+              'Assignment work deadline elapsed before handoff.',
+            ),
+          );
+          const base = JSON.parse(
+            await readFile(
+              join(failed.report.artifactDir, 'result.json'),
+              'utf8',
+            ),
+          );
+          assert.equal(base.error, failed.report.error);
           assert.equal(failed.connections, 1);
           assert.equal(failed.frames, 2);
           assert.equal(failed.wireGithub, 3);
@@ -357,13 +376,38 @@ test(
             refused.report.binding.sessionId,
             failed.report.binding.sessionId,
           );
+        } else if (scenario === 'abnormal-close') {
+          assert.equal(value.report.status, 'failed');
+          assert.equal(
+            value.report.error,
+            'Research socket closed abnormally.',
+          );
+          assert.equal(value.report.research.cleanupComplete, true);
+          assert.equal(value.report.research.accountingComplete, true);
+          assert.equal(value.attempts[0].openClientSockets, 0);
         } else if (
-          ['provider-error', 'missing-usage', 'cancel'].includes(scenario)
+          [
+            'provider-error',
+            'missing-usage',
+            'cancel',
+            'work-deadline',
+          ].includes(scenario)
         ) {
           assert.notEqual(value.report?.status, 'completed');
           if (value.report)
             assert.equal(value.report.research.accountingComplete, false);
           assert.equal(value.frames, 1);
+          if (scenario === 'work-deadline' || scenario === 'cancel') {
+            assert.equal(value.report.research.cleanupComplete, true);
+            assert.ok(
+              value.report.handoffIssues.includes(
+                scenario === 'work-deadline'
+                  ? 'Assignment work deadline elapsed before handoff.'
+                  : 'Parent cancelled the research assignment.',
+              ),
+            );
+            assert.equal(value.attempts[0].openClientSockets, 0);
+          }
         } else {
           assert.equal(value.report.status, 'completed', stdout);
           assert.equal(value.report.research.cleanupComplete, true);

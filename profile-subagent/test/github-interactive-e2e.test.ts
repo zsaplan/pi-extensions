@@ -32,6 +32,8 @@ test(
       {name: 'cancel', scenario: 'cancel'},
       {name: 'headless', scenario: 'success', extensionMode: 'sdk'},
       {name: 'compiled-entry', scenario: 'success'},
+      {name: 'bundled-entry', scenario: 'success', bundledHost: true},
+      {name: 'compiled-bundled-entry', scenario: 'success', bundledHost: true},
       {name: 'codemode', scenario: 'success', viaCodemode: true},
     ];
     const results: {name: string; passed: boolean}[] = [];
@@ -49,7 +51,7 @@ test(
           module: join(pkg, 'dist/github-research.js'),
           interactiveModule: join(
             pkg,
-            item.name === 'compiled-entry'
+            item.name.includes('compiled-')
               ? 'dist/github-interactive.js'
               : 'src/github-interactive.ts',
           ),
@@ -109,6 +111,9 @@ test(
           assert.ok(report.binding.deadlineAt <= attempt.finishedAt + 90000);
           assert.equal(report.research.cleanupComplete, true);
           assert.equal(attempt.openClientSockets, 0);
+          assert.ok(attempt.closeRequests > 0);
+          if (item.bundledHost)
+            assert.ok(attempt.finishedAt - attempt.startedAt < 10000);
           if (item.name === 'cancel') {
             assert.equal(report.status, 'failed');
             assert.equal(report.research.accountingComplete, false);

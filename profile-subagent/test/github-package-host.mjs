@@ -8,16 +8,19 @@ import {pathToFileURL} from 'node:url';
 import {createServer} from 'node:http';
 import {WebSocket, WebSocketServer} from 'ws';
 import {createAssistantMessageEventStream} from '@earendil-works/pi-ai';
-import {
+process.umask(0o077);
+const cfg = JSON.parse(await readFile(process.argv[2], 'utf8'));
+const sdkEntry = import.meta.resolve('@earendil-works/pi-coding-agent');
+const {
   createAgentSession,
   createCodemodeExtension,
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
   SettingsManager,
-} from '@earendil-works/pi-coding-agent';
-process.umask(0o077);
-const cfg = JSON.parse(await readFile(process.argv[2], 'utf8'));
+} = await import(
+  cfg.bundledHost ? new URL('./bundle/index.js', sdkEntry).href : sdkEntry
+);
 assert.ok(['fixture', 'live'].includes(cfg.mode));
 const live = cfg.mode === 'live';
 const interactive = Boolean(cfg.interactiveModule);
@@ -255,6 +258,8 @@ if (!live) {
     const close = socket.close.bind(socket);
     if (cfg.scenario === 'delayed-close')
       socket.close = (...a) => setTimeout(() => close(...a), 1500);
+    if (cfg.scenario === 'abnormal-close')
+      socket.close = () => close(4001, 'fixture');
     socket.on('message', data => {
       try {
         const request = JSON.parse(data);
@@ -263,6 +268,7 @@ if (!live) {
         assert.equal(request.service_tier, 'default');
         assert.equal(request.reasoning.effort, 'high');
         assert.equal(request.previous_response_id, undefined);
+        if (cfg.scenario === 'work-deadline') return;
         if (cfg.scenario === 'cancel') {
           setTimeout(() => controller.abort(), 10);
           return;
@@ -394,10 +400,9 @@ if (!live) {
       this.once('close', () => clientSockets.delete(this));
     }
     close(...args) {
-      if (closeDeadline) {
-        closeRequests++;
-        return;
-      }
+      closeRequests++;
+      record('client-close-request', {code: args[0]});
+      if (closeDeadline) return;
       return super.close(...args);
     }
   };
@@ -563,7 +568,10 @@ try {
     const startedAt = Date.now();
     deadlineAt =
       startedAt +
-      ((auditFailure || closeDeadline) && attempt === 0 ? 18000 : 110000);
+      (((auditFailure || closeDeadline) && attempt === 0) ||
+      cfg.scenario === 'work-deadline'
+        ? 18000
+        : 110000);
     ({session} = await createAgentSession({
       cwd: cfg.output,
       agentDir: agent,
