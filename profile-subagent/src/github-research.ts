@@ -109,10 +109,10 @@ export function registerGithubResearch(
   });
   pi.registerTool({
     name: 'github_research_run',
-    label: 'Development GitHub researcher',
+    label: 'GitHub researcher (experimental)',
     exposure: 'direct',
     description:
-      'Experimental read-only repository researcher, not a code reviewer. Requires a host-approved task/session/thread/reservation and a host-supplied GitHub token; any repository it can read is available. Run inline; no new pool or delivery. Follow relevant leads only and stop when the question is answered or blocked. Returns unverified prose and bounded post-hook observations. No writes, repeated failed requests or restoration/compliance certification.',
+      'Experimental read-only repository researcher, not a code reviewer. Requires a host-approved task/session/thread/reservation and a host-supplied GitHub token; any repository it can read is available. Run inline; no new pool or delivery. Use for substantial source research, not a simple local check or a duplicate investigation. Supply the question and known repository/path/ref leads. Inspect returned evidence and gaps; reread only material unresolved claims. Follow relevant leads only and stop when the question is answered or blocked. Returns unverified prose and bounded post-hook observations. No writes, repeated failed requests or restoration/compliance certification.',
     parameters: Type.Object(
       {task: Type.String({minLength: 1, maxLength: 12000})},
       {additionalProperties: false},
