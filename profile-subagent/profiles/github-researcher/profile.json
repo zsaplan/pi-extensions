@@ -1,0 +1,19 @@
+{
+  "id": "github-researcher",
+  "description": "Research one GitHub question across repositories the host-supplied token can read. Follow relevant leads and stop when answered or blocked; no new review, writes or external-system access.",
+  "tags": [
+    "github",
+    "research",
+    "history",
+    "configuration",
+    "soc2"
+  ],
+  "agents": "AGENTS.md",
+  "skills": [],
+  "builtinTools": [],
+  "parentTools": [
+    "github_research_read"
+  ],
+  "maxTurns": 10,
+  "timeoutSeconds": 75
+}

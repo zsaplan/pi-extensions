@@ -8,7 +8,12 @@
     "pi-package",
     "pi-extension"
   ],
+  "exports": {
+    "./github-research": "./dist/github-research.js",
+    "./github-read": "./dist/github-read.js"
+  },
   "files": [
+    "dist",
     "src",
     "profiles",
     "skills",
@@ -20,8 +25,10 @@
     "RESEARCH.md",
     "ORCHESTRATION.md",
     "PILOT.md",
+    "GITHUB_RESEARCH.md",
     "experimental/snapshot-checker/CONTRACT.md",
-    "!**/tmp/**"
+    "!**/tmp/**",
+    "!**/*.tsbuildinfo"
   ],
   "pi": {
     "extensions": [
@@ -37,9 +44,11 @@
     "typebox": "*"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "lint": "gts lint",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test test/*.test.ts",
+    "test": "npm run build && node --test test/*.test.ts",
     "verify": "npm run lint && npm run typecheck && npm run test"
   }
 }

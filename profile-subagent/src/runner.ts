@@ -12,7 +12,16 @@ import {
   type ResourceLoader,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
-import {checkedProfileId, loadProfile, type LoadedProfile} from './profiles.ts';
+import {
+  checkedProfileId,
+  githubResearchProfileId,
+  loadProfile,
+  type LoadedProfile,
+} from './profiles.ts';
+import {
+  installResearchTransport,
+  researchDefaults,
+} from './github-transport.ts';
 import {installLunaTransport, lunaDefaults} from './luna-transport.ts';
 import type {
   SnapshotChecker,
@@ -63,6 +72,12 @@ export async function runProfile(
   ctx: ExtensionToolContext,
   signal?: AbortSignal,
   pilot?: {checker: SnapshotChecker; callId: string; paths: SnapshotPaths},
+  observeToolResult?: (message: {
+    toolCallId: string;
+    toolName: string;
+    isError: boolean;
+  }) => void,
+  research?: {deadlineAt: number; artifactRoot: string; authPath?: string},
 ) {
   signal?.throwIfAborted();
   const {manifest} = profile;
@@ -70,7 +85,16 @@ export async function runProfile(
     throw new Error(
       'Checked pilot requires explicit operator enablement and snapshot paths.',
     );
-  const defaults = pilot ? lunaDefaults : childDefaults;
+  if (research && (manifest.id !== githubResearchProfileId || pilot))
+    throw new Error('Standard research transport requires the GitHub profile.');
+  const defaults = research
+    ? researchDefaults
+    : pilot
+      ? lunaDefaults
+      : childDefaults;
+  let researchTransport:
+    | Awaited<ReturnType<typeof installResearchTransport>>
+    | undefined;
   if (
     pilot &&
     (!ctx.tools.some(t => t.name === 'read') ||
@@ -167,7 +191,8 @@ export async function runProfile(
         pilot.callId,
         pilot.paths,
       );
-    const root = join(getAgentDir(), 'profile-subagent-runs');
+    const root =
+      research?.artifactRoot ?? join(getAgentDir(), 'profile-subagent-runs');
     await mkdir(root, {recursive: true, mode: 0o700});
     artifactDir = await mkdtemp(join(root, `${manifest.id}-`));
     await writeFile(
@@ -194,15 +219,19 @@ export async function runProfile(
       ),
       {mode: 0o600},
     );
-    const modelRuntime = await ModelRuntime.create({signal: controller.signal});
+    const modelRuntime = await ModelRuntime.create({
+      signal: controller.signal,
+      ...(research ? {authPath: research.authPath, modelsPath: null} : {}),
+    });
     const native = ctx.modelRegistry.getRegisteredNativeProvider(
       defaults.provider,
     );
-    if (native) modelRuntime.registerNativeProvider(native);
+    if (native && !research) modelRuntime.registerNativeProvider(native);
     const config = ctx.modelRegistry.getRegisteredProviderConfig(
       defaults.provider,
     );
-    if (config) modelRuntime.registerProvider(defaults.provider, config);
+    if (config && !research)
+      modelRuntime.registerProvider(defaults.provider, config);
     const model = modelRuntime.getModel(defaults.provider, defaults.model);
     if (!model)
       throw new Error(
@@ -210,8 +239,9 @@ export async function runProfile(
       );
     // Copy only this provider's override, never a key for the parent's other provider.
     if (
+      !research &&
       ctx.modelRegistry.getProviderAuthStatus(defaults.provider).source ===
-      'runtime'
+        'runtime'
     ) {
       const apiKey = await ctx.modelRegistry.getApiKeyForProvider(
         defaults.provider,
@@ -224,6 +254,12 @@ export async function runProfile(
       });
     }
     if (pilot) transport = installLunaTransport(modelRuntime);
+    if (research)
+      researchTransport = await installResearchTransport(
+        modelRuntime,
+        research.deadlineAt,
+        artifactDir,
+      );
     controller.signal.throwIfAborted();
     ({session} = await createAgentSession({
       cwd: ctx.cwd,
@@ -257,6 +293,8 @@ export async function runProfile(
       throw new Error('Child tool set did not match the profile.');
     }
     unsubscribe = session.subscribe(event => {
+      if (event.type === 'message_end' && event.message.role === 'toolResult')
+        observeToolResult?.(event.message);
       if (event.type === 'message_end' && event.message.role === 'assistant') {
         turns++;
         if (
@@ -317,6 +355,13 @@ export async function runProfile(
     unsubscribe?.();
     session?.dispose();
     assignment?.close();
+    if (researchTransport) {
+      try {
+        await researchTransport.close();
+      } catch {
+        error ??= 'Research transport cleanup/provider verification failed.';
+      }
+    }
   }
   const usage = emptyUsage();
   for (const message of session?.messages ?? []) {
@@ -337,7 +382,27 @@ export async function runProfile(
       usage.cost[key] += u.cost[key];
     }
   }
+  const researchSummary = researchTransport?.summary();
+  if (
+    research &&
+    (!researchSummary?.accountingComplete ||
+      !researchSummary.cleanupComplete ||
+      researchSummary.input !== usage.input ||
+      researchSummary.output !== usage.output ||
+      researchSummary.cacheRead !== usage.cacheRead ||
+      Math.abs(researchSummary.knownSdkCost - usage.cost.total) > 1e-9)
+  )
+    error ??=
+      'Research accounting or cleanup incomplete; unknown usage is not zero.';
   const result = {
+    ...(research
+      ? {
+          research: researchSummary ?? {
+            accountingComplete: false,
+            cleanupComplete: false,
+          },
+        }
+      : {}),
     status: error ? 'failed' : 'completed',
     profile: manifest.id,
     profileDigest: profile.digest,

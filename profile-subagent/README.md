@@ -2,6 +2,10 @@
 
 Handle simple work directly; when delegation helps, find a trusted specialist for a bounded assignment with fixed instructions, tools and fresh context.
 
+## Experimental GitHub researcher (default-off)
+
+A trusted host can explicitly import the [bounded GitHub researcher](GITHUB_RESEARCH.md). Repository access is determined only by its GitHub token, without per-repository/path allowlists. It is absent from the normal catalog and tool registration. Shipping this capability does not enable repository access, install it into a background worker, or change existing model defaults.
+
 ## Install
 
 See [installation, acceptance and rollback](RELEASE.md). Validated with Pi 0.99.2 / Node 26.10.0.
