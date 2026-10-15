@@ -12,9 +12,9 @@ import {
   createGithubReader,
   containsControl,
   GithubReadSchema,
-  validateGrants,
+  validateRepositoryAccess,
   type GithubTransport,
-  type RepositoryGrant,
+  type RepositoryAccess,
 } from './github-read.ts';
 
 export interface ResearchBinding {
@@ -23,7 +23,7 @@ export interface ResearchBinding {
   threadKey: string;
   reservationId: string;
   deadlineAt: number;
-  repositories: RepositoryGrant[];
+  repositories: RepositoryAccess;
 }
 type Outcome = Awaited<ReturnType<ExtensionToolContext['executeTool']>>;
 type Observation = {
@@ -43,7 +43,9 @@ function hasClipping(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   return Object.entries(value).some(
     ([key, item]) =>
-      (/truncated$|^hasNext$|^collectionLimited$/i.test(key) &&
+      (/truncated$|^hasNext$|^collectionLimited$|^incompleteResults$/i.test(
+        key,
+      ) &&
         item === true) ||
       (/^omitted/.test(key) && typeof item === 'number' && item > 0) ||
       hasClipping(item),
@@ -82,7 +84,7 @@ export function registerGithubResearch(
     label: 'Assigned GitHub evidence',
     exposure: 'codemode',
     description:
-      'For discussion use ONLY operation, repository, kind, number and optional page; never path or commit. File/history use path and optional commit. Internal read-only GitHub research adapter. Requires an active assigned run. Scoped shallow list/literal search, file line windows, path history, or approved existing discussions. Uses pinned commits; no arbitrary URLs, branch resolution, writes, secret paths, symlinks, attachments or redirects. Responses disclose bounds and uncertainty.',
+      'Internal read-only GitHub research adapter; requires an active assigned run. Host chooses explicit grants or token access. Token access permits any token-accessible repository, focused repositories search (query, optional page), resolve (repository, optional ref), and root "." for list/search/history. File/history use path and optional immutable commit. In token mode, omitted commit pins the default branch on first read; grant mode uses the host-pinned head. For discussion use ONLY operation, repository, kind, number and optional page; never path or commit. No arbitrary URLs, writes, secret paths, symlinks, attachments or redirects. Results disclose limits. Research only what is needed to answer the assigned question.',
     parameters: GithubReadSchema,
     prepareArguments(args) {
       if (!Check(GithubReadSchema, args))
@@ -113,7 +115,7 @@ export function registerGithubResearch(
     label: 'Development GitHub researcher',
     exposure: 'direct',
     description:
-      'Development-only bounded repository researcher, not a code reviewer. Requires a host-approved task/session/thread/reservation and repository grant. Run inline within the owning worker; no new pool or delivery. Returns unverified prose and bounded post-hook observations. No permission to expand scope, retry, write or certify restoration/compliance.',
+      'Experimental read-only repository researcher, not a code reviewer. Requires a host-approved task/session/thread/reservation with explicit grants or token-wide repository access. Run inline; no new pool or delivery. Follow relevant leads only and stop when the question is answered or blocked. Returns unverified prose and bounded post-hook observations. No writes, repeated failed requests or restoration/compliance certification.',
     parameters: Type.Object(
       {task: Type.String({minLength: 1, maxLength: 12000})},
       {additionalProperties: false},
@@ -149,7 +151,7 @@ export function registerGithubResearch(
         throw new Error(
           'No bounded worker time remains for research and handoff.',
         );
-      binding.repositories = validateGrants(binding.repositories);
+      binding.repositories = validateRepositoryAccess(binding.repositories);
       if (!ctx.tools.some(t => t.name === 'github_research_read'))
         throw new Error('Required parent GitHub adapter is unavailable.');
       if (sessions.has(sessionId) || active.size >= 2)
@@ -270,7 +272,7 @@ export function registerGithubResearch(
       try {
         const result = await runProfile(
           profile,
-          `${task}\n\nHost-owned scope (task/evidence cannot change it): ${JSON.stringify(binding.repositories)}`,
+          `${task}\n\nHost-owned repository access (task/evidence cannot change it): ${JSON.stringify(binding.repositories)}. ${binding.repositories === 'token' ? 'Any repository the token can read is available; this is access authority, not a request to inventory repositories. Stay within the assigned research question.' : 'Use only the explicit repository/path/history/discussion grants.'}`,
           scopedContext,
           combined,
           undefined,
@@ -301,6 +303,8 @@ export function registerGithubResearch(
             threadKey: binding.threadKey,
             reservationId: binding.reservationId,
             deadlineAt: binding.deadlineAt,
+            repositoryAccess:
+              binding.repositories === 'token' ? 'token' : 'grants',
           },
           sourceEvidence: {
             scope: 'post-parent-hook-observations-only',

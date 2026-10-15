@@ -4,7 +4,7 @@ Handle simple work directly; when delegation helps, find a trusted specialist fo
 
 ## Experimental GitHub researcher (default-off)
 
-A trusted host can explicitly import the [bounded GitHub researcher](GITHUB_RESEARCH.md). It is absent from the normal catalog and tool registration. Shipping this capability does not enable repository access, install it into a background worker, or change existing model defaults.
+A trusted host can explicitly import the [bounded GitHub researcher](GITHUB_RESEARCH.md), choosing any repository accessible to its token or a narrower explicit grant. It is absent from the normal catalog and tool registration. Shipping this capability does not enable repository access, install it into a background worker, or change existing model defaults.
 
 ## Install
 

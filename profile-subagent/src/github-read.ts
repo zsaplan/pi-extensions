@@ -7,6 +7,27 @@ const shaSchema = Type.String({pattern: '^[a-f0-9]{40}$'});
 const common = {repository: text, commit: Type.Optional(shaSchema), path: text};
 export const GithubReadSchema = Type.Union([
   Type.Object(
+    {
+      operation: Type.Literal('repositories'),
+      query: Type.String({
+        minLength: 1,
+        maxLength: 100,
+        description:
+          'Focused repository search, e.g. platform org:example. Token access only; not an organization inventory.',
+      }),
+      page: Type.Optional(Type.Integer({minimum: 1, maximum: 2})),
+    },
+    {additionalProperties: false},
+  ),
+  Type.Object(
+    {
+      operation: Type.Literal('resolve'),
+      repository: text,
+      ref: Type.Optional(Type.String({minLength: 1, maxLength: 200})),
+    },
+    {additionalProperties: false},
+  ),
+  Type.Object(
     {...common, operation: Type.Literal('list')},
     {additionalProperties: false},
   ),
@@ -35,7 +56,7 @@ export const GithubReadSchema = Type.Union([
         minLength: 1,
         maxLength: 1024,
         description:
-          'Path within the grant, or an explicitly granted directory root with or without its trailing slash. Folder history can include unrelated changes; date/page limits still apply.',
+          'Repository-relative path. Token access also permits root "."; grant access requires a granted path or directory root. Folder history can include unrelated changes; page/date limits still apply.',
       }),
       page: Type.Optional(Type.Integer({minimum: 1, maximum: 2})),
     },
@@ -65,6 +86,12 @@ export interface RepositoryGrant {
   since?: string;
   until?: string;
   discussions: number[];
+}
+export type RepositoryAccess = RepositoryGrant[] | 'token';
+export function validateRepositoryAccess(
+  input: RepositoryAccess,
+): RepositoryAccess {
+  return input === 'token' ? input : validateGrants(input);
 }
 export interface GithubTransport {
   token: (signal: AbortSignal) => Promise<string>;
@@ -140,6 +167,8 @@ export function validateGrants(input: RepositoryGrant[]): RepositoryGrant[] {
             'discussions',
           ].includes(key),
       ) ||
+      typeof g.repository !== 'string' ||
+      containsControl(g.repository) ||
       !repositoryPattern.test(g.repository) ||
       !shaPattern.test(g.head) ||
       typeof g.history !== 'boolean' ||
@@ -177,10 +206,12 @@ const encodePath = (path: string) =>
   path.split('/').map(encodeURIComponent).join('/');
 
 export function createGithubReader(
-  input: RepositoryGrant[],
+  input: RepositoryAccess,
   transport: GithubTransport,
 ) {
-  const grants = validateGrants(input);
+  const access = validateRepositoryAccess(input);
+  const tokenAccess = access === 'token';
+  const grants: RepositoryGrant[] = access === 'token' ? [] : access;
   const known = new Map(grants.map(g => [g.repository, new Set([g.head])]));
   const trees = new Map<string, unknown>();
   const roots = new Map<string, string>();
@@ -210,12 +241,12 @@ export function createGithubReader(
     }
   }
   async function get(
-    g: RepositoryGrant,
+    g: RepositoryGrant | undefined,
     endpoint: string,
     signal: AbortSignal,
   ) {
     signal.throwIfAborted();
-    const key = `${g.repository}/${endpoint}`;
+    const key = g ? `repos/${g.repository}/${endpoint}` : endpoint;
     while (pendingRequests.has(key)) {
       await waitForRequest(pendingRequests.get(key)!, signal);
       signal.throwIfAborted();
@@ -268,7 +299,7 @@ export function createGithubReader(
     }
   }
   async function request(
-    g: RepositoryGrant,
+    g: RepositoryGrant | undefined,
     endpoint: string,
     signal: AbortSignal,
   ) {
@@ -289,7 +320,7 @@ export function createGithubReader(
         'Assignment response-byte budget exhausted; no further HTTP request.',
       );
     const response = await (transport.fetch ?? globalThis.fetch)(
-      `https://api.github.com/repos/${g.repository}/${endpoint}`,
+      `https://api.github.com/${g ? `repos/${g.repository}/` : ''}${endpoint}`,
       {
         method: 'GET',
         redirect: 'error',
@@ -340,7 +371,9 @@ export function createGithubReader(
     };
   }
   function allowed(g: RepositoryGrant, path: string, directory = false) {
+    if (tokenAccess && directory && path === '') return true;
     if (!pathIsSafe(path) || sensitive(path)) return false;
+    if (tokenAccess) return true;
     return g.paths.some(p =>
       p.endsWith('/')
         ? path.startsWith(p) || (directory && path === p.slice(0, -1))
@@ -395,13 +428,39 @@ export function createGithubReader(
     }
     return fail('Path unavailable.');
   }
+  async function resolveCommit(
+    g: RepositoryGrant,
+    ref: string | undefined,
+    signal: AbortSignal,
+  ) {
+    if (ref !== undefined && (!ref.trim() || containsControl(ref)))
+      throw new BoundaryError('Invalid GitHub reference.');
+    const query = new URLSearchParams({per_page: '1'});
+    if (ref !== undefined) query.set('sha', ref);
+    const data = await get(g, `commits?${query}`, signal);
+    if (!Array.isArray(data.value) || data.value.length !== 1)
+      fail('Commit resolution unavailable; no pinned version established.');
+    const item = record(data.value[0]),
+      id = sha(item.sha);
+    if (ref && shaPattern.test(ref) && ref !== id)
+      fail('GitHub commit identity mismatch.');
+    roots.set(
+      `${g.repository}:${id}`,
+      sha(record(record(item.commit).tree).sha),
+    );
+    known.get(g.repository)!.add(id);
+    return id;
+  }
   async function listing(
     g: RepositoryGrant,
     commit: string,
     path: string,
     signal: AbortSignal,
   ) {
-    const entry = await lookup(g, commit, path, signal);
+    const entry =
+      path === ''
+        ? {type: 'tree', mode: '040000', sha: await root(g, commit, signal)}
+        : await lookup(g, commit, path, signal);
     if (entry.type !== 'tree' || entry.mode !== '040000')
       throw new BoundaryError('List/search requires an approved directory.');
     const entries = (await tree(g, sha(entry.sha), signal)).filter(
@@ -410,15 +469,17 @@ export function createGithubReader(
         pathIsSafe(e.path) &&
         !e.path.includes('/'),
     );
+    const childPath = (name: unknown) =>
+      path ? `${path}/${name}` : String(name);
     const visible = entries.filter(
       e =>
-        allowed(g, `${path}/${e.path}`, e.type === 'tree') &&
+        allowed(g, childPath(e.path), e.type === 'tree') &&
         ((e.type === 'tree' && e.mode === '040000') ||
           (e.type === 'blob' && ['100644', '100755'].includes(String(e.mode)))),
     );
     return {
       entries: visible.slice(0, 20).map(e => ({
-        path: `${path}/${e.path}`,
+        path: childPath(e.path),
         type: String(e.type),
         sha: sha(e.sha),
       })),
@@ -486,11 +547,83 @@ export function createGithubReader(
     const clean = (value: unknown) =>
       typeof value === 'string' ? redact(value) : '';
     const clip = (value: unknown, max: number) => clean(value).slice(0, max);
-    const g = grants.find(g => g.repository === args.repository.toLowerCase());
+    if (args.operation === 'repositories') {
+      if (!tokenAccess)
+        throw new BoundaryError('Repository discovery requires token access.');
+      if (!args.query.trim() || containsControl(args.query))
+        throw new BoundaryError('Provide a focused repository search.');
+      const page = args.page ?? 1;
+      const query = new URLSearchParams({
+        q: args.query,
+        per_page: '5',
+        page: String(page),
+      });
+      const data = await get(undefined, `search/repositories?${query}`, signal);
+      const value = record(data.value);
+      if (
+        !Array.isArray(value.items) ||
+        typeof value.incomplete_results !== 'boolean'
+      )
+        fail('Unsupported GitHub repository search response.');
+      return {
+        items: value.items.slice(0, 5).map(item => {
+          const repo = record(item);
+          if (
+            typeof repo.full_name !== 'string' ||
+            containsControl(repo.full_name) ||
+            !repositoryPattern.test(repo.full_name)
+          )
+            fail('Unsupported GitHub repository identity.');
+          const description = clean(repo.description);
+          return {
+            repository: repo.full_name.toLowerCase(),
+            description: description.slice(0, 300),
+            descriptionTruncated: description.length > 300,
+            citation: `https://github.com/${repo.full_name.toLowerCase()}`,
+          };
+        }),
+        coverage: {
+          page,
+          hasNext: data.next,
+          earlierPagesNotObserved: page > 1,
+          incompleteResults: value.incomplete_results,
+          collectionLimited: value.items.length > 5,
+          completeInventory: false,
+          searchIndex: 'GitHub search results, not proof of absence or access',
+        },
+      };
+    }
+    if (
+      containsControl(args.repository) ||
+      !repositoryPattern.test(args.repository)
+    )
+      throw new BoundaryError('Invalid GitHub repository name.');
+    const repository = args.repository.toLowerCase();
+    let g = grants.find(g => g.repository === repository);
+    if (!g && tokenAccess) {
+      g = {repository, head: '', paths: [], history: true, discussions: []};
+      grants.push(g);
+      known.set(repository, new Set());
+    }
     if (!g) throw new BoundaryError('Repository is outside the host grant.');
     const base = `https://github.com/${g.repository}`;
+    if (args.operation === 'resolve') {
+      if (!tokenAccess)
+        throw new BoundaryError('Reference resolution requires token access.');
+      const commit = await resolveCommit(g, args.ref, signal);
+      return {
+        commit,
+        ref: args.ref ?? 'default branch',
+        citation: `${base}/commit/${commit}`,
+        coverage: {
+          mutableRef: args.ref === undefined || !shaPattern.test(args.ref),
+          instruction:
+            'Use the returned commit for subsequent reads of this version.',
+        },
+      };
+    }
     if (args.operation === 'discussion') {
-      if (!g.discussions.includes(args.number))
+      if (!tokenAccess && !g.discussions.includes(args.number))
         throw new BoundaryError('Discussion number is outside the host grant.');
       const page = args.page ?? 1;
       const endpoints = {
@@ -548,26 +681,36 @@ export function createGithubReader(
         },
       };
     }
-    const commit = args.commit ?? g.head;
-    if (!known.get(g.repository)!.has(commit))
-      throw new BoundaryError(
-        'Commit is not the pinned head or observed permitted history. Branch/tag resolution is not supported.',
-      );
     // History may address an explicitly granted directory root, not the parent
     // of an exact-file grant. Leave all other history spellings unchanged.
     const historyRoot =
       args.operation === 'history' &&
-      g.paths.some(
-        p =>
-          p.endsWith('/') && (args.path === p || args.path === p.slice(0, -1)),
-      );
+      (tokenAccess
+        ? args.path === '.' || args.path.endsWith('/')
+        : g.paths.some(
+            p =>
+              p.endsWith('/') &&
+              (args.path === p || args.path === p.slice(0, -1)),
+          ));
     const directory =
       args.operation === 'list' || args.operation === 'search' || historyRoot;
     // Remove only one slash; malformed paths are never broadly normalized.
-    const path = directory ? args.path.replace(/\/$/, '') : args.path;
-    if (!allowed(g, path, directory))
+    const path =
+      tokenAccess && directory && args.path === '.'
+        ? ''
+        : directory
+          ? args.path.replace(/\/$/, '')
+          : args.path;
+    if ((!path && args.path !== '.') || !allowed(g, path, directory))
       throw new BoundaryError(
         'Path is outside scope or is a prohibited sensitive path.',
+      );
+    const commit =
+      args.commit ??
+      (g.head || (g.head = await resolveCommit(g, undefined, signal)));
+    if (!tokenAccess && !known.get(g.repository)!.has(commit))
+      throw new BoundaryError(
+        'Commit is not the pinned head or observed permitted history. Branch/tag resolution is not supported.',
       );
     if (args.operation === 'list')
       return {
@@ -694,7 +837,7 @@ export function createGithubReader(
       path,
       items,
       coverage: {
-        directoryGrantRoot: historyRoot,
+        directoryGrantRoot: !tokenAccess && historyRoot,
         page,
         hasNext: data.next,
         earlierPagesNotObserved: page > 1,
@@ -730,7 +873,7 @@ export function createGithubReader(
         result = {
           status: 'ok',
           operation: input.operation,
-          repository: input.repository,
+          ...('repository' in input ? {repository: input.repository} : {}),
           ...(await operate(input, signal, redact)),
         };
       } catch (error) {
