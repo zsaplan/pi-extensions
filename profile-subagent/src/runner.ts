@@ -359,7 +359,9 @@ export async function runProfile(
       try {
         await researchTransport.close();
       } catch {
-        error ??= 'Research transport cleanup/provider verification failed.';
+        error ??=
+          researchTransport.summary().error ??
+          'Research transport cleanup/provider verification failed.';
       }
     }
   }

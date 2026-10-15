@@ -109,10 +109,10 @@ export function registerGithubResearch(
   });
   pi.registerTool({
     name: 'github_research_run',
-    label: 'Development GitHub researcher',
+    label: 'GitHub researcher (experimental)',
     exposure: 'direct',
     description:
-      'Experimental read-only repository researcher, not a code reviewer. Requires a host-approved task/session/thread/reservation and a host-supplied GitHub token; any repository it can read is available. Run inline; no new pool or delivery. Follow relevant leads only and stop when the question is answered or blocked. Returns unverified prose and bounded post-hook observations. No writes, repeated failed requests or restoration/compliance certification.',
+      'Experimental read-only repository researcher, not a code reviewer. Requires a host-approved task/session/thread/reservation and a host-supplied GitHub token; any repository it can read is available. Run inline; no new pool or delivery. Use for substantial source research, not a simple local check or a duplicate investigation. Supply the question and known repository/path/ref leads, marking unverified leads as such; the child does not inherit your context. Search is shallow (five files in one directory), not a repository-wide index. There are sixteen adapter calls total, separate from fifty HTTP attempts; prioritize decisive file reads over directory tours. Inspect returned evidence and gaps; reread only material unresolved claims. Follow relevant leads only and stop when the question is answered or blocked. Returns unverified prose and bounded post-hook observations. No writes, repeated failed requests or restoration/compliance certification.',
     parameters: Type.Object(
       {task: Type.String({minLength: 1, maxLength: 12000})},
       {additionalProperties: false},
@@ -298,6 +298,7 @@ export function registerGithubResearch(
         const details = {
           ...result.details,
           verification: 'unverified-report',
+          handoffIssues: [] as string[],
           binding: {
             taskId: binding.taskId,
             sessionId,
@@ -332,20 +333,33 @@ export function registerGithubResearch(
           },
           github: assignment.reader.stats(),
         };
+        if (signal?.aborted)
+          details.handoffIssues.push(
+            'Parent cancelled the research assignment.',
+          );
+        if (controller.signal.aborted)
+          details.handoffIssues.push(
+            'Assignment work deadline elapsed before handoff.',
+          );
+        if (details.outputTruncated)
+          details.handoffIssues.push('Research report truncated.');
         try {
-          if (combined.aborted || details.outputTruncated)
-            throw new Error(
-              'Research cancelled, timed out or report truncated.',
-            );
           if (
             (await loadProfile(githubResearchProfileId, false, true)).digest !==
             profile.digest
           )
-            throw new Error('Research profile changed during execution.');
+            details.handoffIssues.push(
+              'Research profile changed during execution.',
+            );
         } catch {
+          details.handoffIssues.push(
+            'Research profile could not be revalidated.',
+          );
+        }
+        if (details.handoffIssues.length) {
           details.status = 'failed';
-          details.error =
-            'Research cancelled, timed out, report truncated or profile changed; partial evidence only.';
+          details.error ??=
+            details.handoffIssues.join(' ') + ' Partial evidence only.';
         }
         try {
           if (!details.artifactDir)

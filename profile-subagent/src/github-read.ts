@@ -165,6 +165,10 @@ export function createGithubReader(transport: GithubTransport) {
     bytes = 0,
     calls = 0,
     reusedFailures = 0;
+  const remainingBudget = () => ({
+    adapterCallsRemaining: Math.max(0, 16 - calls),
+    httpRequestsRemaining: Math.max(0, 50 - requests),
+  });
   async function waitForRequest(pending: Promise<void>, signal: AbortSignal) {
     let abort = () => {};
     try {
@@ -822,6 +826,7 @@ export function createGithubReader(transport: GithubTransport) {
       }
       let outcome: Record<string, unknown> = {
         ...result,
+        budget: remainingBudget(),
         observedAt: new Date().toISOString(),
       };
       // Also redact credentials in metadata, not just file/discussion text.
@@ -839,6 +844,7 @@ export function createGithubReader(transport: GithubTransport) {
         outcome = {
           status: 'unavailable',
           reason: 'Observation exceeds 16 KiB; no partial source returned.',
+          budget: remainingBudget(),
           observedAt: new Date().toISOString(),
         };
       return outcome;

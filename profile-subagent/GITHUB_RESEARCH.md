@@ -4,6 +4,42 @@ One bounded repository question, supported findings and explicit gaps. No code-r
 
 The normal extension entry point, catalog, original profiles and checked pilot remain unchanged. This module does not integrate or restart the Slack task assistant.
 
+## Interactive Pi opt-in
+
+Explicitly add this file to the `extensions` array in your agent settings, using the absolute path to your checkout:
+
+```text
+/path/to/pi-extensions/profile-subagent/src/github-interactive.ts
+```
+
+Run `/reload` after installing dependencies and building the package. The ordinary package entry remains default-off. This separate entry registers `github_research_run` through Pi's normal tool pipeline; it only admits calls in TUI mode, not SDK, print, JSON or RPC workers. It does not start or change the Slack service.
+
+Each outer tool call is one new interactive assignment: the actual Pi session and call ID determine its reservation, with a fresh 90-second deadline (75 seconds child work plus 15 seconds handoff). It is not an extension of a background-worker deadline. Existing factory admission, cancellation, parent hooks and accounting remain in force. Replay memory is bounded and lasts only until runtime reload/restart; this entry is not a durable task scheduler.
+
+Credentials come from `GH_TOKEN`, then `GITHUB_TOKEN`, then the fixed local command `gh auth token --hostname github.com`. No shell or model-supplied command is used. Output stays in memory, command errors are withheld, and lookup honors cancellation and a five-second timeout. No credentials are copied into configuration. Codex uses the existing agent-directory `auth.json`; use `/login openai-codex` if necessary. Missing GitHub credentials produce unavailable source observations, not evidence that a repository is absent; check `gh auth status` or the environment. Installing the entry does not validate credentials against live services.
+
+The entry selects the reviewed Luna/high native transport and keeps private run artifacts under `<agent-dir>/profile-subagent-runs`. Original post-hook evidence is authoritative; child prose is not independently verified. Use the researcher for substantive source questions, not small local checks or duplicate parent investigations.
+
+Interactive acceptance:
+- [x] Local real-Pi registration/reload, session binding, credential precedence/fallback/failure, parent denial/redaction, cancellation, private artifacts and usage checks: eleven scripted scenarios, including codemode and compiled-entry loading, passed with SDK TUI mode (no terminal rendering). Package verification passed all 258 tests on Node 26.10.0 / child SDK 0.99.2. These use local HTTP/WebSocket/model fixtures, not live research.
+- [ ] Installed resource discovery after updating the checkout and settings.
+- [ ] User `/reload` in the running interactive session.
+- [ ] Separately authorized live token-mode research; local fixtures do not establish live credential validity or model efficiency.
+
+## Failed-interactive-use follow-up — local remediation only
+
+The bundled Pi host and a separately imported native provider module can have different WebSocket caches even at the same version. Closing only the imported cache leaves the source-extension socket open. Cleanup now calls Pi's mapped session-resource registry for the exact research session ID as well as the pinned native helper used by compiled hosts. It still waits for actual close events, retains the original deadline, and blocks later native admission if sockets remain. Both the mapped coding-agent SDK and the pinned native pi-ai must be 0.99.2. No model, transport protocol, tier, limit or retry policy changed.
+
+A close-deadline failure is retained in transport evidence and the base result. The wrapper preserves that primary error and reports separate `handoffIssues` for cancellation, work-deadline expiry, truncation or profile revalidation. A work-deadline flag raised while waiting for cleanup does not establish that inference itself timed out.
+
+Every adapter observation now reports remaining adapter calls and HTTP attempts separately. The parent should supply known path/ref leads and label unverified leads. The specialist should jump directly to useful deep paths, avoid repeated shallow root searches, reserve calls for decisive file windows, and stop after a budget refusal. These are navigation instructions, not proof of live model efficiency. Limits remain sixteen adapter calls and fifty HTTP attempts. A cleanly completed invocation with a useful partial report is still partial research.
+
+- [x] Local bundled-source and compiled-host regression checks: completed native responses, actual socket closure, private evidence and reconciled usage. The old bundled-source behavior was reproduced before the fix: no close request, a live socket at the 90-second handoff deadline, and a masked outer error.
+- [x] Separate adapter-budget exhaustion and supplied-path fixtures. The former refuses calls 17–19 without hitting fifty HTTP attempts or reading decisive files; the latter uses two supplied file paths. Scripted path-seeded success is not blind discovery qualification.
+- [x] Native work-deadline, cancellation, delayed/abnormal close, close-deadline and denied-readmission checks, including matching base/outer close-deadline causes. Package verification passed 264 tests on Node 26.10.0.
+- [ ] Separately authorized publication/installation and current interactive acceptance of this remediation.
+- [ ] Separately bounded live qualification: execution/cleanup and useful research answer are different acceptance checks. No new live run or higher budget is authorized by these fixtures.
+
 ## Host-owned opt-in
 
 Build with `npm run build --workspace profile-subagent` or pack with `npm pack ./profile-subagent` (prepack builds). Import `registerGithubResearch` from `@zsaplan/pi-profile-subagent/github-research`; the read adapter is exported from `@zsaplan/pi-profile-subagent/github-read`.

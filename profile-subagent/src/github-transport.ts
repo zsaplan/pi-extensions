@@ -3,8 +3,8 @@ import {appendFileSync, existsSync, readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import type {Model} from '@earendil-works/pi-ai';
-import type {ModelRuntime} from '@earendil-works/pi-coding-agent';
+import {cleanupSessionResources, type Model} from '@earendil-works/pi-ai';
+import {VERSION, type ModelRuntime} from '@earendil-works/pi-coding-agent';
 
 export const researchDefaults = {
   provider: 'openai-codex',
@@ -14,7 +14,6 @@ export const researchDefaults = {
 let occupied = false;
 
 // Single supervised worker only. Unowned sockets pass through untouched.
-// Resolve cleanup from the SDK owning this child, not another installed pi-ai.
 export async function installResearchTransport(
   runtime: ModelRuntime,
   deadlineAt: number,
@@ -29,6 +28,7 @@ export async function installResearchTransport(
     ?.map(p => join(p, '@earendil-works/pi-ai'))
     .find(p => existsSync(join(p, 'package.json')));
   if (
+    VERSION !== '0.99.2' ||
     !owner ||
     JSON.parse(readFileSync(join(owner, 'package.json'), 'utf8')).version !==
       '0.99.2'
@@ -244,13 +244,16 @@ export async function installResearchTransport(
   return {
     async close() {
       try {
+        // Source extensions use Pi's mapped registry; compiled hosts can own a separate SDK cache.
+        cleanupSessionResources(id);
         native.closeOpenAICodexWebSocketSessions(id);
         if (sockets.size)
           await new Promise<void>((resolve, reject) => {
             const timer = setTimeout(
               () => {
                 waiters.delete(wake);
-                reject(new Error('Research socket close deadline reached.'));
+                failure ??= 'Research socket close deadline reached.';
+                reject(new Error(failure));
               },
               Math.max(0, deadlineAt - Date.now()),
             );
@@ -266,6 +269,9 @@ export async function installResearchTransport(
           });
         cleanupComplete = !sockets.size;
         if (failure) throw new Error(failure);
+      } catch {
+        failure ??= 'Research session resource cleanup failed.';
+        throw new Error(failure);
       } finally {
         if (globalThis.WebSocket === Guard) globalThis.WebSocket = Native;
         occupied = sockets.size > 0;

@@ -20,6 +20,7 @@ export default async function (pi: ExtensionAPI) {
     record: string;
     actions: Array<Record<string, string | number>>;
     deadlineMs?: number;
+    task?: string;
   };
   const {registerGithubResearch} = (await import(
     pathToFileURL(cfg.module).href
@@ -177,11 +178,26 @@ export default async function (pi: ExtensionAPI) {
                 cfg.scenario === 'stale-direct'
                   ? cfg.actions[0]
                   : {
-                      task: `Research the complete ${cfg.scenario} fixture question. Do not expand scope or claim deployment/restore success.`,
+                      task:
+                        cfg.task ??
+                        `Research the complete ${cfg.scenario} fixture question. Do not expand scope or claim deployment/restore success.`,
                     },
             },
           ];
         } else message.content = [{type: 'text', text: 'PARENT_DONE'}];
+      } else if (
+        cfg.scenario === 'adapter-limit' &&
+        results.length < cfg.actions.length
+      ) {
+        message.stopReason = 'toolUse';
+        message.content = cfg.actions
+          .slice(results.length, results.length + (results.length < 16 ? 4 : 3))
+          .map((action, index) => ({
+            type: 'toolCall' as const,
+            id: `child-${results.length + index}`,
+            name: 'github_research_read',
+            arguments: action,
+          }));
       } else if (
         results.length === 0 &&
         [
@@ -244,9 +260,11 @@ export default async function (pi: ExtensionAPI) {
           ].filter(Boolean),
         );
         const note =
-          cfg.scenario === 'configuration'
-            ? 'Compare the observed pre-introduction and introduction versions; equal blob IDs across the old/new paths support a rename, not a new introduction. Later value changes do not establish deployment.'
-            : 'Snapshot configuration supports configured intent only. Successful restoration and SOC2 compliance remain unverified; execution evidence is unavailable here.';
+          cfg.scenario === 'adapter-limit'
+            ? 'Partial research: adapter budget exhausted before decisive file reads. No manifest contents or restore candidate established.'
+            : cfg.scenario === 'configuration'
+              ? 'Compare the observed pre-introduction and introduction versions; equal blob IDs across the old/new paths support a rename, not a new introduction. Later value changes do not establish deployment.'
+              : 'Snapshot configuration supports configured intent only. Successful restoration and SOC2 compliance remain unverified; execution evidence is unavailable here.';
         message.content = [
           {
             type: 'text',
