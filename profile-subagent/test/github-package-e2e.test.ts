@@ -3,7 +3,7 @@ import {spawnSync} from 'node:child_process';
 import {mkdtemp, mkdir, readFile, writeFile, symlink} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {createRequire} from 'node:module';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 import test from 'node:test';
 import {loadCatalog} from '../src/profiles.ts';
 
@@ -54,6 +54,19 @@ test(
     const module =
       require.resolve('@zsaplan/pi-profile-subagent/github-research');
     assert.ok(module.startsWith(join(root, 'package/dist/')));
+    const readerApi = await import(
+      pathToFileURL(require.resolve('@zsaplan/pi-profile-subagent/github-read'))
+        .href
+    );
+    assert.throws(
+      () =>
+        readerApi.createGithubReader([], {
+          token: async () => {
+            throw new Error('Must not reach credentials');
+          },
+        }),
+      /token supplier is required/,
+    );
     const catalog = await loadCatalog();
     assert.ok(
       !catalog.profiles.some(p => p.manifest.id === 'github-researcher'),
@@ -117,11 +130,6 @@ test(
       'token-hook-denied': [file('fixture/other')],
       'token-redacted': [file('fixture/other')],
     };
-    const grantActions = [
-      discovery,
-      {operation: 'resolve', repository: 'fixture/research'},
-      file('fixture/other'),
-    ];
     const results: {scenario: string; passed: boolean}[] = [];
     for (const scenario of [
       'success',
@@ -134,7 +142,7 @@ test(
       'connection-audit-failure',
       'close-deadline',
       ...Object.keys(tokenCases),
-      'grants-stay-scoped',
+      'legacy-policy',
     ]) {
       await t.test(scenario, async () => {
         const output = join(root, scenario),
@@ -146,22 +154,12 @@ test(
             scenario,
             module,
             output,
-            task: 'Read the approved README and report the setting without claiming runtime execution.',
-            actions:
-              tokenCases[scenario] ??
-              (scenario === 'grants-stay-scoped' ? grantActions : undefined),
-            grants:
-              scenario in tokenCases
-                ? 'token'
-                : [
-                    {
-                      repository: 'fixture/research',
-                      head: 'a'.repeat(40),
-                      paths: ['README.md'],
-                      history: false,
-                      discussions: [],
-                    },
-                  ],
+            task:
+              'Read fixture/research README at commit ' +
+              head +
+              ' and report the setting without claiming runtime execution.',
+            actions: tokenCases[scenario],
+            ...(scenario === 'legacy-policy' ? {legacyRepositories: []} : {}),
           }),
         );
         const stdout = run(process.execPath, [
@@ -173,13 +171,17 @@ test(
           await readFile(join(output, 'result.json'), 'utf8'),
         );
         assert.equal(value.activeHttp, 0);
-        if (scenario in tokenCases || scenario === 'grants-stay-scoped') {
+        if (scenario === 'legacy-policy') {
+          assert.match(
+            JSON.stringify(value.report),
+            /Repository access options are no longer supported/,
+          );
+          assert.equal(value.connections, 0);
+          assert.equal(value.wireGithub, 0);
+        } else if (scenario in tokenCases) {
           const report = value.report;
           assert.equal(report.status, 'completed', stdout);
-          assert.equal(
-            report.binding.repositoryAccess,
-            scenario in tokenCases ? 'token' : 'grants',
-          );
+          assert.equal(report.binding.repositoryAccess, 'token');
           assert.equal(report.research.cleanupComplete, true);
           assert.equal(report.research.accountingComplete, true);
           assert.deepEqual(value.enclosingUsage, report.usage);
@@ -188,14 +190,11 @@ test(
             isError: boolean;
             content: Array<{text: string}>;
           }>;
-          assert.equal(
-            records.length,
-            (tokenCases[scenario] ?? grantActions).length,
-          );
+          assert.equal(records.length, tokenCases[scenario].length);
           const requests = value.events.filter(
             (e: {kind: string}) => e.kind === 'github-request',
           ) as Array<{path: string; query: string}>;
-          if (['grants-stay-scoped', 'token-hook-denied'].includes(scenario)) {
+          if (scenario === 'token-hook-denied') {
             assert.equal(value.wireGithub, 0);
             assert.ok(records.every(r => r.isError));
           } else {

@@ -8,7 +8,6 @@ import {
   type AssistantMessage,
 } from '@earendil-works/pi-ai';
 import type {ExtensionAPI} from '@earendil-works/pi-coding-agent';
-import type {RepositoryGrant} from '../src/github-read.ts';
 
 // Scripted transport, not a live model or instruction-fidelity qualification.
 export default async function (pi: ExtensionAPI) {
@@ -19,7 +18,6 @@ export default async function (pi: ExtensionAPI) {
     module: string;
     server: string;
     record: string;
-    grant: RepositoryGrant;
     actions: Array<Record<string, string | number>>;
     deadlineMs?: number;
   };
@@ -30,7 +28,7 @@ export default async function (pi: ExtensionAPI) {
     appendFileSync(cfg.record, JSON.stringify(value) + '\n', {mode: 0o600});
   registerGithubResearch(pi, {
     getBinding: (ctx, callId) =>
-      cfg.scenario === 'no-grant'
+      cfg.scenario === 'no-binding'
         ? undefined
         : {
             taskId: `fixture-${cfg.scenario}`,
@@ -41,10 +39,7 @@ export default async function (pi: ExtensionAPI) {
             threadKey: `fixture-channel/${cfg.scenario}`,
             reservationId: `fixture-reservation-${cfg.scenario}${cfg.scenario === 'failure-new-assignment' ? `-${callId}` : ''}`,
             deadlineAt: Date.now() + (cfg.deadlineMs ?? 110000),
-            repositories:
-              cfg.scenario === 'failure-repositories'
-                ? [cfg.grant, {...cfg.grant, repository: 'fixture/other'}]
-                : [cfg.grant],
+            ...(cfg.scenario === 'legacy-policy' ? {repositories: []} : {}),
           },
     token: async () => {
       if (['credential-error', 'failure-credential'].includes(cfg.scenario))

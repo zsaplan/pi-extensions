@@ -449,7 +449,9 @@ const loader = new DefaultResourceLoader({
           threadKey: 'no-delivery',
           reservationId: `package-${attempt}-${id}`,
           deadlineAt,
-          repositories: cfg.grants,
+          ...(cfg.legacyRepositories !== undefined
+            ? {repositories: cfg.legacyRepositories}
+            : {}),
         }),
         token: async () => token,
         fetch: async (url, options) => {
@@ -531,7 +533,15 @@ try {
     const outer = session.messages.find(
       m => m.role === 'toolResult' && m.toolName === 'github_research_run',
     );
-    const attemptReport = outer ? JSON.parse(outer.content[0].text) : null;
+    let attemptReport = null;
+    if (outer) {
+      try {
+        attemptReport = JSON.parse(outer.content[0].text);
+      } catch (error) {
+        if (!outer.isError) throw error;
+        attemptReport = {error: outer.content[0].text};
+      }
+    }
     attempts.push({
       report: attemptReport,
       enclosingUsage: outer?.usage,

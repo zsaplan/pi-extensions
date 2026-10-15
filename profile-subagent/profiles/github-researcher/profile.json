@@ -1,6 +1,6 @@
 {
   "id": "github-researcher",
-  "description": "Research one GitHub question using host-selected explicit grants or token-wide repository access. Follow relevant leads and stop when answered or blocked; no new review, writes or external-system access.",
+  "description": "Research one GitHub question across repositories the host-supplied token can read. Follow relevant leads and stop when answered or blocked; no new review, writes or external-system access.",
   "tags": [
     "github",
     "research",

@@ -4,6 +4,9 @@ import {Check} from 'typebox/value';
 
 const text = Type.String({minLength: 1, maxLength: 1024});
 const shaSchema = Type.String({pattern: '^[a-f0-9]{40}$'});
+const dateSchema = Type.String({
+  pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$',
+});
 const common = {repository: text, commit: Type.Optional(shaSchema), path: text};
 export const GithubReadSchema = Type.Union([
   Type.Object(
@@ -13,7 +16,7 @@ export const GithubReadSchema = Type.Union([
         minLength: 1,
         maxLength: 100,
         description:
-          'Focused repository search, e.g. platform org:example. Token access only; not an organization inventory.',
+          'Focused repository search, e.g. platform org:example. Not an organization inventory.',
       }),
       page: Type.Optional(Type.Integer({minimum: 1, maximum: 2})),
     },
@@ -56,9 +59,11 @@ export const GithubReadSchema = Type.Union([
         minLength: 1,
         maxLength: 1024,
         description:
-          'Repository-relative path. Token access also permits root "."; grant access requires a granted path or directory root. Folder history can include unrelated changes; page/date limits still apply.',
+          'Repository-relative path or root ".". Folder history can include unrelated changes; page/date limits still apply.',
       }),
       page: Type.Optional(Type.Integer({minimum: 1, maximum: 2})),
+      since: Type.Optional(dateSchema),
+      until: Type.Optional(dateSchema),
     },
     {additionalProperties: false},
   ),
@@ -78,21 +83,7 @@ export const GithubReadSchema = Type.Union([
   ),
 ]);
 export type GithubReadArgs = Static<typeof GithubReadSchema>;
-export interface RepositoryGrant {
-  repository: string;
-  head: string;
-  paths: string[]; // trailing slash = directory; otherwise one exact file
-  history: boolean;
-  since?: string;
-  until?: string;
-  discussions: number[];
-}
-export type RepositoryAccess = RepositoryGrant[] | 'token';
-export function validateRepositoryAccess(
-  input: RepositoryAccess,
-): RepositoryAccess {
-  return input === 'token' ? input : validateGrants(input);
-}
+type Repository = {repository: string; head?: string};
 export interface GithubTransport {
   token: (signal: AbortSignal) => Promise<string>;
   // Trusted host injection for offline fixtures; not exposed to model arguments.
@@ -147,72 +138,15 @@ function sensitive(path: string): boolean {
     path,
   );
 }
-export function validateGrants(input: RepositoryGrant[]): RepositoryGrant[] {
-  if (!Array.isArray(input) || !input.length || input.length > 2)
-    throw new Error('Provide one or two explicit repository grants.');
-  const grants = structuredClone(input);
-  for (const g of grants) {
-    if (
-      !g ||
-      typeof g !== 'object' ||
-      Object.keys(g).some(
-        key =>
-          ![
-            'repository',
-            'head',
-            'paths',
-            'history',
-            'since',
-            'until',
-            'discussions',
-          ].includes(key),
-      ) ||
-      typeof g.repository !== 'string' ||
-      containsControl(g.repository) ||
-      !repositoryPattern.test(g.repository) ||
-      !shaPattern.test(g.head) ||
-      typeof g.history !== 'boolean' ||
-      !Array.isArray(g.paths) ||
-      !g.paths.length ||
-      g.paths.length > 4 ||
-      g.paths.some(
-        p =>
-          typeof p !== 'string' ||
-          !pathIsSafe(p.replace(/\/$/, '')) ||
-          sensitive(p.replace(/\/$/, '')),
-      ) ||
-      !Array.isArray(g.discussions) ||
-      g.discussions.length > 10 ||
-      g.discussions.some(n => !Number.isSafeInteger(n) || n < 1 || n > 10000000)
-    )
-      throw new Error('Invalid bounded GitHub grant.');
-    for (const date of [g.since, g.until])
-      if (
-        date !== undefined &&
-        (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(date) ||
-          !Number.isFinite(Date.parse(date)) ||
-          new Date(date).toISOString().replace('.000Z', 'Z') !== date)
-      )
-        throw new Error('Use explicit UTC history dates.');
-    if (g.since && g.until && g.since > g.until)
-      throw new Error('Invalid history date range.');
-    g.repository = g.repository.toLowerCase();
-  }
-  if (new Set(grants.map(g => g.repository)).size !== grants.length)
-    throw new Error('Duplicate repository grant.');
-  return grants;
-}
 const encodePath = (path: string) =>
   path.split('/').map(encodeURIComponent).join('/');
 
-export function createGithubReader(
-  input: RepositoryAccess,
-  transport: GithubTransport,
-) {
-  const access = validateRepositoryAccess(input);
-  const tokenAccess = access === 'token';
-  const grants: RepositoryGrant[] = access === 'token' ? [] : access;
-  const known = new Map(grants.map(g => [g.repository, new Set([g.head])]));
+export function createGithubReader(transport: GithubTransport) {
+  if (!transport || typeof transport.token !== 'function')
+    throw new Error(
+      'A GitHub token supplier is required; repository grants are not supported.',
+    );
+  const repositories = new Map<string, Repository>();
   const trees = new Map<string, unknown>();
   const roots = new Map<string, string>();
   const credentials = new Set<string>();
@@ -241,7 +175,7 @@ export function createGithubReader(
     }
   }
   async function get(
-    g: RepositoryGrant | undefined,
+    g: Repository | undefined,
     endpoint: string,
     signal: AbortSignal,
   ) {
@@ -299,7 +233,7 @@ export function createGithubReader(
     }
   }
   async function request(
-    g: RepositoryGrant | undefined,
+    g: Repository | undefined,
     endpoint: string,
     signal: AbortSignal,
   ) {
@@ -370,17 +304,10 @@ export function createGithubReader(
       next: /rel="next"/.test(response.headers.get('link') ?? ''),
     };
   }
-  function allowed(g: RepositoryGrant, path: string, directory = false) {
-    if (tokenAccess && directory && path === '') return true;
-    if (!pathIsSafe(path) || sensitive(path)) return false;
-    if (tokenAccess) return true;
-    return g.paths.some(p =>
-      p.endsWith('/')
-        ? path.startsWith(p) || (directory && path === p.slice(0, -1))
-        : !directory && path === p,
-    );
+  function allowed(path: string, directory = false) {
+    return (directory && path === '') || (pathIsSafe(path) && !sensitive(path));
   }
-  async function tree(g: RepositoryGrant, id: string, signal: AbortSignal) {
+  async function tree(g: Repository, id: string, signal: AbortSignal) {
     const key = `${g.repository}:${id}`;
     if (!trees.has(key)) {
       const data = record((await get(g, `git/trees/${id}`, signal)).value);
@@ -394,7 +321,7 @@ export function createGithubReader(
     }
     return (trees.get(key) as unknown[]).map(record);
   }
-  async function root(g: RepositoryGrant, commit: string, signal: AbortSignal) {
+  async function root(g: Repository, commit: string, signal: AbortSignal) {
     const key = `${g.repository}:${commit}`;
     if (!roots.has(key)) {
       const data = record(
@@ -406,7 +333,7 @@ export function createGithubReader(
     return roots.get(key)!;
   }
   async function lookup(
-    g: RepositoryGrant,
+    g: Repository,
     commit: string,
     path: string,
     signal: AbortSignal,
@@ -429,7 +356,7 @@ export function createGithubReader(
     return fail('Path unavailable.');
   }
   async function resolveCommit(
-    g: RepositoryGrant,
+    g: Repository,
     ref: string | undefined,
     signal: AbortSignal,
   ) {
@@ -448,11 +375,10 @@ export function createGithubReader(
       `${g.repository}:${id}`,
       sha(record(record(item.commit).tree).sha),
     );
-    known.get(g.repository)!.add(id);
     return id;
   }
   async function listing(
-    g: RepositoryGrant,
+    g: Repository,
     commit: string,
     path: string,
     signal: AbortSignal,
@@ -462,7 +388,7 @@ export function createGithubReader(
         ? {type: 'tree', mode: '040000', sha: await root(g, commit, signal)}
         : await lookup(g, commit, path, signal);
     if (entry.type !== 'tree' || entry.mode !== '040000')
-      throw new BoundaryError('List/search requires an approved directory.');
+      throw new BoundaryError('List/search requires a directory.');
     const entries = (await tree(g, sha(entry.sha), signal)).filter(
       e =>
         typeof e.path === 'string' &&
@@ -473,7 +399,7 @@ export function createGithubReader(
       path ? `${path}/${name}` : String(name);
     const visible = entries.filter(
       e =>
-        allowed(g, childPath(e.path), e.type === 'tree') &&
+        allowed(childPath(e.path), e.type === 'tree') &&
         ((e.type === 'tree' && e.mode === '040000') ||
           (e.type === 'blob' && ['100644', '100755'].includes(String(e.mode)))),
     );
@@ -487,7 +413,7 @@ export function createGithubReader(
     };
   }
   async function contents(
-    g: RepositoryGrant,
+    g: Repository,
     commit: string,
     path: string,
     signal: AbortSignal,
@@ -548,8 +474,6 @@ export function createGithubReader(
       typeof value === 'string' ? redact(value) : '';
     const clip = (value: unknown, max: number) => clean(value).slice(0, max);
     if (args.operation === 'repositories') {
-      if (!tokenAccess)
-        throw new BoundaryError('Repository discovery requires token access.');
       if (!args.query.trim() || containsControl(args.query))
         throw new BoundaryError('Provide a focused repository search.');
       const page = args.page ?? 1;
@@ -599,17 +523,13 @@ export function createGithubReader(
     )
       throw new BoundaryError('Invalid GitHub repository name.');
     const repository = args.repository.toLowerCase();
-    let g = grants.find(g => g.repository === repository);
-    if (!g && tokenAccess) {
-      g = {repository, head: '', paths: [], history: true, discussions: []};
-      grants.push(g);
-      known.set(repository, new Set());
+    let g = repositories.get(repository);
+    if (!g) {
+      g = {repository};
+      repositories.set(repository, g);
     }
-    if (!g) throw new BoundaryError('Repository is outside the host grant.');
     const base = `https://github.com/${g.repository}`;
     if (args.operation === 'resolve') {
-      if (!tokenAccess)
-        throw new BoundaryError('Reference resolution requires token access.');
       const commit = await resolveCommit(g, args.ref, signal);
       return {
         commit,
@@ -623,8 +543,6 @@ export function createGithubReader(
       };
     }
     if (args.operation === 'discussion') {
-      if (!tokenAccess && !g.discussions.includes(args.number))
-        throw new BoundaryError('Discussion number is outside the host grant.');
       const page = args.page ?? 1;
       const endpoints = {
         issue: `issues/${args.number}`,
@@ -681,43 +599,42 @@ export function createGithubReader(
         },
       };
     }
-    // History may address an explicitly granted directory root, not the parent
-    // of an exact-file grant. Leave all other history spellings unchanged.
     const historyRoot =
       args.operation === 'history' &&
-      (tokenAccess
-        ? args.path === '.' || args.path.endsWith('/')
-        : g.paths.some(
-            p =>
-              p.endsWith('/') &&
-              (args.path === p || args.path === p.slice(0, -1)),
-          ));
+      (args.path === '.' || args.path.endsWith('/'));
     const directory =
       args.operation === 'list' || args.operation === 'search' || historyRoot;
     // Remove only one slash; malformed paths are never broadly normalized.
     const path =
-      tokenAccess && directory && args.path === '.'
+      directory && args.path === '.'
         ? ''
         : directory
           ? args.path.replace(/\/$/, '')
           : args.path;
-    if ((!path && args.path !== '.') || !allowed(g, path, directory))
+    if ((!path && args.path !== '.') || !allowed(path, directory))
       throw new BoundaryError(
-        'Path is outside scope or is a prohibited sensitive path.',
+        'Path is unsafe or is a prohibited sensitive path.',
       );
+    if (args.operation === 'history') {
+      for (const date of [args.since, args.until])
+        if (
+          date !== undefined &&
+          (!Number.isFinite(Date.parse(date)) ||
+            new Date(date).toISOString().replace('.000Z', 'Z') !== date)
+        )
+          throw new BoundaryError('Use valid explicit UTC history dates.');
+      if (args.since && args.until && args.since > args.until)
+        throw new BoundaryError('Invalid history date range.');
+    }
     const commit =
       args.commit ??
       (g.head || (g.head = await resolveCommit(g, undefined, signal)));
-    if (!tokenAccess && !known.get(g.repository)!.has(commit))
-      throw new BoundaryError(
-        'Commit is not the pinned head or observed permitted history. Branch/tag resolution is not supported.',
-      );
     if (args.operation === 'list')
       return {
         ...(await listing(g, commit, path, signal)),
         commit,
         coverage:
-          'Shallow directory only; omitted entries may be unsafe, out of scope or over the 20-entry bound.',
+          'Shallow directory only; omitted entries may be unsafe or over the 20-entry bound.',
       };
     if (args.operation === 'file') {
       const file = await contents(g, commit, args.path, signal, redact),
@@ -798,8 +715,6 @@ export function createGithubReader(
         },
       };
     }
-    if (!g.history)
-      throw new BoundaryError('History is not in the host grant.');
     const page = args.page ?? 1,
       query = new URLSearchParams({
         sha: commit,
@@ -807,8 +722,8 @@ export function createGithubReader(
         per_page: '10',
         page: String(page),
       });
-    if (g.since) query.set('since', g.since);
-    if (g.until) query.set('until', g.until);
+    if (args.since) query.set('since', args.since);
+    if (args.until) query.set('until', args.until);
     const data = await get(g, `commits?${query}`, signal);
     if (!Array.isArray(data.value))
       fail('Unsupported GitHub history response.');
@@ -829,21 +744,16 @@ export function createGithubReader(
         citation: `${base}/commit/${id}`,
       };
     });
-    for (const item of items) {
-      known.get(g.repository)!.add(item.commit);
-      item.parents.forEach(p => known.get(g.repository)!.add(p));
-    }
     return {
       path,
       items,
       coverage: {
-        directoryGrantRoot: !tokenAccess && historyRoot,
         page,
         hasNext: data.next,
         earlierPagesNotObserved: page > 1,
         collectionLimited: data.value.length > 10,
-        since: g.since,
-        until: g.until,
+        since: args.since,
+        until: args.until,
         renameFollowing: false,
         originalIntroductionVerified: false,
       },

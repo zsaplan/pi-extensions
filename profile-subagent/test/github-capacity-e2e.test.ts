@@ -197,15 +197,6 @@ test(
           threadKey: `fixture-thread-${i}`,
           reservationId: `fixture-reservation-${i}`,
           deadlineAt: Date.now() + 110000,
-          repositories: [
-            {
-              repository: `fixture/worker-${i}`,
-              head: 'a'.repeat(40),
-              paths: ['config/'],
-              history: false,
-              discussions: [],
-            },
-          ],
         });
         const runtime = await ModelRuntime.create({
           authPath: join(agent, 'auth.json'),
