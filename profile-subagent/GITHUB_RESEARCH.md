@@ -26,6 +26,20 @@ Interactive acceptance:
 - [ ] User `/reload` in the running interactive session.
 - [ ] Separately authorized live token-mode research; local fixtures do not establish live credential validity or model efficiency.
 
+## Failed-interactive-use follow-up — local remediation only
+
+The bundled Pi host and a separately imported native provider module can have different WebSocket caches even at the same version. Closing only the imported cache leaves the source-extension socket open. Cleanup now calls Pi's mapped session-resource registry for the exact research session ID as well as the pinned native helper used by compiled hosts. It still waits for actual close events, retains the original deadline, and blocks later native admission if sockets remain. Both the mapped coding-agent SDK and the pinned native pi-ai must be 0.99.2. No model, transport protocol, tier, limit or retry policy changed.
+
+A close-deadline failure is retained in transport evidence and the base result. The wrapper preserves that primary error and reports separate `handoffIssues` for cancellation, work-deadline expiry, truncation or profile revalidation. A work-deadline flag raised while waiting for cleanup does not establish that inference itself timed out.
+
+Every adapter observation now reports remaining adapter calls and HTTP attempts separately. The parent should supply known path/ref leads and label unverified leads. The specialist should jump directly to useful deep paths, avoid repeated shallow root searches, reserve calls for decisive file windows, and stop after a budget refusal. These are navigation instructions, not proof of live model efficiency. Limits remain sixteen adapter calls and fifty HTTP attempts. A cleanly completed invocation with a useful partial report is still partial research.
+
+- [x] Local bundled-source and compiled-host regression checks: completed native responses, actual socket closure, private evidence and reconciled usage. The old bundled-source behavior was reproduced before the fix: no close request, a live socket at the 90-second handoff deadline, and a masked outer error.
+- [x] Separate adapter-budget exhaustion and supplied-path fixtures. The former refuses calls 17–19 without hitting fifty HTTP attempts or reading decisive files; the latter uses two supplied file paths. Scripted path-seeded success is not blind discovery qualification.
+- [x] Native work-deadline, cancellation, delayed/abnormal close, close-deadline and denied-readmission checks, including matching base/outer close-deadline causes. Package verification passed 264 tests on Node 26.10.0.
+- [ ] Separately authorized publication/installation and current interactive acceptance of this remediation.
+- [ ] Separately bounded live qualification: execution/cleanup and useful research answer are different acceptance checks. No new live run or higher budget is authorized by these fixtures.
+
 ## Host-owned opt-in
 
 Build with `npm run build --workspace profile-subagent` or pack with `npm pack ./profile-subagent` (prepack builds). Import `registerGithubResearch` from `@zsaplan/pi-profile-subagent/github-research`; the read adapter is exported from `@zsaplan/pi-profile-subagent/github-read`.

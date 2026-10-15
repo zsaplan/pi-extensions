@@ -529,6 +529,17 @@ test(
         path: 'sites/request-budget',
         term: 'budget_entry',
       })),
+      'adapter-limit': [
+        ...Array.from({length: 16}, () => ({
+          ...base,
+          operation: 'list',
+          path: '.',
+        })),
+        read('sites/uat.yml'),
+        read('config/service.yml'),
+        read('sites/no-eol.txt'),
+      ],
+      'path-seeded': [read('sites/uat.yml'), read('config/service.yml')],
       'request-limit': Array.from({length: 10}, () => ({
         ...base,
         operation: 'search',
@@ -626,6 +637,11 @@ test(
         module: join(extension, 'src/github-research.ts'),
         record: join(dir, 'provider.jsonl'),
         server: origin,
+        ...(scenario === 'path-seeded'
+          ? {
+              task: 'Inspect fixture/research at the supplied sites/uat.yml and config/service.yml path leads. These leads are not yet verified. Distinguish configuration from successful execution; do not perform blind repository discovery.',
+            }
+          : {}),
         actions: ['failure-concurrent', 'failure-cancel'].includes(scenario)
           ? cases[scenario].map(action => {
               const args = {...action};
@@ -1261,6 +1277,55 @@ test(
             assert.ok(
               Buffer.byteLength(JSON.stringify(packet!.records)) <= 49152,
             );
+          }
+          if (scenario === 'adapter-limit') {
+            assert.equal((reports[0].github as Json).calls, 19);
+            assert.ok(result.requests.length < 50);
+            assert.equal(
+              observations.filter(o => o.status === 'ok').length,
+              16,
+            );
+            assert.equal(
+              observations.filter(
+                o => o.reason === 'Assignment tool-call limit reached.',
+              ).length,
+              3,
+            );
+            assert.ok(
+              observations
+                .slice(-3)
+                .every(
+                  o =>
+                    (o.budget as Json).adapterCallsRemaining === 0 &&
+                    Number((o.budget as Json).httpRequestsRemaining) > 0,
+                ),
+            );
+            assert.ok(
+              !result.requests.some(r => r.path.includes('/git/blobs/')),
+            );
+            assert.match(
+              String(reports[0].output),
+              /Partial research: adapter budget exhausted/,
+            );
+          }
+          if (scenario === 'path-seeded') {
+            assert.equal((reports[0].github as Json).calls, 2);
+            assert.ok(
+              observations.every(
+                o => o.status === 'ok' && o.operation === 'file',
+              ),
+            );
+            assert.ok(
+              observations.every(
+                o => Number((o.budget as Json).adapterCallsRemaining) >= 14,
+              ),
+            );
+            assert.ok(
+              observations.some(o =>
+                String(o.citation).includes('/sites/uat.yml#L'),
+              ),
+            );
+            assert.match(String(reports[0].output), /configured intent only/);
           }
           if (scenario === 'request-within-limit') {
             // Four metadata GETs plus nine five-file scans.
