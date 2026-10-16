@@ -17,6 +17,7 @@ import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import {loadCatalog} from '../src/profiles.ts';
 import {createGithubReader} from '../src/github-read.ts';
+import {childNames} from './github-child-call.ts';
 
 const pkg = resolve(dirname(fileURLToPath(import.meta.url)), '..'),
   repo = dirname(pkg);
@@ -520,6 +521,42 @@ test(
       page,
     });
     const cases: Record<string, Array<Record<string, unknown>>> = {
+      'tool-contract-errors': [
+        ...[50, 65, 42].map(limit => ({...read('sites/uat.yml'), limit})),
+        ...['config/service.yml', 'sites/uat.yml'].map(path => ({
+          ...base,
+          operation: 'search',
+          path,
+          term: 'restore',
+        })),
+        {...read('sites/uat.yml'), start: 2, limit: 1},
+        {...base, operation: 'search', path: 'config', term: 'restore_policy'},
+      ],
+      'tool-contract-shapes': [
+        ...[0, 41, 40.5, 'forty'].map(limit => ({
+          ...read('sites/uat.yml'),
+          limit,
+        })),
+        {
+          forbiddenTool: 'github_search_directory',
+          repository: base.repository,
+          path: 'config',
+          term: 'restore',
+        },
+        {
+          forbiddenTool: 'github_discussion',
+          repository: base.repository,
+          kind: 'issue',
+          number: 7,
+          path: 'config',
+        },
+        {...read('sites/wide.txt'), limit: 40},
+        {...read('sites/wide.txt'), start: 41, limit: 40},
+      ],
+      'failure-detail-cap': Array.from({length: 25}, () => ({
+        ...read('sites/uat.yml'),
+        limit: 50,
+      })),
       configuration: [
         {...base, operation: 'search', path: 'config', term: 'restore_policy'},
         history('config/service.yml'),
@@ -945,8 +982,36 @@ test(
         .split('\n')
         .map(parse);
       const childLogs = logs.filter(l => l.child === true);
-      for (const item of childLogs)
-        assert.deepEqual(item.tools, ['github_research_read']);
+      for (const item of childLogs) {
+        assert.deepEqual(
+          [...(item.tools as string[])].sort(),
+          Object.values(childNames).sort(),
+        );
+        if (item.toolSchemas) {
+          const schemas = item.toolSchemas as Array<{
+            name: string;
+            parameters: {
+              type: string;
+              properties: Record<string, Json>;
+              required: string[];
+              additionalProperties: boolean;
+            };
+          }>;
+          for (const tool of schemas) {
+            assert.equal(tool.parameters.type, 'object');
+            assert.equal(tool.parameters.additionalProperties, false);
+            assert.equal(tool.parameters.properties.operation, undefined);
+          }
+          const file = schemas.find(t => t.name === 'github_file')!.parameters;
+          assert.equal(file.properties.limit.maximum, 40);
+          assert.ok(file.required.includes('path'));
+          const search = schemas.find(
+            t => t.name === 'github_search_directory',
+          )!.parameters;
+          assert.ok(search.required.includes('directory'));
+          assert.equal(search.properties.path, undefined);
+        }
+      }
       for (const report of reports) {
         const binding = report.binding as Json;
         assert.equal(binding.taskId, `fixture-${scenario}`);
@@ -969,6 +1034,44 @@ test(
             `fixture-reservation-${scenario}`,
           );
         assert.equal(report.verification, 'unverified-report');
+        const activity = report.activitySummary as {
+          childToolResults: {returned: number; failed: number};
+          sourceObservations: {
+            retained: number;
+            omitted: number;
+            outcomes: {unknownOrModified: number};
+          };
+          observedCoverage: {successfulOperations: Record<string, number>};
+        };
+        const sourceEvidence = report.sourceEvidence as {
+          records: Array<{integrity: string}>;
+          omitted: number;
+        };
+        assert.equal(
+          activity.sourceObservations.retained,
+          sourceEvidence.records.length,
+        );
+        assert.equal(
+          activity.sourceObservations.omitted,
+          sourceEvidence.omitted,
+        );
+        assert.equal(
+          activity.sourceObservations.outcomes.unknownOrModified,
+          sourceEvidence.records.filter(
+            r => r.integrity !== 'intact-adapter-observation',
+          ).length,
+        );
+        if (
+          ['redact', 'tamper', 'failure-redact', 'parent-deny'].includes(
+            scenario,
+          )
+        )
+          assert.equal(
+            Object.values(
+              activity.observedCoverage.successfulOperations,
+            ).reduce((n, count) => n + count, 0),
+            0,
+          );
         assert.ok(Number((report.github as Json).requests) <= 50);
         const usage = report.usage as {input: number; output: number};
         const messages = JSON.parse(
@@ -976,7 +1079,17 @@ test(
             join(String(report.artifactDir), 'messages.json'),
             'utf8',
           ),
-        ) as Array<{role: string; usage?: {input: number; output: number}}>;
+        ) as Array<{
+          role: string;
+          isError?: boolean;
+          usage?: {input: number; output: number};
+        }>;
+        const childResults = messages.filter(m => m.role === 'toolResult');
+        assert.equal(activity.childToolResults.returned, childResults.length);
+        assert.equal(
+          activity.childToolResults.failed,
+          childResults.filter(m => m.isError).length,
+        );
         const assistants = messages.filter(m => m.role === 'assistant');
         assert.equal(
           usage.input,
@@ -1078,6 +1191,137 @@ test(
             assert.equal(result.requests.length, 0);
             evidence.at(-1)!.passed = true;
             return;
+          }
+          const summary = reports[0].activitySummary as {
+            childToolResults: {
+              returned: number;
+              failed: number;
+              omittedFailureDetails: number;
+              byTool: Array<{tool: string; failed: number}>;
+            };
+            sourceObservations: {
+              retained: number;
+              omitted: number;
+              outcomes: {unknownOrModified: number; refused: number};
+            };
+            observedCoverage: {
+              successfulOperations: Record<string, number>;
+              partialFileWindows: number;
+              unavailableSearchFiles: number;
+              pagesWithEarlierPagesOutsideResponse: number;
+            };
+          };
+          if (
+            [
+              'tool-contract-errors',
+              'tool-contract-shapes',
+              'failure-detail-cap',
+            ].includes(scenario)
+          ) {
+            assert.equal(reports[0].status, 'completed');
+            assert.equal(
+              summary.childToolResults.returned,
+              cases[scenario].length,
+            );
+            const messages = JSON.parse(
+              await readFile(
+                join(String(reports[0].artifactDir), 'messages.json'),
+                'utf8',
+              ),
+            ) as Array<{
+              role: string;
+              toolName: string;
+              isError: boolean;
+              content: Array<{type: string; text: string}>;
+            }>;
+            const fileErrors = messages.filter(
+              m =>
+                m.role === 'toolResult' &&
+                m.toolName === 'github_file' &&
+                m.isError,
+            );
+            for (const failure of fileErrors) {
+              const diagnostic = failure.content.map(c => c.text).join('\n');
+              assert.match(diagnostic, /limit/);
+              assert.doesNotMatch(
+                diagnostic,
+                /query:|kind:|number:|since:|until:|anyOf/,
+              );
+            }
+            if (scenario === 'tool-contract-errors') {
+              assert.equal(summary.childToolResults.failed, 5);
+              assert.equal((reports[0].github as Json).calls, 4);
+              assert.equal(packet!.childToolFailures.length, 5);
+              assert.equal(summary.sourceObservations.outcomes.refused, 2);
+              assert.equal(
+                summary.observedCoverage.successfulOperations.file,
+                1,
+              );
+              assert.equal(
+                summary.observedCoverage.successfulOperations.search,
+                1,
+              );
+              assert.equal(summary.observedCoverage.unavailableSearchFiles, 2);
+              assert.equal(
+                summary.childToolResults.byTool.find(
+                  t => t.tool === 'github_file',
+                )!.failed,
+                3,
+              );
+              assert.equal(
+                summary.childToolResults.byTool.find(
+                  t => t.tool === 'github_search_directory',
+                )!.failed,
+                2,
+              );
+              assert.match(
+                String(reports[0].output),
+                /one refused search and two schema failures/,
+              );
+              assert.ok(
+                observations
+                  .filter(o => o.status === 'refused')
+                  .every(o => String(o.reason).includes('github_file')),
+              );
+            } else if (scenario === 'tool-contract-shapes') {
+              assert.equal(summary.childToolResults.failed, 6);
+              assert.equal((reports[0].github as Json).calls, 2);
+              assert.deepEqual(
+                observations.map(o => (o.lines as unknown[]).length),
+                [40, 5],
+              );
+              assert.equal(summary.observedCoverage.partialFileWindows, 2);
+            } else {
+              assert.equal(summary.childToolResults.failed, 25);
+              assert.equal(summary.childToolResults.omittedFailureDetails, 5);
+              assert.equal(packet!.childToolFailures.length, 20);
+              assert.equal(packet!.records.length, 0);
+              assert.equal(result.requests.length, 0);
+            }
+            evidence.at(-1)!.passed = true;
+            return;
+          }
+          if (scenario === 'pagination') {
+            assert.equal(
+              summary.observedCoverage.pagesWithEarlierPagesOutsideResponse,
+              3,
+            );
+            assert.equal(
+              summary.observedCoverage.successfulOperations.history,
+              4,
+            );
+            assert.equal(
+              summary.observedCoverage.successfulOperations.discussion,
+              2,
+            );
+            assert.equal(summary.childToolResults.failed, 1);
+          }
+          if (scenario === 'packet-limit') {
+            assert.ok(summary.sourceObservations.omitted > 0);
+            assert.equal(
+              summary.observedCoverage.successfulOperations.file,
+              packet!.records.length,
+            );
           }
           if (scenario.startsWith('reference-')) {
             const validation = reports[0].referenceValidation as Json;

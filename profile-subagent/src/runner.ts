@@ -31,6 +31,7 @@ import type {
 } from './snapshot-tool.ts';
 import type {SnapshotReport} from './json-snapshots.ts';
 import {FileEvidence} from './file-evidence.ts';
+import {githubChildTools} from './github-tools.ts';
 
 export const childDefaults = {
   provider: 'openai-codex',
@@ -125,6 +126,13 @@ export async function runProfile(
     if (!tool) throw new Error(`Required parent tool is unavailable: ${name}`);
     return tool;
   });
+  if (
+    manifest.id === githubResearchProfileId &&
+    (toolNames.length !== 1 || toolNames[0] !== 'github_research_read')
+  )
+    throw new Error(
+      'GitHub child interfaces require the single authorized parent adapter.',
+    );
   const controller = new AbortController();
   const cancel = () => controller.abort(new Error('Parent cancelled the run.'));
   signal?.addEventListener('abort', cancel, {once: true});
@@ -133,7 +141,7 @@ export async function runProfile(
     controller.abort(new Error('Profile time limit reached.'));
   }, manifest.timeoutSeconds * 1000);
   const fileEvidence = new FileEvidence();
-  const customTools: ToolDefinition[] = parentTools.map(tool => ({
+  let customTools: ToolDefinition[] = parentTools.map(tool => ({
     name: tool.name,
     label: tool.name,
     description: tool.description,
@@ -171,6 +179,8 @@ export async function runProfile(
       };
     },
   }));
+  if (manifest.id === githubResearchProfileId)
+    customTools = githubChildTools(customTools[0]);
   let session:
     | Awaited<ReturnType<typeof createAgentSession>>['session']
     | undefined;
@@ -266,7 +276,7 @@ export async function runProfile(
       model,
       modelRuntime,
       thinkingLevel: defaults.thinkingLevel,
-      tools: toolNames,
+      tools: customTools.map(tool => tool.name),
       customTools,
       resourceLoader: profileResources(profile.systemPrompt),
       sessionManager: SessionManager.inMemory(ctx.cwd),
@@ -285,7 +295,7 @@ export async function runProfile(
       throw new Error(
         'Child model or thinking level did not match the required defaults.',
       );
-    const expected = [...toolNames].sort();
+    const expected = customTools.map(tool => tool.name).sort();
     if (
       JSON.stringify(session.getActiveToolNames().sort()) !==
       JSON.stringify(expected)
@@ -426,7 +436,7 @@ export async function runProfile(
     startedAt,
     finishedAt: new Date().toISOString(),
     turns,
-    tools: toolNames,
+    tools: customTools.map(tool => tool.name),
     artifactDir,
     error,
     usage,

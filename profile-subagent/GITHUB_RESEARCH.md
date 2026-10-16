@@ -79,6 +79,36 @@ Measured offline results (before → after):
 
 Mutable-success and repeated-failure controls remain at two and one HTTP requests respectively. Adapter calls, scripted model requests and retained observation counts are unchanged in all seven comparisons. The repeated-scan handoff grows from 23,466 to 35,640 bytes, including reference/reuse metadata and a changed scripted citation format. This is not evidence of reduced parent context or whole-workflow savings; live judgment and correction effort remain unmeasured.
 
+## Operation-specific child tools and recorded activity
+
+The child sees seven narrow tools instead of one multi-operation union schema:
+
+| Child tool | Input focus |
+| --- | --- |
+| `github_file` | File `path`; optional `start` and `limit` **1–40** (default 30) |
+| `github_search_directory` | `directory` and literal `term`; at most five direct files |
+| `github_list_directory` | `directory`; root is `"."` |
+| `github_history` | `path`, optional page and UTC date filters |
+| `github_repositories` | Focused repository query |
+| `github_resolve` | Repository and optional ref |
+| `github_discussion` | Repository, kind, number and optional page |
+
+Each tool has only its own fields, so schema errors concern the requested operation. Directory arguments are translated to the existing adapter's `path`; operation names are supplied by code, not the model. All seven interfaces dispatch through the **same** `github_research_read` parent pipeline. That adapter and the exported direct-reader API retain their existing union contract. No permissions, model/transport settings, budgets, retries or default discovery behavior change. `tools` in child results now lists these actual model-visible names; the profile's authorized parent dependency remains the single adapter.
+
+The final wrapper attaches `activitySummary`, generated from child tool-result events and **retained intact post-hook** observations. It counts returned/failed child tool results (including schema rejections), groups them by tool, and reports retained/omitted/unknown evidence plus observed operations and coverage flags. Failure counts remain accurate when individual failure details exceed their existing 20-entry cap. Unknown tool names share one bounded `other` bucket. No raw argument, error text or discarded evidence is recovered for the summary.
+
+Child failure counts and adapter outcomes overlap; do not add them. Coverage counts are per observation, not unique files or a merged inventory. A successful shallow search can still contain inaccessible files. Partial windows, pagination, clipped content, omitted records and modified observations remain limitations. No summary declares that the research question is complete or that a citation supports a claim. Original model prose is preserved; parents should use host counts instead of any model-written totals.
+
+Local failure cases verified on Node 26.10.0 / SDK 0.99.2:
+- [x] Three oversized reads and two searches aimed at files: focused errors, five failures counted despite deliberately inaccurate model prose, then valid follow-up reads/searches.
+- [x] Missing/wrong fields, invalid limit types/ranges (including fractions before SDK coercion), maximum 40-line and short final windows; no parent dispatch or HTTP for schema failures.
+- [x] More than 20 failed tool results: 25 counted, 20 details retained, five details omitted and no HTTP.
+- [x] Parent denial/redaction, omitted evidence, partial searches/windows and pagination: no recovered content or false coverage; counts reconcile with original messages.
+- [x] Existing source, compiled/native, bundled/interactive, cancellation/accounting, capacity and default-off checks; 295 package tests and full repository verification pass, with one existing optional task-assistant skip.
+- [ ] Installation/reload and separately authorized live acceptance. Offline fixtures do not establish improved model decisions, smaller context or whole-workflow savings.
+
+Private local evidence: `tmp/tool-contract/verified-kQSBOg/VERIFICATION.md`, linked to the original source, packed and interactive fixture outputs. Reproduce with the package/root verification commands below. The first root run was interrupted by a 300-second command timeout while the unrelated task-assistant suite was still passing; a fresh full run completed with exit 0. Original failed/interrupted logs remain preserved.
+
 ## Host-owned opt-in
 
 Build with `npm run build --workspace profile-subagent` or pack with `npm pack ./profile-subagent` (prepack builds). Import `registerGithubResearch` from `@zsaplan/pi-profile-subagent/github-research`; the read adapter is exported from `@zsaplan/pi-profile-subagent/github-read`.

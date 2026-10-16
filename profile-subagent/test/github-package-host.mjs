@@ -8,6 +8,7 @@ import {pathToFileURL} from 'node:url';
 import {createServer} from 'node:http';
 import {WebSocket, WebSocketServer} from 'ws';
 import {createAssistantMessageEventStream} from '@earendil-works/pi-ai';
+import {childCall, childNames} from './github-child-call.ts';
 process.umask(0o077);
 const cfg = JSON.parse(await readFile(process.argv[2], 'utf8'));
 const sdkEntry = import.meta.resolve('@earendil-works/pi-coding-agent');
@@ -268,6 +269,11 @@ if (!live) {
         assert.equal(request.service_tier, 'default');
         assert.equal(request.reasoning.effort, 'high');
         assert.equal(request.previous_response_id, undefined);
+        assert.deepEqual(request.tools.map(tool => tool.name).sort(), Object.values(childNames).sort());
+        const fileTool = request.tools.find(tool => tool.name === 'github_file');
+        assert.equal(fileTool.parameters.properties.limit.maximum, 40);
+        assert.equal(fileTool.parameters.properties.operation, undefined);
+        assert.ok(request.tools.find(tool => tool.name === 'github_search_directory').parameters.required.includes('directory'));
         if (cfg.scenario === 'work-deadline') return;
         if (cfg.scenario === 'cancel') {
           setTimeout(() => controller.abort(), 10);
@@ -325,8 +331,8 @@ if (!live) {
               type: 'function_call',
               id,
               call_id: id,
-              name: 'github_research_read',
-              arguments: JSON.stringify(action),
+              name: childCall(action).name,
+              arguments: JSON.stringify(childCall(action).arguments),
             }
           : {
               type: 'message',
