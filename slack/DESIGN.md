@@ -35,7 +35,7 @@ This package intentionally does not use Slack's `search.messages` endpoint. Rese
 
 ## Safety boundaries
 
-Slack writes are external side effects. `approvals.ts` provides the shared gate. Writes require interactive confirmation unless `PI_SLACK_SKIP_SEND_CONFIRM=1` is set, a new reply/upload targets an explicitly approved thread in this Pi session, or an eligible content edit targets an independently approved Canvas. Message edits/deletes, broadcasts, and Canvas mutations cannot use thread grants.
+Slack writes are external side effects. `approvals.ts` provides the shared gate. Writes require interactive confirmation unless `PI_SLACK_SKIP_SEND_CONFIRM=1` is set, a reply/upload or verified message edit targets an explicitly approved thread in this Pi session, or an eligible content edit targets an independently approved Canvas. Message deletes, broadcasts (including edits to broadcast replies), and Canvas mutations cannot use thread grants.
 
 In non-interactive modes, writes are blocked by default. Set `PI_SLACK_ALLOW_NONINTERACTIVE_WRITES=1` and pass `confirm: true` to allow non-interactive writes.
 
@@ -89,7 +89,19 @@ Live evidence is in installed trunk at `slack/tmp/rich-live-20261016/`: requests
 
 ## Session-scoped grants
 
-The interactive gate receives a structured `threadScope` only from new non-broadcast replies and file uploads with a channel/parent timestamp. No user/model tool parameter can grant consent. A human selects approval-once or thread-for-session in the UI, or confirms `/slack-approvals allow <parent-permalink>`.
+Edit-approval acceptance checks:
+
+- [x] Approved roots/replies update without a new prompt, including after reload and when the parent is discovered from Slack (registered-tool/local-HTTP workflow).
+- [x] Spoofed parents, another thread/channel, broadcast edits, missing read access, and revocation cannot reuse the allowance.
+- [x] Rich-layout protection and non-interactive opt-in remain effective with an existing grant; split updates stay in the verified thread.
+- [x] Package/root validation and all five review categories pass.
+- [ ] Installed package loads the revised policy.
+- [ ] Live prompt-free editing in an already approved session is checked after that session reloads.
+
+Validation (2026-10-16): 108 Slack tests and root `npm run verify` passed; all five polish categories approved against `edf1a0b`. Local HTTP evidence includes the grant/reload/edit/failure workflow in `slack/tmp/thread-edit-approval-20261016/workflow-report.json`, with validation and review logs alongside it. A separate read-only live probe confirmed exact lookup and parent discovery for the authorized test thread's root and dashboard reply. No live edit was made while developing this approval change.
+
+
+The interactive gate receives a structured `threadScope` from new non-broadcast replies, file uploads, and edits whose exact message and parent were verified through Slack. Edits include the approved thread's root. Caller-supplied `threadTs` is only a lookup hint: a mismatch is rejected, and continuation replies use the verified parent. The user token supplies read access; the bot still owns all writes. Missing read access/target evidence falls back to approval-once for an explicit rich/clear-layout edit, never to a caller-asserted grant. Text-only layout checks still fail closed. Broadcast replies, deletes, other threads, and Canvas operations remain outside thread grants. Existing v1/v2 grants intentionally gain this edit coverage after reload, as requested by the user; session/identity boundaries and revocation are unchanged. No user/model tool parameter can grant consent. A human selects approval-once or thread-for-session in the UI, or confirms `/slack-approvals allow <parent-permalink>`.
 
 A separate `canvasScope` is supplied only for append/prepend/rename and guarded section edits (including revision notes). The user can approve Canvas-content-for-session or confirm `/slack-approvals allow-canvas <ID-or-permalink>`. Creation, whole-document replacement, sharing/access changes, and deletion are excluded. Grants do not skip revision checks. Only tool implementation code supplies these scopes; model parameters cannot manufacture approval.
 

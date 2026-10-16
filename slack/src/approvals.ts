@@ -112,7 +112,7 @@ function describe(grant: Grant): string {
 }
 function explanation(kind: Scope['kind']): string {
   return kind === 'thread'
-    ? 'Allows replies and file uploads in this exact thread. Excludes broadcasts, message edits/deletes, and all Canvas operations.'
+    ? 'Allows replies, file uploads, and edits to verified messages in this exact thread, including its root. Excludes broadcasts, message deletes, and all Canvas operations. Layout safeguards still apply.'
     : 'Allows targeted section edits/revision notes, append/prepend, and rename of this exact Canvas. Revision checks still apply to targeted edits. Excludes whole-document replacement, sharing/access changes, creation, and deletion.';
 }
 function parseCanvasReference(value: string): string {

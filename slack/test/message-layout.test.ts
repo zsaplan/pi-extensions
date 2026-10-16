@@ -62,10 +62,13 @@ test('rich message workflows over local HTTP, with a repeatable evidence report'
             ? body.ts
             : `1700000000.${String(++sequence).padStart(6, '0')}`;
         const message = {
+          ...messages.get(ts),
+          channel: body.channel,
+          user: 'UBOT',
           ts,
           text: body.text,
           blocks: body.blocks,
-          thread_ts: body.thread_ts,
+          thread_ts: body.thread_ts ?? messages.get(ts)?.thread_ts,
         };
         messages.set(ts, message);
         result = {ok: true, channel: body.channel, ts, message};
@@ -78,6 +81,7 @@ test('rich message workflows over local HTTP, with a repeatable evidence report'
         result = {ok: false, error: 'invalid_arguments'};
       } else {
         const selected = [...messages.values()].filter(message => {
+          if (message.channel && message.channel !== body.channel) return false;
           if (body.oldest && Number(message.ts) < Number(body.oldest))
             return false;
           if (body.latest && Number(message.ts) > Number(body.latest))
@@ -93,6 +97,8 @@ test('rich message workflows over local HTTP, with a repeatable evidence report'
           messages: selected.slice(0, Number(body.limit) || 100),
         };
       }
+    } else if (method === 'auth.test') {
+      result = {ok: true, team_id: 'T123', user_id: 'UBOT', bot_id: 'BBOT'};
     } else result = {ok: false, error: 'unexpected_method'};
     response.setHeader('Content-Type', 'application/json');
     response.end(JSON.stringify(result));
@@ -115,13 +121,27 @@ test('rich message workflows over local HTTP, with a repeatable evidence report'
   process.env.PI_SLACK_ALLOW_NONINTERACTIVE_WRITES = '1';
   delete process.env.PI_SLACK_SKIP_SEND_CONFIRM;
   const tools = new Map<string, Tool>();
-  slackExtension({
+  const entries: unknown[] = [];
+  const commands = new Map<
+    string,
+    {handler: (...args: unknown[]) => Promise<void>}
+  >();
+  const pi = {
     on() {},
-    registerCommand() {},
+    appendEntry(customType: string, data: unknown) {
+      entries.push({type: 'custom', customType, data: structuredClone(data)});
+    },
+    registerCommand(
+      name: string,
+      command: {handler: (...args: unknown[]) => Promise<void>},
+    ) {
+      commands.set(name, command);
+    },
     registerTool(tool: Tool) {
       tools.set(tool.name, tool);
     },
-  } as never);
+  };
+  slackExtension(pi as never);
   const channel = 'C12345678';
   const run = (
     name: string,
@@ -573,6 +593,167 @@ test('rich message workflows over local HTTP, with a repeatable evidence report'
           (result.details.truncation as {truncated: boolean}).truncated,
           true,
         );
+      },
+    );
+    await step(
+      'thread allowance covers verified root/reply edits and survives reload without weakening boundaries',
+      async () => {
+        const state = {
+          sessionId: 'edit-session',
+          selections: 0,
+          confirmations: 0,
+          choice: 'Approve thread for this session',
+          allowOnce: false,
+        };
+        const ctx = {
+          hasUI: true,
+          sessionManager: {
+            getSessionId: () => state.sessionId,
+            getEntries: () => entries,
+          },
+          ui: {
+            notify() {},
+            select: async (preview: string) => {
+              previews.push(preview);
+              state.selections++;
+              return state.choice;
+            },
+            confirm: async (_title: string, preview: string) => {
+              previews.push(preview);
+              state.confirmations++;
+              return state.allowOnce;
+            },
+          },
+        };
+        const reply = await write(
+          'slack_post_message',
+          {text: 'Approved thread reply', threadTs: plainTs},
+          ctx,
+        );
+        const replyTs = (reply.details.parts as Array<{ts: string}>)[0].ts;
+        assert.equal(state.selections, 1);
+        assert.match(previews.at(-1)!, /edits to verified messages/);
+        state.choice = 'Cancel';
+        const edit = {
+          ts: replyTs,
+          text: 'Verified edit',
+          markdown: '**Verified edit**',
+        };
+        const updated = await write('slack_update_message', edit, ctx);
+        assert.equal(
+          updated.details.threadTs,
+          plainTs,
+          'Discover the real parent even without a caller hint.',
+        );
+        await write(
+          'slack_update_message',
+          {ts: plainTs, text: 'Approved root edit', clearBlocks: true},
+          ctx,
+        );
+        slackExtension(pi as never);
+        await write('slack_update_message', {...edit, threadTs: plainTs}, ctx);
+        assert.equal(state.selections, 1);
+        assert.equal(state.confirmations, 0);
+        const beforeGuard = writes().length;
+        await assert.rejects(
+          write(
+            'slack_update_message',
+            {ts: replyTs, text: 'Do not flatten'},
+            ctx,
+          ),
+          /contains blocks/,
+        );
+        assert.equal(writes().length, beforeGuard);
+        const splitStart = writes().length;
+        await write(
+          'slack_update_message',
+          {
+            ts: replyTs,
+            text: 'Continuation line.\n'.repeat(90),
+            clearBlocks: true,
+            longTextMode: 'split',
+            maxChars: 500,
+          },
+          ctx,
+        );
+        assert.ok(writes().length > splitStart + 1);
+        assert.ok(
+          writes()
+            .slice(splitStart + 1)
+            .every(call => call.body.thread_ts === plainTs),
+        );
+        assert.equal(state.selections, 1);
+        assert.equal(state.confirmations, 0);
+        const other = await write('slack_post_message', {text: 'Other thread'});
+        const otherTs = (other.details.parts as Array<{ts: string}>)[0].ts;
+        const otherChannel = 'C87654321';
+        const elsewhere = await write('slack_post_message', {
+          channel: otherChannel,
+          text: 'Other channel',
+        });
+        const elsewhereTs = (elsewhere.details.parts as Array<{ts: string}>)[0]
+          .ts;
+        const beforeRejected = writes().length;
+        await assert.rejects(
+          write(
+            'slack_update_message',
+            {...edit, ts: otherTs, threadTs: plainTs},
+            ctx,
+          ),
+          /does not match/,
+        );
+        await assert.rejects(
+          write('slack_update_message', {...edit, ts: otherTs}, ctx),
+          /cancelled/,
+        );
+        await assert.rejects(
+          write(
+            'slack_update_message',
+            {...edit, channel: otherChannel, ts: elsewhereTs},
+            ctx,
+          ),
+          /cancelled/,
+        );
+        messages.get(replyTs)!.subtype = 'thread_broadcast';
+        await assert.rejects(
+          write('slack_update_message', edit, ctx),
+          /cancelled/,
+        );
+        delete messages.get(replyTs)!.subtype;
+        denyReads = true;
+        await assert.rejects(
+          write('slack_update_message', edit, ctx),
+          /cancelled/,
+        );
+        denyReads = false;
+        assert.match(previews.at(-1)!, /membership could not be verified/);
+        delete process.env.SLACK_USER_TOKEN;
+        await assert.rejects(
+          write('slack_update_message', edit, ctx),
+          /cancelled/,
+        );
+        process.env.SLACK_USER_TOKEN = 'fixture-user';
+        state.sessionId = 'other-session';
+        await assert.rejects(
+          write('slack_update_message', edit, ctx),
+          /cancelled/,
+        );
+        state.sessionId = 'edit-session';
+        delete process.env.PI_SLACK_ALLOW_NONINTERACTIVE_WRITES;
+        await assert.rejects(
+          write('slack_update_message', edit, {...ctx, hasUI: false}),
+          /blocked in non-interactive/,
+        );
+        process.env.PI_SLACK_ALLOW_NONINTERACTIVE_WRITES = '1';
+        assert.equal(writes().length, beforeRejected);
+        state.allowOnce = true;
+        await commands.get('slack-approvals')!.handler('clear', ctx);
+        state.allowOnce = false;
+        await assert.rejects(
+          write('slack_update_message', edit, ctx),
+          /cancelled/,
+        );
+        assert.equal(writes().length, beforeRejected);
       },
     );
   } finally {

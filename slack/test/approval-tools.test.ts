@@ -7,8 +7,9 @@ interface Tool {
   execute: (...args: unknown[]) => Promise<unknown>;
 }
 
-test('thread post approval covers uploads/replies but excludes broadcasts, message edits/deletes and Canvas writes', async t => {
+test('thread approval covers uploads/replies and verified edits but excludes broadcasts, deletes and Canvas writes', async t => {
   const envNames = [
+    'SLACK_USER_TOKEN',
     'SLACK_BOT_TOKEN',
     'PI_SLACK_SKIP_SEND_CONFIRM',
     'PI_SLACK_API_BASE_URL',
@@ -23,6 +24,7 @@ test('thread post approval covers uploads/replies but excludes broadcasts, messa
       else process.env[name] = value;
     }
   });
+  process.env.SLACK_USER_TOKEN = 'test-user';
   process.env.SLACK_BOT_TOKEN = 'test-bot';
   process.env.PI_SLACK_API_BASE_URL = 'https://slack.test/api';
   delete process.env.PI_SLACK_SKIP_SEND_CONFIRM;
@@ -56,6 +58,14 @@ test('thread post approval covers uploads/replies but excludes broadcasts, messa
         bot_id: 'BBOT',
       });
     }
+    if (
+      method === 'conversations.replies' ||
+      method === 'conversations.history'
+    )
+      return Response.json({
+        ok: true,
+        messages: [{ts: body.oldest, thread_ts: '1.000001', user: 'UBOT'}],
+      });
     if (method === 'files.info')
       return Response.json({
         ok: true,
@@ -155,13 +165,13 @@ test('thread post approval covers uploads/replies but excludes broadcasts, messa
     content: 'Private file',
     filename: 'private.txt',
   });
-  assert.equal(confirms, 6);
+  assert.equal(confirms, 5);
   assert.equal(selects, 1);
   // Simulate extension reload using the same actual session entries.
   slackExtension(pi as never);
   await execute('slack_post_message', {...thread, text: 'After reload'});
   assert.equal(selects, 1);
-  assert.equal(confirms, 6);
+  assert.equal(confirms, 5);
   await execute('slack_edit_canvas', {
     canvasId: 'F123',
     operation: 'append',
@@ -173,7 +183,7 @@ test('thread post approval covers uploads/replies but excludes broadcasts, messa
     title: 'Revised report',
   });
   assert.equal(selects, 2);
-  assert.equal(confirms, 6);
+  assert.equal(confirms, 5);
   const editCount = calls.filter(
     call => call.method === 'canvases.edit',
   ).length;
@@ -203,7 +213,7 @@ test('thread post approval covers uploads/replies but excludes broadcasts, messa
     operation: 'replace',
     markdown: 'Replacement',
   });
-  assert.equal(confirms, 8);
+  assert.equal(confirms, 7);
   const snapshot = (await execute('slack_read_canvas', {canvasId: 'F123'})) as {
     details: {revision: string};
   };
@@ -214,7 +224,7 @@ test('thread post approval covers uploads/replies but excludes broadcasts, messa
     changeSummary: 'Remove obsolete finding',
   };
   await execute('slack_delete_canvas_section', deletion);
-  assert.equal(confirms, 9); // Existing Canvas grant does not cover deletion.
+  assert.equal(confirms, 8); // Existing Canvas grant does not cover deletion.
   assert.equal(selects, 2);
   const beforeDenied = calls.filter(
     call => call.method === 'canvases.edit',

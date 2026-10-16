@@ -225,7 +225,7 @@ const UPDATE_MESSAGE_SCHEMA = Type.Object({
   threadTs: Type.Optional(
     Type.String({
       description:
-        'Parent thread timestamp for continuation parts when longTextMode=split. Defaults to the updated message ts.',
+        'Parent thread hint for locating a reply and routing split continuations. Verified against Slack before reusing thread approval; the actual parent is discovered when possible.',
     }),
   ),
   text: Type.String({
@@ -680,12 +680,12 @@ async function resolveMessageReference(
   };
 }
 
-async function guardTextOnlyUpdate(
+async function readMessageForUpdate(
   channel: string,
   ts: string,
   threadTs: string | undefined,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<SlackMessage | undefined> {
   const {client} = requireSlackClientForTokenKind('user');
   let messages: SlackMessage[] = [];
   const options = {oldest: ts, latest: ts, inclusive: true, limit: 2};
@@ -711,6 +711,10 @@ async function guardTextOnlyUpdate(
     messages = await readConversationHistory(client, channel, options, signal);
     current = messages.find(message => message.ts === ts);
   }
+  return current;
+}
+
+function guardTextOnlyUpdate(current: SlackMessage | undefined): void {
   if (!current) {
     throw new Error(
       'Cannot inspect the exact Slack message. Read it first (supply threadTs for a reply), then provide a complete markdown/blocks replacement or clearBlocks=true only if removing its layout is intended.',
@@ -1185,7 +1189,7 @@ export default function slackExtension(pi: ExtensionAPI) {
     name: 'slack_update_message',
     label: 'Slack Update Message',
     description:
-      'Update a Slack message using SLACK_BOT_TOKEN. Supports complete rich layouts. Text-only edits inspect with SLACK_USER_TOKEN unless clearBlocks explicitly permits removing the layout. Only ordinary text can split into continuations.',
+      'Update a Slack message using SLACK_BOT_TOKEN. Verified edits in an approved thread (including its root) reuse session approval; broadcasts do not. Uses SLACK_USER_TOKEN to inspect the target. Rich-layout safeguards remain; only ordinary text can split.',
     promptSnippet:
       'Update a Slack message or thread reply using SLACK_BOT_TOKEN.',
     promptGuidelines: [
@@ -1193,7 +1197,7 @@ export default function slackExtension(pi: ExtensionAPI) {
       'Use slack_update_message instead of hand-written Slack Web API calls when the user asks to edit a message.',
       'Pass url when the user gives a Slack permalink; otherwise pass channel and ts.',
       'Read the current message before editing. Supply a complete markdown/blocks replacement for rich content. clearBlocks=true explicitly replaces the top-level layout with text; legacy attachments remain. Do not use it merely to bypass a failed read. Rich updates never split. For ordinary text use longTextMode=split only when continuation replies are authorized.',
-      'When splitting an update to a thread reply, pass the parent threadTs so continuation parts stay in the original thread.',
+      'Existing thread approval covers edits only after Slack confirms the exact message and its real parent. Include threadTs when needed to locate a reply; it is a hint, not permission. Unverifiable membership or broadcast replies require separate approval. Continuations use the verified parent when available.',
     ],
     parameters: UPDATE_MESSAGE_SCHEMA,
     async execute(
@@ -1210,25 +1214,70 @@ export default function slackExtension(pi: ExtensionAPI) {
         longTextMode: normalizeLongTextMode(params.longTextMode),
         maxChars: params.maxChars,
       });
-      if (!layout && !params.clearBlocks) {
-        await guardTextOnlyUpdate(
-          reference.conversation.id,
-          reference.ts,
-          reference.threadTs,
-          signal,
+      const needsLayoutGuard = !layout && !params.clearBlocks;
+      let current: SlackMessage | undefined;
+      let inspectionWarning: string | undefined;
+      if (needsLayoutGuard || (ctx.hasUI && !config.skipSendConfirm)) {
+        try {
+          current = await readMessageForUpdate(
+            reference.conversation.id,
+            reference.ts,
+            reference.threadTs,
+            signal,
+          );
+        } catch (error) {
+          signal?.throwIfAborted();
+          if (needsLayoutGuard) throw error;
+        }
+        if (!current)
+          inspectionWarning =
+            'Thread membership could not be verified; separate approval is required.';
+      }
+      if (needsLayoutGuard) guardTextOnlyUpdate(current);
+      const verifiedParent = current
+        ? (current.thread_ts ?? current.ts)
+        : undefined;
+      if (
+        verifiedParent &&
+        reference.threadTs &&
+        reference.threadTs !== verifiedParent
+      ) {
+        throw new Error(
+          'Supplied threadTs does not match the message’s actual Slack thread. No edit was made.',
         );
       }
+      const threadScope =
+        verifiedParent &&
+        current &&
+        !['thread_broadcast', 'reply_broadcast'].includes(current.subtype ?? '')
+          ? {
+              channelId: reference.conversation.id,
+              parentThreadTs: verifiedParent,
+            }
+          : undefined;
+      const threadTs = continuationThreadTs(
+        verifiedParent ?? reference.threadTs,
+        reference.ts,
+      );
       await confirmSlackWrite(config, ctx, {
         confirm: params.confirm,
-        preview:
+        preview: [
+          inspectionWarning,
+          prepared.chunks.length > 1
+            ? `Continuations: ${reference.conversation.id} thread ${threadTs}`
+            : undefined,
           layout?.preview ??
-          `${params.clearBlocks ? 'REMOVE top-level blocks; legacy attachments retained.\n' : ''}Parts: ${prepared.chunks.length}\n\n${previewText(params.text)}`,
+            `${params.clearBlocks ? 'REMOVE top-level blocks; legacy attachments retained.\n' : ''}Parts: ${prepared.chunks.length}\n\n${previewText(params.text)}`,
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+        threadScope,
         signal,
         target: `${conversationDisplayName(reference.conversation)} message ${reference.ts}`,
         title: 'Update Slack message?',
       });
 
-      const warnings = [...prepared.warnings];
+      const warnings = uniqueStrings([...prepared.warnings, inspectionWarning]);
       const updated = await runSlackWrite(client, () =>
         updateMessage(
           client,
@@ -1245,7 +1294,6 @@ export default function slackExtension(pi: ExtensionAPI) {
       warnings.push(...collectSlackWarnings(updated));
 
       const parts = [{kind: 'updated', ts: updated.ts ?? reference.ts}];
-      const threadTs = continuationThreadTs(reference.threadTs, reference.ts);
       for (const [index, chunk] of prepared.chunks.slice(1).entries()) {
         const response = await runSlackWrite(client, () =>
           postMessage(
