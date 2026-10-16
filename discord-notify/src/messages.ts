@@ -1,5 +1,5 @@
 import {basename} from 'node:path';
-import type {ExtensionContext} from '@mariozechner/pi-coding-agent';
+import type {ExtensionContext} from '@earendil-works/pi-coding-agent';
 import type {DiscordConfig, NotifyEventName} from './config.ts';
 import {ENABLED_ENV_VAR} from './config.ts';
 

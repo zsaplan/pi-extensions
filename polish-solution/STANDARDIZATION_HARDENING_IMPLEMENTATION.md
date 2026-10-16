@@ -12,7 +12,7 @@ This document is an implementation handoff for a future agent. Keep changes cent
 - Runtime entry: `polish-solution/src/index.ts`
 - Skill directory: `polish-solution/skills`
 - Current validation: `npm run verify --workspace polish-solution` runs TypeScript only.
-- Current peer dependencies: `@mariozechner/pi-ai`, `@mariozechner/pi-coding-agent`, `@sinclair/typebox`
+- Current peer dependencies: `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `typebox`
 - The implementation is intentionally self-review-resistant and writes review artifacts under local state paths.
 
 ## Scope

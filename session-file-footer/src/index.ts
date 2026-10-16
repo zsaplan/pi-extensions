@@ -4,12 +4,12 @@ import type {
   ExtensionContext,
   ReadonlyFooterDataProvider,
   Theme,
-} from '@mariozechner/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent';
 import {
   truncateToWidth,
   visibleWidth,
   type Component,
-} from '@mariozechner/pi-tui';
+} from '@earendil-works/pi-tui';
 
 const MIN_COLUMN_GAP = 2;
 const RESERVED_LEFT_RATIO = 0.4;

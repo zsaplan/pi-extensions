@@ -1,6 +1,6 @@
 {
   "name": "@zsaplan/pi-extensions",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Personal repo-backed source for pi extensions.",
   "type": "module",
   "license": "UNLICENSED",
@@ -20,12 +20,18 @@
     "test": "npm run test --workspaces --if-present",
     "verify:packages": "npm run verify --workspaces --if-present",
     "prepare:packages": "npm run prepare --workspaces --if-present",
-    "verify": "npm run lint && npm run verify:packages",
+    "verify": "npm run lint && npm run verify:packages && npm run verify:live-config",
+    "verify:upgrade": "node scripts/verify-pi-upgrade.mjs",
+    "verify:live": "node scripts/verify-pi-live.mjs",
+    "verify:live-config": "eslint scripts/live-config.mjs scripts/live-config.test.mjs scripts/verify-pi-live.mjs && node --test scripts/live-config.test.mjs",
     "prepare": "npm run prepare:packages"
   },
   "files": [
+    "codex-research",
     "discord-notify",
+    "jira",
     "polish-solution",
+    "profile-subagent",
     "pr-worktree-status",
     "rain-core",
     "raincatcher",
@@ -34,14 +40,29 @@
     "response-review",
     "session-file-footer",
     "slack",
+    "task-assistant",
     "DESIGN.md",
     "README.md",
-    "package.json"
+    "package.json",
+    "!**/tmp/**",
+    "!task-assistant/DEPENDENCY_REVIEW.md",
+    "!task-assistant/IMPLEMENTATION_PLAN.md",
+    "!task-assistant/RESEARCH.md",
+    "!task-assistant/RUNBOOK.md",
+    "!task-assistant/operations/**",
+    "!task-assistant/.local/**",
+    "!task-assistant/state/**",
+    "!task-assistant/node_modules/**",
+    "!task-assistant/.env",
+    "!task-assistant/.env.*"
   ],
   "pi": {
     "extensions": [
+      "./codex-research/src/index.ts",
       "./discord-notify/src/index.ts",
+      "./jira/src/index.ts",
       "./polish-solution/src/index.ts",
+      "./profile-subagent/src/index.ts",
       "./pr-worktree-status/src/index.ts",
       "./raincatcher/src/index.ts",
       "./raindistiller/src/index.ts",
@@ -51,31 +72,34 @@
       "./slack/src/index.ts"
     ],
     "skills": [
-      "./polish-solution/skills"
+      "./polish-solution/skills",
+      "./profile-subagent/skills"
     ]
   },
   "dependencies": {
     "@zsaplan/rain-core": "file:./rain-core",
-    "glimpseui": "^0.6.0",
-    "typebox": "^1.1.24"
+    "glimpseui": "^0.6.0"
   },
   "peerDependencies": {
-    "@mariozechner/pi-ai": "^0.70.0",
-    "@mariozechner/pi-coding-agent": "^0.70.0",
-    "@mariozechner/pi-tui": "^0.70.0"
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "0.99.2",
     "@earendil-works/pi-coding-agent": "0.99.2",
-    "@mariozechner/pi-ai": "^0.70.0",
-    "@mariozechner/pi-coding-agent": "^0.70.0",
-    "@mariozechner/pi-tui": "^0.70.0",
+    "@earendil-works/pi-tui": "0.99.2",
     "@types/node": "^24.12.2",
     "gts": "^7.0.0",
     "knip": "^5.88.1",
+    "typebox": "^1.1.24",
     "typescript": "^5.9.3"
   },
   "workspaces": [
+    "codex-research",
     "discord-notify",
+    "jira",
     "polish-solution",
     "pr-worktree-status",
     "rain-core",
@@ -84,6 +108,8 @@
     "rainman",
     "response-review",
     "session-file-footer",
-    "slack"
+    "profile-subagent",
+    "slack",
+    "task-assistant"
   ]
 }

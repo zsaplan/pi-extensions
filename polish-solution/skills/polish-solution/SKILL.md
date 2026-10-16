@@ -45,10 +45,12 @@ Keep the primary coding agent in control of the loop:
 - `polish_solution_review` automatically reviews the full current worktree state, including uncommitted tracked changes and non-ignored untracked files.
 - The default base is `origin/main` when available, otherwise `main`.
 - Use `baseRef` only when the user wants a different comparison base or the default lineage is wrong.
+- The default diff limit is 6,000 lines or 150 KiB. If the user explicitly opts in, `largeDiff: true` raises it to 10,000 lines or 250 KiB.
+- Before using `largeDiff: true`, warn that larger reviews cost more, take longer, and may reduce review quality through context dilution.
 - The tool runs five isolated internal child reviewer sessions in order: `adversarial`, `simplify`, `standardize`, `prune`, and `dry`.
 - Each category has its own read-only reviewer session and its own internal `submit_review` call; only the parent tool aggregates IDs, category metadata, conflicts, and the final suite result.
 - Unresolved conflicts are represented as `status: "needs-attention"` with `conflicts[].resolution = "needs-user-direction"`; there is no top-level `blocked` status.
-- The tool fails fast when there is no effective diff, when the base ref cannot be resolved, when no merge-base exists, or when the diff is too large for one category reviewer pass.
+- The tool fails fast when there is no effective diff, when the base ref cannot be resolved, when no merge-base exists, or when the selected diff limit is exceeded.
 
 ## Review interpretation rules
 

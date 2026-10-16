@@ -1,0 +1,54 @@
+{
+  "name": "@zsaplan/pi-profile-subagent",
+  "version": "0.1.0",
+  "description": "Narrow, profile-defined Pi subagents with explicit tools and isolated context.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "keywords": [
+    "pi-package",
+    "pi-extension"
+  ],
+  "exports": {
+    "./github-research": "./dist/github-research.js",
+    "./github-read": "./dist/github-read.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "profiles",
+    "skills",
+    "benchmark",
+    "README.md",
+    "DESIGN.md",
+    "DELEGATION.md",
+    "RELEASE.md",
+    "RESEARCH.md",
+    "ORCHESTRATION.md",
+    "PILOT.md",
+    "GITHUB_RESEARCH.md",
+    "experimental/snapshot-checker/CONTRACT.md",
+    "!**/tmp/**",
+    "!**/*.tsbuildinfo"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
+    "lint": "gts lint",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.ts",
+    "verify": "npm run lint && npm run typecheck && npm run test"
+  }
+}

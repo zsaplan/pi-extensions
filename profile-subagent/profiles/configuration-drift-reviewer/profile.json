@@ -1,0 +1,27 @@
+{
+  "id": "configuration-drift-reviewer",
+  "description": "Compare two rendered configuration or deployment snapshots. Identify changed fields and values; keep runtime impact unverified. No rendering, cluster access, or edits.",
+  "tags": [
+    "configuration",
+    "drift",
+    "compare",
+    "deployment",
+    "snapshots",
+    "resources",
+    "replicas",
+    "memory"
+  ],
+  "agents": "AGENTS.md",
+  "skills": [
+    "skills/compare-snapshots/SKILL.md"
+  ],
+  "builtinTools": [
+    "read",
+    "grep",
+    "find",
+    "ls"
+  ],
+  "parentTools": [],
+  "maxTurns": 20,
+  "timeoutSeconds": 600
+}

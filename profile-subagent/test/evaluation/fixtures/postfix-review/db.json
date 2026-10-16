@@ -1,0 +1,21 @@
+{
+  "target": {
+    "site": "fixture-site",
+    "environment": "test",
+    "database": "fixture_db"
+  },
+  "synthetic": true,
+  "readOnly": true,
+  "rows": [
+    {
+      "id": "custom-9",
+      "template_key": "welcome_email",
+      "body": "Custom greeting"
+    }
+  ],
+  "postfixLedger": [
+    581
+  ],
+  "laterChanges": [],
+  "sourceMatch": true
+}

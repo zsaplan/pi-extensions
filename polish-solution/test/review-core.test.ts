@@ -89,6 +89,7 @@ function makeScope(overrides: Partial<ReviewScope> = {}): ReviewScope {
     diff: '',
     diffBytes: 0,
     diffLines: 0,
+    diffBudget: {maxBytes: 150 * 1024, maxLines: 6000},
     changedFiles: ['src/changed.ts'],
     untrackedFiles: [],
     changedFileDetails: {

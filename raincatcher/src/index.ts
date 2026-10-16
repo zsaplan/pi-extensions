@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { complete } from "@mariozechner/pi-ai";
-import { getAgentDir, type ExtensionAPI, withFileMutationQueue } from "@mariozechner/pi-coding-agent";
+import { complete } from "@earendil-works/pi-ai/compat";
+import { getAgentDir, type ExtensionAPI, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import {
   KB_ROOT_ENV_VAR,
   STRUCTURED_FACT_SYNTAX_GUIDANCE,

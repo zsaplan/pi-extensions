@@ -1,4 +1,4 @@
-import type {ExtensionContext} from '@mariozechner/pi-coding-agent';
+import type {ExtensionContext} from '@earendil-works/pi-coding-agent';
 import type {DiscordSettings, NotifyEventName} from './config.ts';
 import {readConfig} from './config.ts';
 import {postToDiscord} from './discord.ts';

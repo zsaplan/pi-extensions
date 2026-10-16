@@ -1,0 +1,27 @@
+{
+  "id": "documentation-consistency-reviewer",
+  "description": "Check documentation claims against supplied source or configuration. Identify contradictory options, defaults, and unsupported statements with evidence. No edits or runtime testing.",
+  "tags": [
+    "documentation",
+    "consistency",
+    "claims",
+    "source",
+    "options",
+    "defaults",
+    "README",
+    "guide"
+  ],
+  "agents": "AGENTS.md",
+  "skills": [
+    "skills/check-claims/SKILL.md"
+  ],
+  "builtinTools": [
+    "read",
+    "grep",
+    "find",
+    "ls"
+  ],
+  "parentTools": [],
+  "maxTurns": 20,
+  "timeoutSeconds": 600
+}

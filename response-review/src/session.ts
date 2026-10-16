@@ -5,7 +5,7 @@ import {
   SessionManager,
   type ExtensionCommandContext,
   type SessionEntry,
-} from '@mariozechner/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent';
 import type {
   LoadedResponseReviewSession,
   ResponseReviewEntryData,

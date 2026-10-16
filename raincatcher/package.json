@@ -1,6 +1,6 @@
 {
   "name": "@zsaplan/pi-raincatcher",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pi extension that captures durable facts from agent activity into markdown knowledge files.",
   "type": "module",
   "license": "UNLICENSED",
@@ -27,8 +27,8 @@
     ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-ai": "^0.70.0",
-    "@mariozechner/pi-coding-agent": "^0.70.0"
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",

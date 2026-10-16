@@ -13,7 +13,7 @@ This document is an implementation handoff for a future agent. Keep changes cent
 - Supporting modules: `raindistiller/src/distill.ts`, `raindistiller/src/semanticCleanup.ts`
 - Existing tests: `raindistiller/test/semanticCleanup.test.ts`
 - Current validation: `npm run verify --workspace raindistiller` runs TypeScript and tests.
-- Current peer dependencies: `@mariozechner/pi-ai`, `@mariozechner/pi-coding-agent`, `@mariozechner/pi-tui`
+- Current peer dependencies: `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`
 - Current package dependency: `@zsaplan/rain-core` via `file:../rain-core`
 - The package listens for `raincatcher:files-written` events.
 

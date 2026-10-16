@@ -1,0 +1,11 @@
+{
+  "site": "fixture-site",
+  "environment": "test",
+  "database": "fixture_db",
+  "postfix": 581,
+  "collection": "succeeded",
+  "finding": "Original UUID old-581 absent",
+  "capturedAt": "2026-10-07T00:00:00Z",
+  "sourceRevision": "r581",
+  "deploymentRevision": "r581"
+}

@@ -1,0 +1,5 @@
+{
+  "retries": 3,
+  "timeoutMs": 5000,
+  "auditLogging": false
+}

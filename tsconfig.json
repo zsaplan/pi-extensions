@@ -6,10 +6,17 @@
     "allowImportingTsExtensions": true
   },
   "include": [
+    "codex-research/src/**/*.ts",
+    "codex-research/test/**/*.test.ts",
     "discord-notify/src/**/*.ts",
     "discord-notify/test/**/*.ts",
+    "jira/src/**/*.ts",
+    "jira/test/**/*.ts",
     "polish-solution/src/**/*.ts",
     "polish-solution/test/**/*.ts",
+    "profile-subagent/src/**/*.ts",
+    "profile-subagent/test/**/*.ts",
+    "profile-subagent/benchmark/examples/**/*.ts",
     "pr-worktree-status/src/**/*.ts",
     "pr-worktree-status/test/**/*.test.ts",
     "response-review/src/**/*.ts",
@@ -19,6 +26,8 @@
     "slack/src/**/*.ts",
     "slack/scripts/**/*.ts",
     "slack/test/**/*.test.ts",
+    "task-assistant/src/**/*.ts",
+    "task-assistant/test/**/*.test.ts",
     "response-review/web/**/*.ts",
     "response-review/knip.config.ts"
   ],
@@ -31,6 +40,7 @@
     "rainman/**",
     "response-review/web/**/*.js",
     "polish-solution/tmp/**",
+    "profile-subagent/tmp/**",
     "response-review/tmp/**",
     "src/**",
     "tmp/**"

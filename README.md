@@ -4,8 +4,11 @@ Personal repo-backed source for pi extensions.
 
 ## Packages
 
+- `codex-research/` → `@zsaplan/pi-codex-research`
 - `discord-notify/` → `@zsaplan/pi-discord-notify`
+- `jira/` → `@zsaplan/pi-jira`
 - `polish-solution/` → `@zsaplan/pi-polish-solution`
+- `profile-subagent/` → `@zsaplan/pi-profile-subagent` — narrow, profile-defined delegation
 - `pr-worktree-status/` → `@zsaplan/pi-pr-worktree-status`
 - `rain-core/` → shared KB/file utilities used by Rain extensions
 - `raincatcher/` → `@zsaplan/pi-raincatcher`
@@ -14,6 +17,7 @@ Personal repo-backed source for pi extensions.
 - `response-review/` → `@zsaplan/pi-response-review`
 - `session-file-footer/` → `@zsaplan/pi-session-file-footer`
 - `slack/` → `@zsaplan/pi-slack`
+- `task-assistant/` → `@zsaplan/pi-task-assistant` — standalone Slack-first task queue and supervised single-task runner; not loaded by `pi -e .`
 
 Extension packages keep their own `package.json` and `pi` manifest. `rain-core/` is the shared deterministic utility layer; model policy and runtime orchestration stay in the extension packages.
 
@@ -23,7 +27,15 @@ Repo-wide design lives in [`DESIGN.md`](./DESIGN.md). Each extension directory a
 
 ```text
 pi-extensions/
+├── codex-research/
+│   ├── package.json
+│   ├── README.md
+│   └── src/
 ├── discord-notify/
+│   ├── package.json
+│   ├── README.md
+│   └── src/
+├── jira/
 │   ├── package.json
 │   ├── README.md
 │   └── src/
@@ -33,6 +45,10 @@ pi-extensions/
 │   ├── skills/
 │   │   └── polish-solution/
 │   │       └── SKILL.md
+│   └── src/
+├── profile-subagent/
+│   ├── package.json
+│   ├── profiles/
 │   └── src/
 ├── pr-worktree-status/
 │   ├── package.json
@@ -78,8 +94,11 @@ pi -e .
 
 # or load individual source packages from this repo checkout
 # (run `npm install` at the repo root first so local package dependencies are wired up)
+pi -e ./codex-research
 pi -e ./discord-notify
+pi -e ./jira
 pi -e ./polish-solution
+pi -e ./profile-subagent
 pi -e ./pr-worktree-status
 pi -e ./raincatcher
 pi -e ./raindistiller
@@ -92,7 +111,7 @@ pi -e ./slack
 pi install .
 ```
 
-Note: `response-review/` has a runtime dependency on `glimpseui`, so direct source loading (`pi -e ./response-review`) needs dependencies installed first. Running `npm install` at the repo root is the simplest option; `pi install .` also handles package installs for you.
+Note: `response-review/` has a runtime dependency on `glimpseui`, so direct source loading (`pi -e ./response-review`) needs dependencies installed first. Running `npm install` at the repo root is the simplest option. For a local source, `pi install .` records the path; it does not install that directory's dependencies. If extensions are already installed individually, add only the new individual package rather than also loading the root package. See [specialist installation and rollback](profile-subagent/RELEASE.md).
 
 ## Development workflow
 
@@ -116,10 +135,13 @@ npm run verify
 Useful targeted commands:
 
 ```bash
+npm run verify --workspace codex-research
+npm run verify --workspace jira
 npm run verify --workspace response-review
 npm run verify --workspace rainman
 npm run verify --workspace session-file-footer
 npm run verify --workspace pr-worktree-status
+npm run verify --workspace profile-subagent
 ```
 
 Notes:
@@ -131,6 +153,38 @@ Notes:
 - `response-review/web/app.js` is an untracked runtime artifact that is rebuilt on demand if missing or stale.
 - `response-review` owns its own web build, artifact checks, and `knip` validation inside `response-review/package.json`.
 
+## Pi 0.99.2 upgrade validation
+
+Pi development dependencies and the live CLI acceptance check target **0.99.2**.
+Host-provided packages, including `typebox`, belong in `peerDependencies` with
+`"*"` ranges; development dependencies support local checks without bundling them.
+
+Run from the repository root:
+
+```bash
+npm run verify
+npm run verify:upgrade
+npm run verify:live  # makes real subscription/paid model requests
+```
+
+Preparation results (Node 26.9.0, Pi 0.99.2):
+
+- [x] Repository lint, typechecks, package checks, and 158 tests passed.
+- [x] Offline acceptance passed: five isolated reviewers, 18 local HTTP requests,
+  and restored session context (`tmp/pi-upgrade-smoke.json`).
+- [x] Live CLI acceptance passed with `openai-codex/gpt-5.6-sol`: file read,
+  persisted-session resume, five review categories, and Rainman citation.
+  Evidence: `tmp/pi-live-qe0icB/report.json`; reruns retain new `tmp/pi-live-*` reports.
+- [x] Isolated CLI startup loaded the 13 configured packages with no stderr warnings.
+- [x] The separately maintained Slack worktree passed its 107 tests and package checks.
+- [ ] Merge preparation changes and refresh dependencies in the active checkout.
+- [ ] Upgrade Homebrew Pi, restart, and verify the installed executable and normal session.
+- [ ] Check image results and interactive approval dialogs without external writes.
+- [ ] Check compaction and branching on a copied session.
+
+Preparation does not change the daily installation, provider selection, or enable
+MCP/codemode. Interactive acceptance remains separate from automated checks.
+
 ## Source of truth for this initial import
 
 Initial package sources were copied from:
@@ -140,7 +194,9 @@ Initial package sources were copied from:
 
 Repo-native additions after the initial import:
 
+- `codex-research/`
 - `discord-notify/`
+- `jira/`
 - `polish-solution/`
 - `pr-worktree-status/`
 - `rain-core/`

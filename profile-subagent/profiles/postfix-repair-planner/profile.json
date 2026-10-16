@@ -1,0 +1,22 @@
+{
+  "id": "postfix-repair-planner",
+  "description": "Investigate one postfix outcome and propose a repair package; never execute it.",
+  "tags": ["postfix", "repair", "plan", "missing", "outcome", "audit", "migration", "data", "fix"],
+  "agents": "AGENTS.md",
+  "skills": [
+    "skills/plan-repair/SKILL.md"
+  ],
+  "builtinTools": [
+    "read",
+    "grep",
+    "find",
+    "ls"
+  ],
+  "parentTools": [
+    "bc_site_db_search_saved_queries",
+    "bc_site_db_run_saved_query",
+    "bc_site_db_query"
+  ],
+  "maxTurns": 20,
+  "timeoutSeconds": 600
+}

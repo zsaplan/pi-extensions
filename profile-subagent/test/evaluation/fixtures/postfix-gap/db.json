@@ -1,0 +1,15 @@
+{
+  "target": {
+    "site": "fixture-site",
+    "environment": "test",
+    "database": "fixture_db"
+  },
+  "synthetic": true,
+  "readOnly": true,
+  "rows": [],
+  "postfixLedger": [
+    581
+  ],
+  "laterChanges": [],
+  "sourceMatch": true
+}

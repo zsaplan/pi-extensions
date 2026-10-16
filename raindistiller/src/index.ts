@@ -1,7 +1,7 @@
 import fs from "node:fs";
-import { completeSimple, type AssistantMessage, type ThinkingLevel } from "@mariozechner/pi-ai";
-import { keyText, getAgentDir, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Box, Spacer, Text } from "@mariozechner/pi-tui";
+import { completeSimple, type AssistantMessage, type ThinkingLevel } from "@earendil-works/pi-ai/compat";
+import { keyText, getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Box, Spacer, Text } from "@earendil-works/pi-tui";
 import {
   KB_ROOT_ENV_VAR,
   getKbRoot,

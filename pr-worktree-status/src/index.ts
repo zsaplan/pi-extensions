@@ -5,7 +5,7 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
-} from '@mariozechner/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent';
 
 const DISPLAY_KEY = 'pr-worktree-status';
 const CACHE_VERSION = 1;

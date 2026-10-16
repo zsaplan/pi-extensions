@@ -3,7 +3,7 @@ import type {
   ExtensionAPI,
   ExtensionContext,
   TurnEndEvent,
-} from '@mariozechner/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent';
 import {PRIMARY_WEBHOOK_ENV_VAR, readConfig} from './config.ts';
 import {postToDiscord} from './discord.ts';
 import {buildTestMessage, getStatusMessage} from './messages.ts';

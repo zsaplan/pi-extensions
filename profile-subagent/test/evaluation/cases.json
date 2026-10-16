@@ -1,0 +1,272 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "p1",
+      "family": "postfix",
+      "split": "development",
+      "kind": "clear",
+      "expected": "postfix-repair-planner",
+      "quality": "complete",
+      "fixture": "postfix-gap",
+      "query": "Plan a safe repair for the missing postfix outcome in this audit.",
+      "prompt": "Investigate the missing postfix 581 outcome for fixture-site / test / fixture_db. Evidence is in evidence/. Draft a bounded repair proposal only; no execution or approval. This is synthetic evidence, not a real deployment.",
+      "rubric": [
+        "Identify missing semantic key welcome_email despite successful collection and matching synthetic source revision r581.",
+        "Explain absence of superseding changes and conditional idempotent insert preserving existing values.",
+        "Cite audit/source and fake DB evidence, keep human approval, fresh real-target checks and application verification unperformed."
+      ]
+    },
+    {
+      "id": "p2",
+      "family": "postfix",
+      "split": "development",
+      "kind": "clear",
+      "expected": "postfix-repair-reviewer",
+      "quality": null,
+      "fixture": "postfix-review",
+      "query": "Independently review this proposed postfix repair SQL package.",
+      "prompt": "Challenge the proposed postfix 581 repair in evidence/ for fixture-site / test / fixture_db. Identify unsafe assumptions and required changes. Do not execute it. All evidence is synthetic.",
+      "rubric": [
+        "Reject unconditional UPDATE that would overwrite a customization.",
+        "Require semantic identity, source match, bounded preconditions and approval."
+      ]
+    },
+    {
+      "id": "p3",
+      "family": "postfix",
+      "split": "held-out",
+      "kind": "clear",
+      "expected": "postfix-repair-planner",
+      "quality": "complete",
+      "fixture": "postfix-custom",
+      "query": "Investigate whether the absent original migration record actually needs restoration.",
+      "prompt": "Determine whether the postfix 581 audit finding in evidence/ needs a repair on fixture-site / test / fixture_db. Trace semantic identity before drafting any correction. Read-only synthetic investigation.",
+      "rubric": [
+        "Original UUID old-581 is absent but custom-9 has the same welcome_email semantic key.",
+        "Customized value Custom greeting is intentional; no default restoration or overwrite is warranted.",
+        "Cite source, customization record and fake DB evidence; do not claim real deployment or application verification."
+      ]
+    },
+    {
+      "id": "p4",
+      "family": "postfix",
+      "split": "held-out",
+      "kind": "clear",
+      "expected": "postfix-repair-planner",
+      "quality": "gap",
+      "fixture": "postfix-unverified",
+      "query": "Assess a data-fix outcome when the deployed source revision is unknown.",
+      "prompt": "Assess the single postfix 581 missing-outcome finding in evidence/ for fixture-site / test / fixture_db. Source matching is not supplied. State whether a repair is supportable from this synthetic evidence; do not execute.",
+      "rubric": [
+        "Deployment/source match is unverified and blocks an executable repair.",
+        "Historical absence alone cannot establish applicability/current truth; leave checks unresolved."
+      ]
+    },
+    {
+      "id": "c1",
+      "family": "configuration",
+      "split": "development",
+      "kind": "clear",
+      "expected": "configuration-drift-reviewer",
+      "quality": "complete",
+      "fixture": "config-changed",
+      "query": "Compare rendered configuration snapshots for changed deployment resources.",
+      "prompt": "Compare evidence/before.yaml and evidence/after.yaml. Report material configuration drift with field/value references, and distinguish observable changes from unverified runtime impact. Do not access a cluster.",
+      "rubric": [
+        "replicas changed 2 to 1; resources.limits.memory changed 512Mi to 256Mi.",
+        "Image and CPU limit unchanged; no claim of measured outages or performance.",
+        "Cite both snapshot files with relevant fields."
+      ]
+    },
+    {
+      "id": "c2",
+      "family": "configuration",
+      "split": "development",
+      "kind": "clear",
+      "expected": "configuration-drift-reviewer",
+      "quality": "gap",
+      "fixture": "config-gap",
+      "query": "Review configuration drift with an unavailable before snapshot.",
+      "prompt": "Assess configuration drift from evidence/after.yaml. The before snapshot is unavailable. Report what can and cannot be established without cluster access.",
+      "rubric": [
+        "Missing baseline prevents establishing a change/delta.",
+        "Current replicas/memory values can be observed but must not be called regressions."
+      ]
+    },
+    {
+      "id": "c3",
+      "family": "configuration",
+      "split": "held-out",
+      "kind": "clear",
+      "expected": "configuration-drift-reviewer",
+      "quality": "complete",
+      "fixture": "config-clean",
+      "query": "Check these two rendered manifests for differences in replicas and memory.",
+      "prompt": "Compare the two rendered manifests evidence/before.yaml and evidence/after.yaml for differences. No live access is available. Return evidence-based findings only.",
+      "rubric": [
+        "No differences: replicas 2, memory 512Mi, CPU 500m, image app:v1 in both.",
+        "No assertion of deployment health from equal files.",
+        "Cite both snapshots."
+      ]
+    },
+    {
+      "id": "c4",
+      "family": "configuration",
+      "split": "held-out",
+      "kind": "clear",
+      "expected": "configuration-drift-reviewer",
+      "quality": null,
+      "fixture": "config-changed",
+      "query": "What deployment settings changed between these snapshots?",
+      "prompt": "Identify changed deployment settings between evidence/before.yaml and evidence/after.yaml; separate static findings from runtime unknowns.",
+      "rubric": [
+        "Identify replica and memory reductions without claiming measured impact."
+      ]
+    },
+    {
+      "id": "d1",
+      "family": "documentation",
+      "split": "development",
+      "kind": "clear",
+      "expected": "documentation-consistency-reviewer",
+      "quality": "complete",
+      "fixture": "docs-changed",
+      "query": "Check documentation claims against source options and defaults.",
+      "prompt": "Check evidence/README.md against evidence/options.ts. Report contradictions in options/defaults, cite evidence, and do not modify files or claim tests were run.",
+      "rubric": [
+        "Docs claim timeout default 30 but code default is 10.",
+        "Docs claim retries=3 but source permits no retries (0); verbose=false agrees.",
+        "Cite docs and code; no invented runtime test results."
+      ]
+    },
+    {
+      "id": "d2",
+      "family": "documentation",
+      "split": "development",
+      "kind": "clear",
+      "expected": "documentation-consistency-reviewer",
+      "quality": "gap",
+      "fixture": "docs-gap",
+      "query": "Review documentation consistency when the implementation source is missing.",
+      "prompt": "Verify the documentation claims in evidence/README.md. The implementation source is not supplied. State which claims remain unverified without browsing or changing files.",
+      "rubric": [
+        "Missing implementation source prevents verification of documented defaults.",
+        "Do not treat documented claims as confirmed behavior."
+      ]
+    },
+    {
+      "id": "d3",
+      "family": "documentation",
+      "split": "held-out",
+      "kind": "clear",
+      "expected": "documentation-consistency-reviewer",
+      "quality": "complete",
+      "fixture": "docs-clean",
+      "query": "Does this README describe the actual behavior in the supplied implementation?",
+      "prompt": "Check whether evidence/README.md accurately describes evidence/options.ts. Cite the supplied files and separate static consistency from unperformed runtime checks.",
+      "rubric": [
+        "Documented timeout=10, retries=0, verbose=false match the source.",
+        "No material contradiction; static match does not establish runtime tests passed."
+      ]
+    },
+    {
+      "id": "d4",
+      "family": "documentation",
+      "split": "held-out",
+      "kind": "clear",
+      "expected": "documentation-consistency-reviewer",
+      "quality": null,
+      "fixture": "docs-changed",
+      "query": "Identify claims in the user guide that conflict with the code.",
+      "prompt": "Compare evidence/README.md with evidence/options.ts and list unsupported or contradictory user-guide claims. No edits or web access.",
+      "rubric": [
+        "Identify timeout and retry contradictions with file evidence."
+      ]
+    },
+    {
+      "id": "a1",
+      "family": "ambiguous",
+      "split": "control",
+      "kind": "ambiguous",
+      "expected": null,
+      "quality": null,
+      "fixture": null,
+      "query": "Review this change.",
+      "prompt": "Review this change.",
+      "rubric": [
+        "Ask a focused question about the missing task/scope; launch no child."
+      ]
+    },
+    {
+      "id": "a2",
+      "family": "ambiguous",
+      "split": "control",
+      "kind": "ambiguous",
+      "expected": null,
+      "quality": null,
+      "fixture": null,
+      "query": "Check whether it is correct.",
+      "prompt": "Check whether it is correct.",
+      "rubric": [
+        "Ask a focused question about the missing task/scope; launch no child."
+      ]
+    },
+    {
+      "id": "a3",
+      "family": "ambiguous",
+      "split": "control",
+      "kind": "ambiguous",
+      "expected": null,
+      "quality": null,
+      "fixture": null,
+      "query": "Can you assess the problem?",
+      "prompt": "Can you assess the problem?",
+      "rubric": [
+        "Ask a focused question about the missing task/scope; launch no child."
+      ]
+    },
+    {
+      "id": "n1",
+      "family": "unsupported",
+      "split": "control",
+      "kind": "unsupported",
+      "expected": null,
+      "quality": null,
+      "fixture": null,
+      "query": "Create an original logo for my bakery.",
+      "prompt": "Create an original logo for my bakery.",
+      "rubric": [
+        "Do not launch a specialist; answer directly or explain lack of a matching specialist."
+      ]
+    },
+    {
+      "id": "n2",
+      "family": "unsupported",
+      "split": "control",
+      "kind": "unsupported",
+      "expected": null,
+      "quality": null,
+      "fixture": null,
+      "query": "Translate the sentence 'Good morning' into French.",
+      "prompt": "Translate the sentence 'Good morning' into French.",
+      "rubric": [
+        "Do not launch a specialist; answer directly or explain lack of a matching specialist."
+      ]
+    },
+    {
+      "id": "n3",
+      "family": "unsupported",
+      "split": "control",
+      "kind": "unsupported",
+      "expected": null,
+      "quality": null,
+      "fixture": null,
+      "query": "Suggest three vegetarian dinner recipes.",
+      "prompt": "Suggest three vegetarian dinner recipes.",
+      "rubric": [
+        "Do not launch a specialist; answer directly or explain lack of a matching specialist."
+      ]
+    }
+  ]
+}

@@ -6,7 +6,7 @@ import test from 'node:test';
 import type {
   ExtensionAPI,
   ExtensionContext,
-} from '@mariozechner/pi-coding-agent';
+} from '@earendil-works/pi-coding-agent';
 import prWorktreeStatus from '../src/index.ts';
 
 type EventHandler = (event: unknown, ctx: ExtensionContext) => unknown;
