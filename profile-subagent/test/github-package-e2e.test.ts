@@ -126,6 +126,16 @@ test(
         {operation: 'resolve', repository: 'fixture/denied'},
         {...discovery, page: 2},
       ],
+      'token-tool-contract': [
+        {...file('fixture/research', 'README.md', head), limit: 50},
+        {
+          operation: 'discussion',
+          repository: 'fixture/research',
+          kind: 'issue',
+          number: 7.9,
+        },
+        {...file('fixture/research', 'README.md', head), limit: 1},
+      ],
       'token-reference-reuse': [
         file('fixture/research', 'README.md', head),
         {
@@ -209,7 +219,28 @@ test(
             isError: boolean;
             content: Array<{text: string}>;
           }>;
-          assert.equal(records.length, tokenCases[scenario].length);
+          assert.equal(
+            records.length,
+            tokenCases[scenario].length -
+              (scenario === 'token-tool-contract' ? 2 : 0),
+          );
+          assert.equal(
+            report.activitySummary.childToolResults.returned,
+            tokenCases[scenario].length,
+          );
+          assert.equal(
+            report.activitySummary.childToolResults.failed,
+            report.sourceEvidence.childToolFailures.length,
+          );
+          if (scenario === 'token-tool-contract') {
+            assert.equal(report.activitySummary.childToolResults.failed, 2);
+            assert.equal(report.github.calls, 1);
+            assert.equal(
+              report.activitySummary.observedCoverage.successfulOperations.file,
+              1,
+            );
+            assert.equal(report.referenceValidation.status, 'valid');
+          }
           const requests = value.events.filter(
             (e: {kind: string}) => e.kind === 'github-request',
           ) as Array<{path: string; query: string}>;

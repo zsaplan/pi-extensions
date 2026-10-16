@@ -15,7 +15,7 @@ const common = {
   ),
   path: text,
 };
-export const GithubReadSchema = Type.Union([
+export const GithubOperationSchemas = [
   Type.Object(
     {
       operation: Type.Literal('repositories'),
@@ -54,7 +54,14 @@ export const GithubReadSchema = Type.Union([
       ...common,
       operation: Type.Literal('file'),
       start: Type.Optional(Type.Integer({minimum: 1, maximum: 100000})),
-      limit: Type.Optional(Type.Integer({minimum: 1, maximum: 40})),
+      limit: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          maximum: 40,
+          description:
+            'Number of lines, 1–40 inclusive. Default 30. Never request more than 40.',
+        }),
+      ),
     },
     {additionalProperties: false},
   ),
@@ -88,7 +95,8 @@ export const GithubReadSchema = Type.Union([
     },
     {additionalProperties: false},
   ),
-]);
+] as const;
+export const GithubReadSchema = Type.Union([...GithubOperationSchemas]);
 export type GithubReadArgs = Static<typeof GithubReadSchema>;
 type Repository = {
   repository: string;
@@ -502,7 +510,9 @@ export function createGithubReader(transport: GithubTransport) {
         ? {type: 'tree', mode: '040000', sha: await root(g, commit, signal)}
         : await lookup(g, commit, path, signal);
     if (entry.type !== 'tree' || entry.mode !== '040000')
-      throw new BoundaryError('List/search requires a directory.');
+      throw new BoundaryError(
+        'List/search requires a directory. For a known file, use github_file with path and a window of at most 40 lines.',
+      );
     const entries = (await tree(g, sha(entry.sha), signal)).filter(
       e =>
         typeof e.path === 'string' &&

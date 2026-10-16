@@ -9,6 +9,7 @@ import type {
 import {githubResearchProfileId, loadProfile} from './profiles.ts';
 import {runProfile} from './runner.ts';
 import {createGithubReferences} from './github-references.ts';
+import {createGithubActivity, hasClipping} from './github-activity.ts';
 import {
   createGithubReader,
   containsControl,
@@ -37,19 +38,6 @@ type Assignment = {
   observations: Observation[];
   omitted: number;
 };
-
-function hasClipping(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false;
-  return Object.entries(value).some(
-    ([key, item]) =>
-      (/truncated$|^hasNext$|^collectionLimited$|^incompleteResults$/i.test(
-        key,
-      ) &&
-        item === true) ||
-      (/^omitted/.test(key) && typeof item === 'number' && item > 0) ||
-      hasClipping(item),
-  );
-}
 
 // getBinding is trusted host policy, never a tool or data supplied by the child.
 export function registerGithubResearch(
@@ -127,7 +115,7 @@ export function registerGithubResearch(
     label: 'GitHub researcher (experimental)',
     exposure: 'direct',
     description:
-      'Experimental read-only repository researcher, not a code reviewer. Requires a host-approved task/session/thread/reservation and a host-supplied GitHub token; any repository it can read is available. Run inline; no new pool or delivery. Use for substantial source research, not a simple local check or a duplicate investigation. Supply the question and known repository/path/ref leads, marking unverified leads as such; the child does not inherit your context. Search is shallow (five files in one directory), not a repository-wide index. There are sixteen adapter calls total, separate from fifty HTTP attempts; prioritize decisive file reads over directory tours. Inspect returned evidence and gaps; reread only material unresolved claims. Follow relevant leads only and stop when the question is answered or blocked. Returns unverified prose, bounded post-hook observations and referenceValidation; inspect reference issues separately from execution status. Reference identity does not verify claims. No writes, repeated failed requests or restoration/compliance certification.',
+      'Experimental read-only repository researcher, not a code reviewer. Requires a host-approved task/session/thread/reservation and a host-supplied GitHub token; any repository it can read is available. Run inline; no new pool or delivery. Use for substantial source research, not a simple local check or a duplicate investigation. Supply the question and known repository/path/ref leads, marking unverified leads as such; the child does not inherit your context. Search is shallow (five files in one directory), not a repository-wide index. There are sixteen adapter calls total, separate from fifty HTTP attempts; prioritize decisive file reads over directory tours. Inspect returned evidence and gaps; reread only material unresolved claims. Follow relevant leads only and stop when the question is answered or blocked. Returns unverified prose, bounded post-hook observations, referenceValidation and a host-generated activitySummary. Use activitySummary for failure/coverage counts, not model prose; it does not establish completeness. Inspect reference issues separately from execution status. Reference identity does not verify claims. No writes, repeated failed requests or restoration/compliance certification.',
     parameters: Type.Object(
       {task: Type.String({minLength: 1, maxLength: 12000})},
       {additionalProperties: false},
@@ -223,6 +211,7 @@ export function registerGithubResearch(
       active.set(assignmentKey, assignment);
       const pending = new Set<Promise<Outcome>>();
       const childToolFailures: Array<{tool: string; callId: string}> = [];
+      const activity = createGithubActivity();
       let omittedToolFailures = 0,
         unreturnedAdapterCalls = 0;
       const capture = (result: Outcome) => {
@@ -300,6 +289,7 @@ export function registerGithubResearch(
           combined,
           undefined,
           message => {
+            activity.observe(message);
             if (!message.isError) return;
             if (childToolFailures.length < 20)
               childToolFailures.push({
@@ -321,6 +311,12 @@ export function registerGithubResearch(
           ...result.details,
           ...assignment.references.render(result.details.output),
           verification: 'unverified-report',
+          activitySummary: activity.snapshot(
+            assignment.observations,
+            assignment.omitted,
+            unreturnedAdapterCalls,
+            omittedToolFailures,
+          ),
           handoffIssues: [] as string[],
           binding: {
             taskId: binding.taskId,
