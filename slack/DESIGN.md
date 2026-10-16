@@ -87,6 +87,23 @@ Live API acceptance (2026-10-16, installed `edf1a0b`): [Markdown report](https:/
 
 Live evidence is in installed trunk at `slack/tmp/rich-live-20261016/`: requests, update/guard results, before/after source, readable output, and `report.json` with checks and API-returned permalinks. Observed limitations: Slack added a thread-link preview to each example; the readable projection repeats an unfurl body when Slack supplies it in both attachment text and blocks. These observations do not establish how the two layouts look on desktop/mobile.
 
+## Editorial acceptance: fallbacks and meaning preservation
+
+The completed 17-post GA formatting review showed appropriate use of 9 ordinary updates, 4 Markdown reports, and 4 dashboards, but mechanically stripped fallbacks retained table syntax/code fences. The review also flagged ambiguity in qualification scope and an added operational conclusion; checking numeric tokens alone could not establish meaning preservation. Evaluation evidence: `slack/tmp/ga-format-evaluation-20261016/evaluation.md` in the feature worktree.
+
+The follow-up is guidance-only: shared tool instructions and the publishing skill/examples now call for separately written plain-language fallbacks, unchanged claim strength/scope in formatting-only edits, short labels with adjacent metric definitions, impact-first handoffs, and a brief source/message/fallback comparison. No payload rewriting, additional model call, new validation gate, or permissions change is introduced. Verbatim requests and evidence bytes remain protected. Existing package checks plus diff/reference review are appropriate; no tests are added merely to restate prose.
+
+Acceptance checks:
+
+- [x] Review the examples for preserved count/environment/checkpoint relationships, qualification scope, and standalone fallback completeness; verify local references.
+- [x] Slack package and repository verification pass; all five review categories approve the guidance-only diff.
+- [ ] Fresh installed Pi session loads the updated shared guidance and discovers the skill/examples.
+- [ ] Visually inspect the existing [routine update](https://britecore.slack.com/archives/C01F7L63F9P/p1792112854846009), [dashboard](https://britecore.slack.com/archives/C01F7L63F9P/p1792113091605869), and [report](https://britecore.slack.com/archives/C01F7L63F9P/p1792113976126509) on desktop and mobile. Record hierarchy, wrapping, metric-label, and caveat-placement findings. This sample assesses the existing layouts, not new drafts generated under the revised guidance.
+
+Automated/source validation (2026-10-16): Slack lint/typecheck and all 108 tests passed; root `npm run verify` passed, with the existing one intentional task-assistant skip. All five polish categories approved against pre-change local `main` (`a2eadf8`). Manual example review confirmed the 18:10 UTC production/UAT applied-versus-passing pairs and release-wide QA caveat in both the visible report and its plain-language fallback; relative skill/example references resolve. Gitignored evidence: `slack/tmp/editorial-guidance-20261016/{verify-slack.log,verify-root.log,review.json}` in the feature checkout.
+
+Visual status (2026-10-16): Playwright reports no active browser sessions. No authenticated Slack browser session was available in that list, so visual inspection was not performed; the check remains pending, not inferred from API readbacks. No Slack messages will be created or edited to satisfy it without separate authorization. Screen-reader/notification usability also remains unverified.
+
 ## Session-scoped grants
 
 Edit-approval acceptance checks:

@@ -95,7 +95,7 @@ Use the parent thread permalink, or a permalink with the correct `thread_ts` que
 
 Message posts, edits, and upload comments share drafting instructions in `src/writing-guidelines.ts`: adapt to the audience, lead with the outcome or request, use plain language and light Slack formatting, and make follow-ups about what changed. Routine updates should usually fit in a short paragraph or a lead plus a few bullets. Requested reports/plans and important qualifications take priority over brevity.
 
-The [publishing skill](skills/slack-publish-report/SKILL.md) includes the writing workflow and [fictional message examples](skills/slack-publish-report/references/message-examples.md) for mixed audiences, operators, requests, and follow-ups. It is available for ordinary messages as well as Canvas reports.
+The [publishing skill](skills/slack-publish-report/SKILL.md) includes the writing workflow and [fictional message examples](skills/slack-publish-report/references/message-examples.md) for mixed audiences, operators, requests, follow-ups, and release handoffs. Formatting-only edits preserve the strength and scope of claims, not just numbers. A brief source/message/fallback check verifies count-to-environment/checkpoint relationships, uncertainty, ownership, and permission. It is available for ordinary messages as well as Canvas reports.
 
 This is prompt guidance, not automatic rewriting or a hard word limit. There is no extra model call, and existing posting permissions and verbatim-text requests are unchanged. Run `/reload` in an existing Pi session to load updated tool instructions and skill metadata.
 
@@ -105,7 +105,7 @@ Slack write tools preflight message length, code-fence balance, and code-block s
 
 ### Rich message layouts
 
-The existing post/update tools accept optional `markdown` or `blocks` (mutually exclusive). Required `text` is the ordinary message when neither is supplied; with a rich layout it is the accessible fallback and must contain all essential facts, caveats, and links—not just a title. No new OAuth scopes or interactivity service are needed. Writes still use `chat:write` on the bot token, and approvals are unchanged.
+The existing post/update tools accept optional `markdown` or `blocks` (mutually exclusive). Required `text` is the ordinary message when neither is supplied; with a rich layout it is the accessible fallback and must contain all essential facts, caveats, and links—not just a title. Write agent-authored fallbacks separately in plain language, without pipe tables or code fences, rather than mechanically stripping Markdown. No new OAuth scopes or interactivity service are needed. Writes still use `chat:write` on the bot token, and approvals are unchanged.
 
 - `markdown`: standard Markdown sent as a native Slack Markdown block, including headings, tables, dividers, and links. Slack performs the translation; there is no local Markdown renderer.
 - `blocks`: a static subset for dashboards: header, section text/metric fields, divider, context, and table. Table cells accept `raw_text` (`text`) or `raw_number` (both numeric `value` and display `text`); Markdown handles more elaborate table formatting. No interactive elements or arbitrary block passthrough.
@@ -113,7 +113,7 @@ The existing post/update tools accept optional `markdown` or `blocks` (mutually 
 - Rich messages cannot use `longTextMode=split` or `mrkdwn=false`. Approval shows the fallback and full rich source, not just a short summary. Rich edits replace the complete layout; there is no atomic stale-edit check. Verified edits in an approved thread reuse its session grant, but layout checks still apply.
 - Text-only updates inspect the exact target with the configured user read token. Existing blocks cause a refusal unless `clearBlocks=true` explicitly permits replacing the top-level layout with text. Supply `threadTs` when needed to locate a reply. Missing access or an unavailable target fails closed; tokens never switch automatically. Legacy attachments are retained and are not edited by this tool.
 - Read/thread/permalink tools and research include table cells, metric fields, rich-text lists, and attachment content. `formatMode=verbatim` is a readable projection with line breaks, **not** lossless replacement Markdown. `formatMode=blocks` exposes source JSON subject to normal output limits. Unsupported read content is marked rather than silently treated as complete. Returned blocks may exceed the limited authoring schema.
-- API readback is not proof of desktop/mobile rendering. Check the actual Slack clients separately. On uncertain writes, inspect the known message before retrying.
+- API readback is not proof of desktop/mobile rendering or screen-reader usability. For layout acceptance, spot-check one already-authorized routine update, dashboard, and report on desktop/mobile for hierarchy, wrapping, labels, and caveat placement. Record results or explicitly pending checks in the existing plan/runbook; this does not authorize new test posts. On uncertain writes, inspect the known message before retrying.
 
 See the [fictional rich-format examples](skills/slack-publish-report/references/message-examples.md#investigation-summary-native-markdown) for payloads and layout choices. Upload comments remain ordinary Slack mrkdwn.
 

@@ -12,15 +12,24 @@ Only publish when the user requests it. Establish the destination and audience f
 Write like a helpful colleague, not an investigation transcript. The goal is less work for the reader, not the fewest possible words.
 
 - **Choose the reader and purpose.** For a mixed audience, lead with impact and current status. For operators, retain exact conditions and identifiers needed to act. Distinguish an FYI, a request, a decision, and an investigation update; do not manufacture an action item for an FYI.
-- **Put the point first.** Start with the outcome, change, or request. Use familiar words, short sentences, and a calm, direct tone. Remove ceremonial introductions, repeated conclusions, and routine accounts of how the agent did its work.
+- **Put the point first.** Start with the outcome, change, or request. Lead handoffs with remaining impact or blockers, then monitoring status. Use familiar words, short sentences, and a calm, direct tone. Remove ceremonial introductions, sentences that only repeat the headline, and routine accounts of how the agent did its work.
 - **Keep routine updates small.** Prefer a short paragraph or a lead plus 2–4 brief bullets. Shorter is fine. This is a default, not a word limit: requested reports, plans, and decision-critical detail may need more space. Do not shorten exact user-supplied text when asked to send it verbatim.
-- **Preserve meaning.** Keep facts, counts, scope, uncertainty, conditions, ownership, and approval status. Put a qualification that changes the main claim beside it, not only behind a link. Never turn an estimate into a promise or a partial recovery into incident closure. Include owners and deadlines only when known.
+- **Preserve meaning.** Keep facts, counts, scope, uncertainty, conditions, ownership, and approval status. Put a qualification that changes the main claim beside it, not only behind a link. Never turn an estimate into a promise or a partial recovery into incident closure. For formatting-only edits, do not strengthen, weaken, or narrow a claim or add an operational conclusion, even a conservative one. Flag material source ambiguity in Pi rather than silently resolving it in Slack. Include owners and deadlines only when known.
 - **Make follow-ups about the change.** Use relevant thread context rather than repeating it. Link existing evidence with descriptive labels instead of copying a report into the message. Do not create extra messages, uploads, or documents merely to move detail elsewhere without authorization.
-- **Format for the job.** Routine messages and upload comments use Slack mrkdwn: `*bold*` sparingly, whitespace, short bullets, and `<url|label>` links—not Markdown headings or pipe tables. For narrative reports, supply `markdown` using standard Markdown headings, tables, and links. For dashboards, use static `blocks` with a clear status, metric fields, findings, and sources. Keep tables compact and dividers between real topics. Status icons need explanatory text; avoid decorative emoji. Do not make every reply a report. Canvas documents use native Markdown. Upload comments remain brief mrkdwn; never rewrite attached evidence for style.
+- **Format for the job.** Routine messages and upload comments use Slack mrkdwn: `*bold*` sparingly, whitespace, short bullets, and `<url|label>` links—not Markdown headings or pipe tables. For narrative reports, supply `markdown` using standard Markdown headings, tables, and links. For dashboards, use static `blocks` with a clear status, metric fields, findings, and sources. Keep table labels short; put precise metric definitions immediately above or beside the numbers, at normal emphasis rather than in a quiet footer. Keep dividers between real topics. Status icons need explanatory text; avoid decorative emoji. Do not make every reply a report. Canvas documents use native Markdown. Upload comments remain brief mrkdwn; never rewrite attached evidence for style.
 
 When drafting or revising messages, read [message examples](references/message-examples.md). They demonstrate audience choices, concise updates, and preservation of important caveats; their facts and links are fictional, not content to publish.
 
-Before sending, check: can this reader quickly find what changed or what is needed, and is every important qualification still visible? For rich messages, required `text` is the accessible fallback: include all essential facts, caveats, and relevant links, not just the title. Keep qualifications beside their claims in the visible layout too, not only in a context footer. Apply this to the authorized content only; retain the existing approval gates.
+For rich messages, write the agent-authored `text` fallback separately as stand-alone plain language for accessibility and notifications. Include all essential facts, caveats, and relevant links, not just the title. Do not generate it by mechanically stripping Markdown; leave out pipe tables and code fences. Keep qualifications beside their claims in the visible layout too, not only in a context footer. Exact user-supplied wording and attached evidence remain unchanged when requested verbatim.
+
+Before sending, briefly compare the source, visible message, and any fallback:
+
+- Can the reader quickly find what changed, remains blocked, or is needed?
+- Does each count retain its subject, environment, checkpoint, and status meaning? “Applied,” “passing checks,” and “accepted” are not interchangeable. Finding every number somewhere is not enough.
+- Are the scope of uncertainty, conditions, ownership, and permission unchanged? A qualification moved under one environment can accidentally narrow a release-wide claim.
+- Does the fallback make sense without the rich layout, while retaining essential facts and relevant links?
+
+This is a short editorial check, not another model call, tool, or review report. Apply it only to authorized content; retain the existing approval gates.
 
 ### Rich message mechanics
 
@@ -30,6 +39,10 @@ Before sending, check: can this reader quickly find what changed or what is need
 - Read the current message before editing. `formatMode=verbatim` is a readable projection of blocks and text, not replacement Markdown. `formatMode=blocks` exposes original message JSON subject to output limits. Returned block types may exceed the small authoring schema; never blindly round-trip a projection or truncated source.
 - Supply a complete new rich layout on edits. Text-only edits check the exact target using `SLACK_USER_TOKEN` and refuse to flatten existing blocks. `clearBlocks=true` explicitly replaces the top-level layout with text; use it only when that change is intended, not to bypass a failed read. Legacy attachments are retained by Slack and are not edited by this tool. There is no atomic stale-edit guard.
 - Approval previews show fallback plus rich source, not a Slack visual preview. API success/readback does not verify desktop/mobile appearance. Do not automatically retry a failed or uncertain write.
+
+### Visual acceptance spot-check
+
+For a layout acceptance review, inspect one already-authorized routine update, dashboard, and report in Slack on desktop and mobile. Check hierarchy, table/field wrapping, metric labels, and caveat placement; record the inspected links and findings in the existing plan or runbook. This is a small sample, not a requirement to inspect every message. API readbacks do not prove visual quality or screen-reader usability. If client access is unavailable, leave the visual check explicitly pending. Do not create test posts or change access merely to complete it.
 
 ## Publishing approvals
 

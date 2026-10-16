@@ -103,6 +103,55 @@ Use metric fields for a small set of related numbers. A context footer is for so
 
 For a longer comparison, a static `table` uses `rows` of cells such as `{"type":"raw_text","text":"Production"}` and `{"type":"raw_number","value":3200,"text":"3,200"}`. Use `column_settings` for wrapping or right-aligned numbers. Prefer a real table to manually padded spaces inside a code block. For formatted cells, use a Markdown table instead.
 
+## Handoff: short labels and a separate fallback
+
+Fictional facts at 18:10 UTC: production has 8 of 10 target charts applied and 6 sites passing all current workflow/availability checks; UAT has 4 of 5 applied and 3 passing those checks. Passing requires the target applied. The release is incomplete and functional QA is unverified in both environments. The watch has ended, no unattended watch remains, and no recovery action was performed. Evidence: `https://example.com/release`.
+
+Lead the visible report with the release outcome, not “Monitoring finished.” Keep labels short and the exact definition beside the table. This is visible `markdown`, not fallback text:
+
+```markdown
+## Release handoff — 18:10 UTC
+**Release incomplete in production and UAT. Functional QA remains unverified in both.**
+
+“Checks passing” means the target is applied and all current workflow/availability conditions pass—not functional acceptance.
+
+| Environment | Target applied | Checks passing |
+| --- | ---: | ---: |
+| Production | 8/10 | 6/10 |
+| UAT | 4/5 | 3/5 |
+
+The watch has ended; no unattended watch remains. No recovery action was performed.
+
+[Release evidence](https://example.com/release)
+```
+
+Avoid this mechanically stripped `text` fallback; it leaves table syntax, undefined metrics, and missing qualifications:
+
+```text
+Release handoff
+| Environment | Target applied | Checks passing |
+| --- | ---: | ---: |
+| Production | 8/10 | 6/10 |
+| UAT | 4/5 | 3/5 |
+```
+
+Write a stand-alone fallback instead:
+
+```text
+At 18:10 UTC, the release is incomplete. Production: 8 of 10 target charts applied; 6 of 10 sites have the target applied and pass all current workflow/availability checks. UAT: 4 of 5 applied; 3 of 5 have the target applied and pass those checks. Functional QA remains unverified for both environments. The watch has ended; no unattended watch remains. No recovery action was performed. Evidence: https://example.com/release
+```
+
+Check the relationships, not just the presence of numbers: production's applied/passing pair is 8/10 and 6/10; UAT's is 4/5 and 3/5, all at the same checkpoint. The fallback omits display syntax, not uncertainty or evidence. For reports with code/log excerpts, likewise retain essential findings in plain language rather than copying fenced code into the fallback; keep exact evidence in its authorized surface.
+
+## Formatting-only edits: preserve scope and conclusions
+
+Source: “Functional QA is unverified for production and UAT. Some UAT timeouts are not established as simple startup delays.”
+
+- Wrong: “UAT: QA is unverified; these failures prevent blanket retry clearance.” This moves a release-wide qualification under UAT and adds an operational conclusion, even though it sounds cautious.
+- Better: “Functional QA remains unverified for both production and UAT. Some UAT timeouts are not established as simple startup delays.”
+
+Do not turn “no retry decision was supplied” into either approval or a new prohibition. Preserve the stated facts; flag material ambiguity in Pi instead of deciding it during a formatting pass.
+
 ## Short is not always correct
 
 Source: “We expect the rollout Friday if validation passes. Production approval is still pending.”
