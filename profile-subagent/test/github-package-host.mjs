@@ -294,10 +294,30 @@ if (!live) {
             path: 'README.md',
           },
         ];
-        const action = actions[(frames - 1) % (actions.length + 1)] ?? null;
+        let action = actions[(frames - 1) % (actions.length + 1)] ?? null;
+        const observed = (request.input ?? [])
+          .flatMap(item => {
+            if (
+              item.type !== 'function_call_output' ||
+              typeof item.output !== 'string'
+            )
+              return [];
+            try {
+              return [JSON.parse(item.output)];
+            } catch {
+              return [];
+            }
+          })
+          .filter(item => item.sourceId)
+          .at(-1);
+        if (action?.revision === '@previous') {
+          action = {...action, revision: observed?.revisionHandle};
+          delete action.commit;
+        }
         const id = 'item_' + frames,
           text =
-            'Observed setting: example. Configuration only; runtime behavior is unverified.';
+            'Observed setting: example. Configuration only; runtime behavior is unverified.' +
+            (observed ? ` [[${observed.sourceId}]]` : '');
         if (cfg.scenario === 'redacted' && frames > 1)
           assert.ok(!data.toString().includes('fake-sensitive'));
         const item = action

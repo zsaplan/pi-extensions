@@ -126,6 +126,15 @@ test(
         {operation: 'resolve', repository: 'fixture/denied'},
         {...discovery, page: 2},
       ],
+      'token-reference-reuse': [
+        file('fixture/research', 'README.md', head),
+        {
+          ...file('fixture/research'),
+          revision: '@previous',
+          start: 2,
+          limit: 1,
+        },
+      ],
       'token-empty': [{operation: 'resolve', repository: 'fixture/empty'}],
       'token-repository-names': [
         discovery,
@@ -268,6 +277,19 @@ test(
               observations[8].coverage.earlierPagesNotObserved,
               true,
             );
+          } else if (scenario === 'token-reference-reuse') {
+            assert.ok(
+              observations.every(o => o.status === 'ok' && o.commit === head),
+            );
+            assert.equal(observations[0].reuse.blob, false);
+            assert.equal(observations[1].reuse.blob, true);
+            assert.equal(
+              observations[0].reuse.verifiedAt,
+              observations[1].reuse.verifiedAt,
+            );
+            assert.equal(value.wireGithub, 3);
+            assert.equal(report.referenceValidation.status, 'valid');
+            assert.ok(report.output.includes(observations[1].citation));
           } else if (scenario === 'token-empty') {
             assert.equal(observations[0].status, 'unavailable');
             assert.match(observations[0].reason, /no pinned version/);

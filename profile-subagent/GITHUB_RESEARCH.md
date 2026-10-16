@@ -40,6 +40,45 @@ Every adapter observation now reports remaining adapter calls and HTTP attempts 
 - [ ] Separately authorized publication/installation and current interactive acceptance of this remediation.
 - [ ] Separately bounded live qualification: execution/cleanup and useful research answer are different acceptance checks. No new live run or higher budget is authorized by these fixtures.
 
+## Source references and immutable reuse
+
+Citation-bearing observations now return assignment-local `sourceId` values. The researcher cites `[[S...]]`; the wrapper renders the exact observed URL and whole observed window, without asking the model to copy a SHA. Only intact, retained **post-hook** evidence enters the reference map. Modified, credential-redacted or omitted observations cannot be recovered from raw receipts. A source ID identifies an observation, not an endorsement of its contents; mutable discussion and repository-search results remain mutable.
+
+`referenceValidation.status` is `valid`, `invalid` or `unreferenced`. It checks explicit source markers and URL targets, not the truth of claims, bare prose mentions, or completeness of the research. Unobserved URLs, unknown IDs and invented ranges produce explicit issues, not guessed corrections. An invalid report returns a warning in place of the rendered prose; the original remains private in `result.json`. The final `github-result.json` includes these issues and authoritative post-hook observations. Execution/cleanup status and `verification: "unverified-report"` stay separate. Parent review is still required.
+
+Observations containing an immutable commit also return a `revisionHandle`. File/list/search/history accept that value as `revision` **instead of** `commit`. The assignment resolves it before the normal parent permission hooks, so those hooks see the actual repository and SHA. Unknown, previous-assignment, wrong-repository and conflicting handles are refused without HTTP. Handles do not grant access; direct reader users still supply explicit SHAs or use default-head pinning.
+
+Within an assignment, overlapping root/tree/blob work shares one producer. Verified blobs can serve later windows or searches, including another regular path with the same blob SHA. Path, type and size checks still run; every admitted logical read consumes its allowance, passes parent hooks again and receives a fresh bounded observation. Cached data is redacted again before clipping. No final tool response is cached. A later permission denial or redaction is not bypassed.
+
+Successful mutable requests remain fresh. Immutable cache payloads are capped at the existing 768 KiB budget scale (serialized retained payload, not total JavaScript heap); additional values are used without retention. `github.immutableReuse` reports cache hits, shared loads and retention size/skips. File/search observations report `reuse.blob` and the original `reuse.verifiedAt`; `observedAt` is the logical observation time, not a fresh fetch claim. Physical requests and response bytes are charged once. Cancelled waiters detach; producer cancellation/failure is shared without a replacement fetch. Existing failed-GET provenance remains available. All caches and handles end with the assignment.
+
+Local acceptance for this increment:
+- [x] Focused package and full repository verification: 291 profile tests pass; full root verification passes with one existing optional task-assistant skip. Node 26.10.0 / child SDK 0.99.2; no live model or GitHub calls.
+- [x] Repeatable before/after comparison against identical fixture Git objects and logical read sequences. Four direct-adapter integration cases separately check cancelled waiters/producers, retention capacity and forbidden cached paths; real-Pi source/compiled hosts check reference handling and hooks.
+- [ ] Publication, installation/reload and separately authorized live acceptance. Local implementation approval does not authorize these actions.
+
+The fixtures cover source/revision corruption, omitted/modified evidence, cache-hit hooks, immutable sharing and failures, cancellation ownership, retention and HTTP bounds, history/introduction/rename, settings-to-consumer tracing, conflicting documentation and inaccessible evidence. Additional scripted cases include supplied paths and no supplied paths. They test mechanisms, **not** autonomous discovery or model judgment.
+
+To compare two successful offline snapshots, retain the first `tmp/github-research/latest.json` before changing the reader, run the suite again, then use:
+
+```bash
+node profile-subagent/test/compare-github-reuse.mjs BEFORE.json AFTER.json NEW_COMPARISON.json
+```
+
+Use a private, git-ignored output path. The comparison checks identical fixture commits and actions, records requests/bytes and returned handoff size, and refuses to overwrite an existing result. It does not estimate live latency, model cost or parent review effort.
+
+Measured offline results (before → after):
+
+| Scripted read sequence | HTTP requests | Response bytes |
+| --- | ---: | ---: |
+| Introduction/edit/rename | 20 → 19 | 6,472 → 6,327 |
+| Overlapping default-head reads | 7 → 4 | 2,449 → 1,581 |
+| Repeated file windows | 8 → 6 | 2,111 → 1,769 |
+| Nine five-file scans, shared blob | 49 → 5 | 7,370 → 2,046 |
+| Two distinct supplied paths | 6 → 6 | 2,551 → 2,551 |
+
+Mutable-success and repeated-failure controls remain at two and one HTTP requests respectively. Adapter calls, scripted model requests and retained observation counts are unchanged in all seven comparisons. The repeated-scan handoff grows from 23,466 to 35,640 bytes, including reference/reuse metadata and a changed scripted citation format. This is not evidence of reduced parent context or whole-workflow savings; live judgment and correction effort remain unmeasured.
+
 ## Host-owned opt-in
 
 Build with `npm run build --workspace profile-subagent` or pack with `npm pack ./profile-subagent` (prepack builds). Import `registerGithubResearch` from `@zsaplan/pi-profile-subagent/github-research`; the read adapter is exported from `@zsaplan/pi-profile-subagent/github-read`.
@@ -55,7 +94,7 @@ A binding contains `taskId, sessionId, threadKey, reservationId, deadlineAt`. Us
 
 Supported navigation:
 - `repositories`: a focused GitHub repository-search `query` (for example `platform org:example`), with optional page 1–2 and at most five results per page. Search visibility/indexing and token permissions can limit results; an empty result is not proof of absence.
-- `resolve`: `repository` and optional branch/tag/commit `ref`; omission resolves the default branch. Use the returned immutable SHA in subsequent reads. File/list/search/history may also use any explicit SHA. Omitting a commit pins that repository's default branch on its first such read for the assignment.
+- `resolve`: `repository` and optional branch/tag/commit `ref`; omission resolves the default branch. Use the returned `revisionHandle` as `revision`, or the immutable SHA as `commit`, in subsequent reads. File/list/search/history may also use any explicit SHA. Omitting a commit pins that repository's default branch on its first such read for the assignment.
 - Root list/search/history uses path `"."`. Other paths are repository-relative. History accepts optional `since`/`until` UTC timestamps (for example `2026-08-01T00:00:00Z`) as research filters, not permission boundaries. Existing sensitive-file, symlink, credential and HTTP safeguards still apply.
 
 The profile directs the researcher to start with supplied sources, discover only when needed, follow another repository only for a concrete question-related lead, and stop once each part has a supported answer or clear evidence gap. These are instructions, not a guarantee of efficient model behavior. The existing operational budgets remain enforced across all repositories in the assignment. No recursive crawler, organization inventory or extra worker is added.

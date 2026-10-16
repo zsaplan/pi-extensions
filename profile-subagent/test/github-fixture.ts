@@ -38,7 +38,7 @@ export default async function (pi: ExtensionAPI) {
                 ? 'other-session'
                 : ctx.sessionManager.getSessionId(),
             threadKey: `fixture-channel/${cfg.scenario}`,
-            reservationId: `fixture-reservation-${cfg.scenario}${cfg.scenario === 'failure-new-assignment' ? `-${callId}` : ''}`,
+            reservationId: `fixture-reservation-${cfg.scenario}${['failure-new-assignment', 'assignment-reference-isolation'].includes(cfg.scenario) ? `-${callId}` : ''}`,
             deadlineAt: Date.now() + (cfg.deadlineMs ?? 110000),
             ...(cfg.scenario === 'legacy-policy' ? {repositories: []} : {}),
           },
@@ -61,15 +61,21 @@ export default async function (pi: ExtensionAPI) {
       });
     },
   });
+  let readCalls = 0;
   pi.on('tool_call', (event, ctx) => {
     if (event.toolName === 'github_research_read') {
+      readCalls++;
       record({
         hook: true,
         at: Date.now(),
         callId: event.toolCallId,
         parent: event.parentToolCallId,
+        args: event.input,
       });
-      if (cfg.scenario === 'parent-deny')
+      if (
+        cfg.scenario === 'parent-deny' ||
+        (cfg.scenario === 'cache-deny' && readCalls === 2)
+      )
         return {block: true, reason: 'FIXTURE_PARENT_DENIED'};
       if (['cancel', 'failure-cancel'].includes(cfg.scenario))
         setTimeout(() => ctx.abort(), 120);
@@ -98,6 +104,26 @@ export default async function (pi: ExtensionAPI) {
     }
     if (
       event.toolName === 'github_research_read' &&
+      (cfg.scenario === 'reference-redact' ||
+        (cfg.scenario === 'cache-redact' && readCalls === 2))
+    ) {
+      const value = JSON.parse((event.content[0] as {text: string}).text);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              status: 'unavailable',
+              sourceId: value.sourceId,
+              revisionHandle: value.revisionHandle,
+            }),
+          },
+        ],
+        details: undefined,
+      };
+    }
+    if (
+      event.toolName === 'github_research_read' &&
       ['redact', 'tamper', 'failure-redact'].includes(cfg.scenario)
     )
       return {
@@ -113,6 +139,8 @@ export default async function (pi: ExtensionAPI) {
       };
     return undefined;
   });
+  let staleRevision = '',
+    staleSource = '';
   const provider: Parameters<ExtensionAPI['registerProvider']>[1] = {
     api: 'openai-completions',
     apiKey: 'fixture-model-key',
@@ -156,9 +184,11 @@ export default async function (pi: ExtensionAPI) {
         },
       };
       if (!child) {
-        const count = ['repeat', 'failure-new-assignment'].includes(
-          cfg.scenario,
-        )
+        const count = [
+          'repeat',
+          'failure-new-assignment',
+          'assignment-reference-isolation',
+        ].includes(cfg.scenario)
           ? 2
           : 1;
         if (results.length < count) {
@@ -223,6 +253,22 @@ export default async function (pi: ExtensionAPI) {
         }));
       } else if (results.length < cfg.actions.length) {
         const action = {...cfg.actions[results.length]};
+        if (
+          cfg.scenario === 'assignment-reference-isolation' &&
+          staleRevision
+        ) {
+          action.revision = staleRevision;
+          delete action.commit;
+        }
+        if (action.revision === '@previous') {
+          const prior = results
+            .flatMap(r => r.content)
+            .find(c => c.type === 'text');
+          action.revision = JSON.parse(
+            prior?.type === 'text' ? prior.text : '{}',
+          ).revisionHandle;
+          if (cfg.scenario !== 'reference-conflict') delete action.commit;
+        }
         const name =
           typeof action.forbiddenTool === 'string'
             ? action.forbiddenTool
@@ -248,27 +294,71 @@ export default async function (pi: ExtensionAPI) {
             return [];
           }
         });
-        const excerpts = sources.flatMap(s =>
-          Array.isArray(s.lines) ? s.lines : [],
-        );
-        const citations = sources.flatMap(s =>
-          [
-            s.citation,
-            ...(Array.isArray(s.items)
-              ? s.items.map((i: {citation?: string}) => i.citation)
-              : []),
-          ].filter(Boolean),
-        );
+        const citations = sources
+          .flatMap(s =>
+            [
+              s.sourceId,
+              ...['items', 'matches'].flatMap(key =>
+                Array.isArray(s[key])
+                  ? s[key].map((i: {sourceId?: string}) => i.sourceId)
+                  : [],
+              ),
+            ].filter(Boolean),
+          )
+          .map(id => `[[${id}]]`);
+        if (cfg.scenario === 'assignment-reference-isolation') {
+          if (staleSource) citations.push(`[[${staleSource}]]`);
+          else {
+            staleSource = String(sources[0].sourceId);
+            staleRevision = String(sources[0].revisionHandle);
+          }
+        }
+        if (cfg.scenario === 'reference-expanded-limit')
+          citations.push(...Array(300).fill(citations[0]));
+        if (cfg.scenario === 'reference-raw')
+          citations.push(`[direct](${sources[0].citation})`);
+        if (cfg.scenario === 'reference-uppercase')
+          citations.push(
+            String(sources[0].citation).replace('https:', 'HTTPS:'),
+          );
+        if (cfg.scenario === 'reference-relative')
+          citations.push('[direct](../config/service.yml#L2)');
+        if (cfg.scenario === 'reference-wrong-commit')
+          citations.push(
+            String(sources[0].citation).replace(
+              /\/blob\/[a-f0-9]{40}/,
+              '/blob/' + 'a'.repeat(40),
+            ),
+          );
+        if (cfg.scenario === 'reference-mutated')
+          citations.push(
+            String(sources[0].citation).replace(
+              /\/blob\/([a-f0-9]{3})/,
+              '/blob/',
+            ),
+          );
+        if (cfg.scenario === 'reference-range')
+          citations.push(
+            String(sources[0].citation).replace(/#L.*/, '#L999-L1000'),
+          );
+        if (cfg.scenario === 'reference-unknown')
+          citations.push('[[S000000000000-1]]');
+        if (cfg.scenario === 'reference-malformed')
+          citations.push('[[Sunfinished');
         const note =
-          cfg.scenario === 'adapter-limit'
-            ? 'Partial research: adapter budget exhausted before decisive file reads. No manifest contents or restore candidate established.'
-            : cfg.scenario === 'configuration'
-              ? 'Compare the observed pre-introduction and introduction versions; equal blob IDs across the old/new paths support a rename, not a new introduction. Later value changes do not establish deployment.'
-              : 'Snapshot configuration supports configured intent only. Successful restoration and SOC2 compliance remain unverified; execution evidence is unavailable here.';
+          cfg.scenario === 'heldout-conflict'
+            ? 'Documentation says retry_limit is 9, while settings specify 3 and the consumer reads settings.retry_limit. This is a source conflict, not proof of runtime behavior.'
+            : cfg.scenario === 'heldout-incomplete'
+              ? 'Consumer evidence is inaccessible. Documentation and settings disagree; the complete runtime question remains unanswered.'
+              : cfg.scenario === 'adapter-limit'
+                ? 'Partial research: adapter budget exhausted before decisive file reads. No manifest contents or restore candidate established.'
+                : cfg.scenario === 'configuration'
+                  ? 'Compare the observed pre-introduction and introduction versions; equal blob IDs across the old/new paths support a rename, not a new introduction. Later value changes do not establish deployment.'
+                  : 'Snapshot configuration supports configured intent only. Successful restoration and SOC2 compliance remain unverified; execution evidence is unavailable here.';
         message.content = [
           {
             type: 'text',
-            text: `## Findings\n${note}\n\nObserved excerpts: ${JSON.stringify(excerpts)}\n\nSources: ${citations.join('\n')}\nObservation IDs: ${sources
+            text: `## Findings\n${note}\n\nSources: ${citations.join('\n')}\nObservation IDs: ${sources
               .map(s => s.observationId)
               .filter(Boolean)
               .join(

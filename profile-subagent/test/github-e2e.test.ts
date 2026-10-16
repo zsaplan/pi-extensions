@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {spawn, execFileSync} from 'node:child_process';
 import {createServer} from 'node:http';
 import {
@@ -15,6 +16,7 @@ import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
 import {loadCatalog} from '../src/profiles.ts';
+import {createGithubReader} from '../src/github-read.ts';
 
 const pkg = resolve(dirname(fileURLToPath(import.meta.url)), '..'),
   repo = dirname(pkg);
@@ -24,6 +26,12 @@ const cli = join(
 );
 type Json = Record<string, unknown>;
 const parse = (text: string) => JSON.parse(text) as Json;
+const withoutReferences = (value: unknown) =>
+  JSON.parse(
+    JSON.stringify(value, (key, item) =>
+      ['sourceId', 'revisionHandle', 'reuse'].includes(key) ? undefined : item,
+    ),
+  );
 
 test(
   'GitHub researcher: real Pi, local Git/HTTP evidence, no live models or GitHub',
@@ -147,6 +155,76 @@ test(
       tree(rootTree);
       objects.set(`commit:${id}`, {sha: id, tree: {sha: rootTree}});
     }
+    // Additional data shapes introduced after the core reference/reuse implementation.
+    // These scripted cases test mechanisms, not autonomous discovery or reasoning.
+    const heldoutObjects = new Map<string, Json>();
+    const heldoutTree = [
+      ['README.md', 'Default retry_limit is 9.\n'],
+      ['settings.yml', 'retry_limit: 3\n'],
+      ['worker(1).ts', 'run({ retries: settings.retry_limit });\n'],
+    ].map(([path, text]) => {
+      const body = Buffer.from(text);
+      const sha = createHash('sha1')
+        .update(`blob ${body.length}\0`)
+        .update(body)
+        .digest('hex');
+      heldoutObjects.set(`blob:${sha}`, {
+        sha,
+        size: body.length,
+        encoding: 'base64',
+        content: body.toString('base64'),
+      });
+      return {path, sha, size: body.length, mode: '100644', type: 'blob'};
+    });
+    heldoutObjects.set(`commit:${head}`, {
+      sha: head,
+      tree: {sha: 'd'.repeat(40)},
+    });
+    heldoutObjects.set(`tree:${'d'.repeat(40)}`, {
+      sha: 'd'.repeat(40),
+      truncated: false,
+      tree: heldoutTree,
+    });
+    const boundedObjects = new Map<string, Json>();
+    const boundedTree = Array.from({length: 14}, (_, n) => {
+      const body = Buffer.from(`id:${n}\n` + '\t'.repeat(30000));
+      const sha = createHash('sha1')
+        .update(`blob ${body.length}\0`)
+        .update(body)
+        .digest('hex');
+      boundedObjects.set(`blob:${sha}`, {
+        sha,
+        size: body.length,
+        encoding: 'base64',
+        content: body.toString('base64'),
+      });
+      return {
+        path: `${n}.txt`,
+        type: 'blob',
+        mode: '100644',
+        sha,
+        size: body.length,
+      };
+    });
+    boundedTree.push(
+      {...boundedTree[0], path: 'link.txt', mode: '120000'},
+      {...boundedTree[0], path: 'submodule', mode: '160000', type: 'commit'},
+      {...boundedTree[0], path: '.env'},
+      {
+        ...boundedTree[0],
+        path: 'wrong-size.txt',
+        size: boundedTree[0].size + 1,
+      },
+    );
+    boundedObjects.set(`commit:${'b'.repeat(40)}`, {
+      sha: 'b'.repeat(40),
+      tree: {sha: 'c'.repeat(40)},
+    });
+    boundedObjects.set(`tree:${'c'.repeat(40)}`, {
+      sha: 'c'.repeat(40),
+      truncated: false,
+      tree: boundedTree,
+    });
     const requests: Array<{
       scenario: string;
       method: string;
@@ -157,6 +235,7 @@ test(
     let active = 0,
       redirectHits = 0;
     const sockets = new Set<import('node:net').Socket>();
+    const heldResponses = new Map<string, () => void>();
     const server = createServer((request, response) => {
       const scenario = String(request.headers['x-fixture-case']);
       const url = new URL(request.url!, 'http://fixture');
@@ -177,8 +256,16 @@ test(
         if (timer) clearTimeout(timer);
       });
       const send = (value: unknown, status = 200) => {
-        response.writeHead(status, {'content-type': 'application/json'});
-        response.end(JSON.stringify(value));
+        const finish = () => {
+          response.writeHead(status, {'content-type': 'application/json'});
+          response.end(JSON.stringify(value));
+        };
+        if (
+          ['cache-waiter-cancel', 'cache-producer-cancel'].includes(scenario) &&
+          requests.filter(r => r.scenario === scenario).length === 1
+        )
+          heldResponses.set(scenario, finish);
+        else finish();
       };
       if (url.pathname === '/redirect-target') {
         redirectHits++;
@@ -253,7 +340,41 @@ test(
         const kind = {commits: 'commit', trees: 'tree', blobs: 'blob'}[
           match[1] as 'commits' | 'trees' | 'blobs'
         ];
-        let value = objects.get(`${kind}:${match[2]}`);
+        if (scenario === 'deep-request-limit') {
+          if (kind === 'commit')
+            send({sha: match[2], tree: {sha: '0'.repeat(40)}});
+          else
+            send({
+              sha: match[2],
+              truncated: false,
+              tree: [
+                {
+                  path: 'd',
+                  type: 'tree',
+                  mode: '040000',
+                  sha: (Number.parseInt(match[2], 16) + 1)
+                    .toString(16)
+                    .padStart(40, '0'),
+                },
+              ],
+            });
+          return;
+        }
+        if (
+          scenario === 'heldout-incomplete' &&
+          kind === 'blob' &&
+          match[2] === heldoutTree[2].sha
+        ) {
+          send({}, 404);
+          return;
+        }
+        let value = (
+          scenario.startsWith('heldout-')
+            ? heldoutObjects
+            : ['cache-bounded', 'cache-path-guards'].includes(scenario)
+              ? boundedObjects
+              : objects
+        ).get(`${kind}:${match[2]}`);
         if (!value) {
           send({}, 404);
           return;
@@ -268,7 +389,10 @@ test(
         }
         if (scenario === 'truncated-tree' && kind === 'tree')
           value = {...value, truncated: true};
-        if (scenario === 'bad-blob' && kind === 'blob')
+        if (
+          ['bad-blob', 'bad-blob-repeat'].includes(scenario) &&
+          kind === 'blob'
+        )
           value = {
             ...value,
             content: Buffer.from('TAMPERED').toString('base64'),
@@ -540,6 +664,7 @@ test(
         read('sites/no-eol.txt'),
       ],
       'path-seeded': [read('sites/uat.yml'), read('config/service.yml')],
+      'deep-request-limit': [read('d/'.repeat(60) + 'file.txt')],
       'request-limit': Array.from({length: 10}, () => ({
         ...base,
         operation: 'search',
@@ -547,6 +672,59 @@ test(
         term: 'budget_entry',
       })),
     };
+    for (const name of [
+      'reference-mutated',
+      'reference-raw',
+      'reference-uppercase',
+      'reference-relative',
+      'reference-wrong-commit',
+      'reference-range',
+      'reference-unknown',
+      'reference-malformed',
+      'reference-expanded-limit',
+      'assignment-reference-isolation',
+    ])
+      cases[name] = [read('config/service.yml')];
+    for (const name of ['heldout-conflict', 'heldout-incomplete'])
+      cases[name] = [
+        {...base, operation: 'list', path: '.'},
+        {...read('settings.yml'), revision: '@previous'},
+        {...read('worker(1).ts'), revision: '@previous'},
+        {...read('README.md'), revision: '@previous'},
+      ];
+    cases['reference-omitted'] = Array.from({length: 5}, () => ({
+      ...read('sites/wide.txt'),
+      limit: 40,
+    }));
+    cases['reference-handles'] = [
+      read('config/service.yml'),
+      {
+        ...read('config/service.yml'),
+        revision: '@previous',
+        start: 2,
+        limit: 1,
+      },
+    ];
+    cases['reference-conflict'] = cases['reference-handles'];
+    cases['reference-wrong-repository'] = [
+      read('config/service.yml'),
+      {
+        ...read('config/service.yml'),
+        revision: '@previous',
+        repository: 'fixture/other',
+      },
+    ];
+    cases['reference-redact'] = cases['reference-handles'];
+    for (const name of ['cache-redact', 'cache-deny', 'bad-blob-repeat'])
+      cases[name] = [read('config/service.yml'), read('config/service.yml')];
+    cases['reference-unknown-revision'] = [
+      {
+        operation: 'file',
+        repository: base.repository,
+        path: 'config/service.yml',
+        revision: 'R000000000000-1',
+      },
+    ];
     for (const name of [
       'failure-sequential',
       'failure-concurrent',
@@ -637,6 +815,11 @@ test(
         module: join(extension, 'src/github-research.ts'),
         record: join(dir, 'provider.jsonl'),
         server: origin,
+        ...(scenario.startsWith('heldout-')
+          ? {
+              task: `Trace retry_limit from settings to consumer in fixture/research at ${head}, compare documentation, and state important gaps. ${scenario === 'heldout-conflict' ? 'Path leads: settings.yml, worker(1).ts, README.md.' : 'No path leads supplied.'}`,
+            }
+          : {}),
         ...(scenario === 'path-seeded'
           ? {
               task: 'Inspect fixture/research at the supplied sites/uat.yml and config/service.yml path leads. These leads are not yet verified. Distinguish configuration from successful execution; do not perform blind repository discovery.',
@@ -768,7 +951,11 @@ test(
         const binding = report.binding as Json;
         assert.equal(binding.taskId, `fixture-${scenario}`);
         assert.equal(binding.threadKey, `fixture-channel/${scenario}`);
-        if (scenario === 'failure-new-assignment')
+        if (
+          ['failure-new-assignment', 'assignment-reference-isolation'].includes(
+            scenario,
+          )
+        )
           assert.ok(
             ['run-0', 'run-1'].some(
               id =>
@@ -891,6 +1078,155 @@ test(
             assert.equal(result.requests.length, 0);
             evidence.at(-1)!.passed = true;
             return;
+          }
+          if (scenario.startsWith('reference-')) {
+            const validation = reports[0].referenceValidation as Json;
+            const invalid = [
+              'reference-mutated',
+              'reference-uppercase',
+              'reference-relative',
+              'reference-wrong-commit',
+              'reference-range',
+              'reference-unknown',
+              'reference-malformed',
+              'reference-redact',
+              'reference-expanded-limit',
+              'reference-omitted',
+            ].includes(scenario);
+            assert.equal(
+              validation.status,
+              invalid
+                ? 'invalid'
+                : scenario === 'reference-unknown-revision'
+                  ? 'unreferenced'
+                  : 'valid',
+            );
+            assert.equal(reports[0].status, 'completed');
+            if (invalid) {
+              assert.match(
+                String(reports[0].output),
+                /Reference validation failed/,
+              );
+              assert.ok((validation.issues as string[]).length > 0);
+              const raw = parse(
+                await readFile(
+                  join(String(reports[0].artifactDir), 'result.json'),
+                  'utf8',
+                ),
+              );
+              assert.notEqual(raw.output, reports[0].output);
+            }
+            if (scenario === 'reference-omitted') {
+              assert.ok(packet!.omitted > 0);
+              assert.equal(
+                (validation.sourceIds as unknown[]).length,
+                packet!.records.length,
+              );
+              assert.equal(result.requests.length, 4);
+            }
+            if (scenario === 'reference-handles') {
+              assert.equal(observations.length, 2);
+              assert.equal(
+                observations[0].revisionHandle,
+                observations[1].revisionHandle,
+              );
+              assert.notEqual(
+                observations[0].sourceId,
+                observations[1].sourceId,
+              );
+              assert.deepEqual(
+                (result.logs.filter(l => l.hook).at(-1)!.args as Json).commit,
+                head,
+              );
+              assert.equal(
+                (result.logs.filter(l => l.hook).at(-1)!.args as Json).revision,
+                undefined,
+              );
+              for (const o of observations)
+                assert.ok(
+                  String(reports[0].output).includes(String(o.citation)),
+                );
+            }
+            if (
+              [
+                'reference-conflict',
+                'reference-wrong-repository',
+                'reference-redact',
+                'reference-unknown-revision',
+              ].includes(scenario)
+            ) {
+              assert.equal(packet!.childToolFailures.length, 1);
+              assert.equal(
+                result.logs.filter(l => l.hook).length,
+                scenario === 'reference-unknown-revision' ? 0 : 1,
+              );
+              if (scenario === 'reference-unknown-revision')
+                assert.equal(result.requests.length, 0);
+            }
+            if (scenario === 'reference-redact') {
+              assert.ok(!JSON.stringify(packet).includes('restore_policy'));
+              assert.equal(
+                packet!.records[0].integrity,
+                'modified-or-unavailable',
+              );
+              assert.deepEqual(validation.sourceIds, []);
+            }
+          }
+          if (scenario === 'assignment-reference-isolation') {
+            assert.equal(reports.length, 2);
+            const first = reports.find(r => (r.github as Json).requests === 4)!;
+            const second = reports.find(
+              r => (r.github as Json).requests === 0,
+            )!;
+            assert.equal((first.referenceValidation as Json).status, 'valid');
+            assert.equal(
+              (second.referenceValidation as Json).status,
+              'invalid',
+            );
+            assert.deepEqual(
+              (second.referenceValidation as Json).sourceIds,
+              [],
+            );
+            assert.equal(
+              (second.sourceEvidence as {childToolFailures: unknown[]})
+                .childToolFailures.length,
+              1,
+            );
+            evidence.at(-1)!.passed = true;
+            return;
+          }
+          if (['cache-redact', 'cache-deny'].includes(scenario)) {
+            assert.equal(result.requests.length, 4);
+            assert.equal(result.logs.filter(l => l.hook).length, 2);
+            assert.equal(
+              packet!.records[0].integrity,
+              'intact-adapter-observation',
+            );
+            assert.equal(
+              packet!.records[1].integrity,
+              'modified-or-unavailable',
+            );
+            assert.ok(
+              !JSON.stringify(packet!.records[1]).includes('restore_policy'),
+            );
+            assert.equal(
+              (reports[0].referenceValidation as Json).status,
+              scenario === 'cache-redact' ? 'invalid' : 'valid',
+            );
+            assert.equal(
+              (reports[0].github as Json).calls,
+              scenario === 'cache-redact' ? 2 : 1,
+            );
+          }
+          if (scenario === 'bad-blob-repeat') {
+            assert.equal(result.requests.length, 4);
+            assert.ok(
+              observations.every(
+                o =>
+                  o.status === 'unavailable' &&
+                  String(o.reason).includes('size/hash mismatch'),
+              ),
+            );
           }
           if (scenario === 'failure-new-assignment') {
             assert.equal(reports.length, 2);
@@ -1026,6 +1362,40 @@ test(
             assert.equal(active, 0);
             assert.equal(result.logs.filter(l => l.hook).length, 2);
           }
+          if (scenario.startsWith('heldout-')) {
+            assert.equal(
+              (reports[0].referenceValidation as Json).status,
+              'valid',
+            );
+            assert.ok(
+              JSON.stringify(observations[1].lines).includes('retry_limit: 3'),
+            );
+            assert.ok(
+              JSON.stringify(observations[3].lines).includes(
+                'retry_limit is 9',
+              ),
+            );
+            assert.equal(
+              observations[2].status,
+              scenario === 'heldout-conflict' ? 'ok' : 'unavailable',
+            );
+            if (scenario === 'heldout-conflict') {
+              assert.ok(
+                JSON.stringify(observations[2].lines).includes(
+                  'settings.retry_limit',
+                ),
+              );
+              assert.ok(
+                String(reports[0].output).includes(
+                  `(<${observations[2].citation}>)`,
+                ),
+              );
+            } else
+              assert.match(
+                String(reports[0].output),
+                /Consumer evidence is inaccessible/,
+              );
+          }
           if (scenario === 'configuration') {
             const files = observations.filter(o => Array.isArray(o.lines));
             const old = files.find(o => o.commit === introduced)!,
@@ -1068,11 +1438,21 @@ test(
           if (scenario === 'directory-slash') {
             assert.ok(observations.every(o => o.status === 'ok'));
             assert.deepEqual(observations[0].entries, observations[1].entries);
-            assert.deepEqual(observations[2].matches, observations[3].matches);
             assert.deepEqual(
-              observations[2].coverage,
-              observations[3].coverage,
+              withoutReferences(observations[2].matches),
+              withoutReferences(observations[3].matches),
             );
+            const repeatedCoverage = structuredClone(
+              observations[3].coverage,
+            ) as Json;
+            const repeatedBinary = (
+              repeatedCoverage.unavailable as Json[]
+            ).find(o => o.path === 'config/binary.bin')!;
+            assert.match(String(repeatedBinary.reason), /no new HTTP request/);
+            repeatedBinary.reason = (
+              (observations[2].coverage as Json).unavailable as Json[]
+            ).find(o => o.path === 'config/binary.bin')!.reason;
+            assert.deepEqual(observations[2].coverage, repeatedCoverage);
             assert.ok(
               JSON.stringify(observations[3].matches).includes(
                 'restore_policy: hourly',
@@ -1135,7 +1515,10 @@ test(
             assert.ok(
               observations.every(o => o.status === 'ok' && o.path === 'config'),
             );
-            assert.deepEqual(observations[0].items, observations[1].items);
+            assert.deepEqual(
+              withoutReferences(observations[0].items),
+              withoutReferences(observations[1].items),
+            );
             assert.ok(
               (observations[0].items as Json[]).some(
                 i => i.commit === introduced,
@@ -1158,14 +1541,23 @@ test(
           if (scenario === 'history-exact-file') {
             assert.ok(observations.every(o => o.status === 'ok'));
             assert.equal(result.requests.length, 5);
-            assert.deepEqual(observations[0].items, observations[3].items);
-            assert.deepEqual(observations[1].items, observations[2].items);
+            assert.deepEqual(
+              withoutReferences(observations[0].items),
+              withoutReferences(observations[3].items),
+            );
+            assert.deepEqual(
+              withoutReferences(observations[1].items),
+              withoutReferences(observations[2].items),
+            );
           }
           if (scenario === 'history-nested-root') {
             assert.ok(observations.every(o => o.status === 'ok'));
             assert.equal(result.requests.length, 5);
             assert.deepEqual(observations[0].items, []);
-            assert.deepEqual(observations[2].items, observations[3].items);
+            assert.deepEqual(
+              withoutReferences(observations[2].items),
+              withoutReferences(observations[3].items),
+            );
           }
           if (scenario === 'dated-history') {
             assert.equal(result.requests.length, 2);
@@ -1328,8 +1720,8 @@ test(
             assert.match(String(reports[0].output), /configured intent only/);
           }
           if (scenario === 'request-within-limit') {
-            // Four metadata GETs plus nine five-file scans.
-            assert.equal(result.requests.length, 49);
+            // Same 45 logical file checks: four metadata objects and one shared blob.
+            assert.equal(result.requests.length, 5);
             assert.equal(observations.length, 9);
             assert.ok(
               observations.every(
@@ -1340,9 +1732,20 @@ test(
             );
           }
           if (scenario === 'request-limit') {
+            assert.equal(result.requests.length, 5);
+            assert.equal((reports[0].github as Json).calls, 10);
+            assert.ok(
+              Number(
+                ((reports[0].github as Json).immutableReuse as Json)
+                  .sharedLoads,
+              ) > 0,
+            );
+            assert.ok(observations.every(o => o.status === 'ok'));
+          }
+          if (scenario === 'deep-request-limit') {
             assert.equal(result.requests.length, 50);
             assert.equal((reports[0].github as Json).requests, 50);
-            assert.equal((reports[0].github as Json).calls, 10);
+            assert.equal((reports[0].github as Json).calls, 1);
             assert.ok(
               JSON.stringify(observations).includes(
                 'Assignment HTTP request limit reached; no retry.',
@@ -1354,6 +1757,131 @@ test(
             assert.equal(result.toolResults[1].isError, true);
           }
           evidence.at(-1)!.passed = true;
+        });
+      const adapterCases = [
+        'cache-waiter-cancel',
+        'cache-producer-cancel',
+        'cache-bounded',
+        'cache-path-guards',
+      ];
+      for (const scenario of adapterCases)
+        await t.test(scenario, async () => {
+          const reader = createGithubReader({
+            token: async () => 'fixture-token-not-for-model',
+            fetch: (input, init) => {
+              const url = new URL(String(input));
+              assert.equal(url.origin, 'https://api.github.com');
+              return fetch(origin + url.pathname + url.search, {
+                ...init,
+                headers: {...init?.headers, 'x-fixture-case': scenario},
+              });
+            },
+          });
+          if (scenario === 'cache-path-guards') {
+            const results = [];
+            for (const path of [
+              '0.txt',
+              'link.txt',
+              'submodule',
+              '.env',
+              'wrong-size.txt',
+              '0.txt',
+            ])
+              results.push(
+                await reader.read(
+                  {
+                    operation: 'file',
+                    repository: 'fixture/research',
+                    commit: 'b'.repeat(40),
+                    path,
+                    limit: 1,
+                  },
+                  new AbortController().signal,
+                ),
+              );
+            assert.deepEqual(
+              results.map(r => r.status),
+              ['ok', 'refused', 'refused', 'refused', 'unavailable', 'ok'],
+            );
+            assert.ok(results.slice(1, 5).every(r => !r.lines));
+            assert.equal((results[5].reuse as Json).blob, true);
+            assert.equal(reader.stats().requests, 3);
+          } else if (scenario === 'cache-bounded') {
+            const readFile = (n: number) =>
+              reader.read(
+                {
+                  operation: 'file',
+                  repository: 'fixture/research',
+                  commit: 'b'.repeat(40),
+                  path: `${n}.txt`,
+                  limit: 1,
+                },
+                new AbortController().signal,
+              );
+            const results = [];
+            for (let n = 0; n < 14; n++) results.push(await readFile(n));
+            results.push(await readFile(0), await readFile(13));
+            assert.ok(results.every(r => r.status === 'ok'));
+            assert.equal((results[14].reuse as Json).blob, true);
+            assert.equal((results[15].reuse as Json).blob, false);
+            assert.ok(reader.stats().immutableReuse.skippedRetention > 0);
+            assert.ok(reader.stats().immutableReuse.retainedBytes <= 786432);
+            assert.equal(reader.stats().calls, 16);
+            assert.equal(reader.stats().requests, 17);
+            assert.ok(reader.stats().responseBytes < 786432);
+          } else {
+            const producer = new AbortController(),
+              waiter = new AbortController();
+            const first = reader.read(
+              read('config/service.yml'),
+              producer.signal,
+            );
+            const second = reader.read(
+              read('config/service.yml'),
+              waiter.signal,
+            );
+            const settled = Promise.allSettled([first, second]);
+            for (let n = 0; !heldResponses.has(scenario) && n < 200; n++)
+              await new Promise(r => setTimeout(r, 5));
+            assert.ok(heldResponses.has(scenario));
+            if (scenario === 'cache-waiter-cancel') {
+              waiter.abort(new Error('WAIT_CANCEL'));
+              heldResponses.get(scenario)!();
+            } else producer.abort(new Error('PRODUCER_CANCEL'));
+            heldResponses.delete(scenario);
+            const outcomes = await settled;
+            if (scenario === 'cache-waiter-cancel') {
+              assert.equal(outcomes[0].status, 'fulfilled');
+              assert.equal(outcomes[1].status, 'rejected');
+              assert.equal(
+                (
+                  await reader.read(
+                    read('config/service.yml'),
+                    new AbortController().signal,
+                  )
+                ).status,
+                'ok',
+              );
+              assert.equal(reader.stats().requests, 4);
+            } else {
+              assert.equal(outcomes[0].status, 'rejected');
+              assert.equal(outcomes[1].status, 'fulfilled');
+              const retry = await reader.read(
+                read('config/service.yml'),
+                new AbortController().signal,
+              );
+              assert.equal(retry.status, 'unavailable');
+              assert.equal((retry.requestFailure as Json).reused, true);
+              assert.equal(reader.stats().requests, 1);
+            }
+            await new Promise(r => setTimeout(r, 80));
+          }
+          evidence.push({
+            scenario,
+            passed: true,
+            adapterOnly: true,
+            stats: reader.stats(),
+          });
         });
       await t.test('two independent tasks, no cross-binding', async () => {
         const [a, b] = await Promise.all([
@@ -1387,8 +1915,13 @@ test(
         1,
       );
       passed =
-        evidence.length === Object.keys(cases).length &&
+        evidence.length === Object.keys(cases).length + adapterCases.length &&
         evidence.every(e => e.passed === true);
+      assert.equal(
+        passed,
+        true,
+        'Every fixture result must be recorded as passing.',
+      );
     } finally {
       for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => server.close(() => resolve()));
