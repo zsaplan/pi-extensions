@@ -75,10 +75,12 @@ Failure cases to verify through the registered tools and HTTP transport:
 - [x] Read/thread/permalink and research find table cells, metric fields, rich-text lists/links, and attachment content even when fallback text is only a summary.
 - [x] Unsupported read content is marked, and exact source is available subject to normal output limits.
 - [x] Package and repository verification pass; all five review categories approve.
-- [ ] Installed trunk loads the new schemas in a fresh Pi process.
+- [x] Installed trunk loads the new schemas in a fresh Pi process.
 - [ ] Live Slack rendering and mobile/desktop readability are checked separately after explicit authorization. Local transport tests do not establish Slack rendering.
 
 Automated evidence (2026-10-16): `npm run verify --workspace slack` passed all 108 tests, including the registered-tool/local-HTTP workflow. Final root `npm run verify` passed all workspaces and live-config checks (task-assistant retains one intentional skip). All five polish categories approved against pre-change local `main` (`ca0dec1`), including a second pass after checking Slack's numeric-cell contract. Gitignored evidence in the feature checkout: `slack/tmp/message-layout-e2e/report.json` (repeatable command, checks, previews, requests) and `slack/tmp/rich-messages-20261016/` (verification logs and review results). No live Slack writes were made for this change; rendering and human readability remain unchecked above.
+
+Installation acceptance: implementation commit `2705401` was fast-forwarded into local `main`, and the existing package setting still resolves to `/Users/zach/zsaplan/pi-extensions/slack`. No dependencies, credentials, scopes, or package settings changed. Installed Slack verification passed all 108 tests. A fresh Pi 0.99.2 SDK process loaded the actual installed configuration without errors/warnings, confirmed the new schemas, and validated both rich example payloads. An isolated bound Slack session confirmed skill discovery; a bare loader alone does not emit `resources_discover`. This check had no Slack credentials and made no model calls or tool executions. Installed evidence: `slack/tmp/rich-messages-20261016/installed-load.json`, `installed-verify.log`, and `check-installed.mjs` (rerun with the trunk checkout as its argument and Slack token variables removed). Existing Pi sessions need `/reload`; this has not been performed on their behalf. Nothing was pushed to GitHub.
 
 ## Session-scoped grants
 
