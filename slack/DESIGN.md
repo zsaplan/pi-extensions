@@ -41,6 +41,20 @@ In non-interactive modes, writes are blocked by default. Set `PI_SLACK_ALLOW_NON
 
 Write tools reject text over the safe per-message limit by default before calling Slack. Callers may opt into `longTextMode=split` when multi-part posts or update continuations are acceptable. Splitting is line/code-fence aware: chunks are labeled, open code fences are closed and reopened across chunks, and tool output includes every affected timestamp. Slack success warnings such as truncation warnings are surfaced in tool output and details.
 
+## Message writing guidance
+
+`writing-guidelines.ts` supplies one shared set of `promptGuidelines` to `slack_post_message`, `slack_update_message`, and `slack_upload_file` for agent-authored messages and upload comments. Pi deduplicates identical guidelines across active tools. The publishing skill covers audience, purpose, brevity, factual preservation, and fictional examples; its description includes ordinary message drafting so the examples are discoverable outside Canvas workflows.
+
+This is instruction-only. No payload transformation, additional model, required audience parameter, or new send gate is introduced. Existing approval rules, verbatim requests, and evidence bytes are unchanged. Routine updates favor a short lead and a few bullets, but requested reports/plans and material qualifications take precedence. Canvas documents retain their separate Markdown and report structure.
+
+Automated verification (2026-10-16, existing `slack-extension` worktree): `npm run verify --workspace slack` passed lint, typecheck, and all 107 existing tests. The change diff and new local references were inspected. Local evidence is in `slack/tmp/voice-guidance-I68T1y/verify.log` and `changes.patch` (gitignored). The first run encountered lint errors from temporary source backups; those backups were moved outside the package before the successful rerun. No live Slack writes or model-quality evaluation were performed.
+
+Manual acceptance after `/reload` (not yet completed; use drafts only, no Slack writes):
+
+- [ ] Draft the same fictional incident for a mixed audience and an engineering thread; confirm the emphasis differs without changing facts or hiding uncertainty.
+- [ ] Draft a follow-up and a request; confirm the follow-up avoids repeating background and the request adds no unsupported owner or deadline.
+- [ ] Have the user judge readability of the drafts; package checks do not establish writing quality.
+
 ## Session-scoped grants
 
 The interactive gate receives a structured `threadScope` only from new non-broadcast replies and file uploads with a channel/parent timestamp. No user/model tool parameter can grant consent. A human selects approval-once or thread-for-session in the UI, or confirms `/slack-approvals allow <parent-permalink>`.

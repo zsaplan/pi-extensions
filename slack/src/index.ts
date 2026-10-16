@@ -9,6 +9,7 @@ import {
 import {fileURLToPath} from 'node:url';
 import {Type, type Static} from 'typebox';
 import {registerPublishingTools} from './publishing-tools.ts';
+import {SLACK_MESSAGE_WRITING_GUIDELINES} from './writing-guidelines.ts';
 import {createSlackApprovalGate} from './approvals.ts';
 import {
   getSlackConfigStatusMessage,
@@ -1029,6 +1030,7 @@ export default function slackExtension(pi: ExtensionAPI) {
     promptSnippet:
       'Post a Slack message or thread reply using SLACK_BOT_TOKEN.',
     promptGuidelines: [
+      ...SLACK_MESSAGE_WRITING_GUIDELINES,
       'Use slack_post_message only when the user explicitly asks to send or reply in Slack; do not use it for drafts unless the user asks to send.',
       'For ongoing investigations, announce substantive new evidence, changed conclusions, or material uncertainty—not document editing, formatting, routine verification, or tool limitations. Keep operational status in the Pi session unless explicitly requested in Slack. Editorial-only changes need no announcement.',
       'slack_post_message sends chat.postMessage with SLACK_BOT_TOKEN, not SLACK_USER_TOKEN.',
@@ -1118,6 +1120,7 @@ export default function slackExtension(pi: ExtensionAPI) {
     promptSnippet:
       'Update a Slack message or thread reply using SLACK_BOT_TOKEN.',
     promptGuidelines: [
+      ...SLACK_MESSAGE_WRITING_GUIDELINES,
       'Use slack_update_message instead of hand-written Slack Web API calls when the user asks to edit a message.',
       'Pass url when the user gives a Slack permalink; otherwise pass channel and ts.',
       'Long updates are rejected by default before sending; pass longTextMode=split only when updating the target plus posting continuation replies is acceptable.',

@@ -90,6 +90,14 @@ Commands (interactive UI required):
 
 Use the parent thread permalink, or a permalink with the correct `thread_ts` query parameter. Pre-approval does not send a message. Normal Slack permissions and membership checks still apply.
 
+## Writing voice
+
+Message posts, edits, and upload comments share drafting instructions in `src/writing-guidelines.ts`: adapt to the audience, lead with the outcome or request, use plain language and light Slack formatting, and make follow-ups about what changed. Routine updates should usually fit in a short paragraph or a lead plus a few bullets. Requested reports/plans and important qualifications take priority over brevity.
+
+The [publishing skill](skills/slack-publish-report/SKILL.md) includes the writing workflow and [fictional message examples](skills/slack-publish-report/references/message-examples.md) for mixed audiences, operators, requests, and follow-ups. It is available for ordinary messages as well as Canvas reports.
+
+This is prompt guidance, not automatic rewriting or a hard word limit. There is no extra model call, and existing posting permissions and verbatim-text requests are unchanged. Run `/reload` in an existing Pi session to load updated tool instructions and skill metadata.
+
 ## Long reports and formatting
 
 Slack write tools preflight message length, code-fence balance, and code-block size before calling Slack. Messages over the safe limit are rejected by default so the agent can shorten them before causing Slack-side `msg_too_long` failures or accidental auto-splitting. If a multi-part message is acceptable, pass `longTextMode=split`; the extension splits on line/code-block boundaries, labels parts, closes/reopens code fences across chunks, and returns every posted timestamp.
@@ -102,7 +110,7 @@ The bot token needs `canvases:write` for Canvas mutations, `files:write` for upl
 
 Use the bundled `slack-publish-report` skill for human-readable report publishing. It is discovered by the extension, including when loaded directly from `slack/src`.
 
-The default Canvas is a concise **current-state, findings-only report for decision makers**: Summary, Key findings and impact, Important unknowns, and References/appendix. Recommendations appear only when explicitly requested. Avoid the phrase “bottom line.” Technical detail, raw queries, and investigative chronology belong primarily in the Slack thread, with linked references or appendices for supporting material. Material uncertainty stays prominent. Ongoing updates revise existing findings rather than accumulating follow-up chapters; preserve human contributions. Visible revision notes are opt-in. Thread announcements cover new evidence, changed conclusions, or material uncertainty—not editing steps, routine verification, or tool limitations. Keep operational status in the Pi session unless explicitly requested in Slack; editorial-only updates need no announcement.
+The default Canvas is a concise **current-state, findings-only report for decision makers**: Summary, Key findings and impact, Important unknowns, and References/appendix. Recommendations appear only when explicitly requested. Avoid the phrase “bottom line.” Technical discussion belongs in focused thread replies; keep long queries and investigative chronology in linked evidence or requested appendices rather than repeating them in updates. Material uncertainty stays prominent. Ongoing updates revise existing findings rather than accumulating follow-up chapters; preserve human contributions. Visible revision notes are opt-in. Thread announcements cover new evidence, changed conclusions, or material uncertainty—not editing steps, routine verification, or tool limitations. Keep operational status in the Pi session unless explicitly requested in Slack; editorial-only updates need no announcement.
 
 - Canvas content is native Markdown, not Slack message mrkdwn. Tables, headings, and caveats remain in the document.
 - Creating with `channel` adds a channel tab with **write access**. Omit it when that is not intended. No announcement is posted automatically.

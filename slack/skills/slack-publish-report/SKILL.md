@@ -1,11 +1,28 @@
 ---
 name: slack-publish-report
-description: Publish concise, findings-only Slack Canvases for decision makers and keep them current as evidence changes. Keep investigation detail in the thread or appendix; preserve human contributions with guarded targeted edits.
+description: Write clear, audience-aware Slack messages and concise findings-only Canvases. Use for drafting, posting or editing updates, requests, upload comments and reports; includes writing examples and guarded publishing workflows.
 ---
 
-# Publish a Slack report
+# Write and publish in Slack
 
-Only publish when the user requests it. Confirm the destination, audience, selected evidence, and intended access level. When given a channel name, use `slack_resolve_channel` before asking the human for its ID. Respect lookup budgets/cooldowns; incomplete or rate-limited lookup is not evidence that the channel does not exist. A user-token match does not establish bot posting permission. Do not upload whole sessions or unrelated sensitive data. Retain the extension's write confirmation gates.
+Only publish when the user requests it. Establish the destination and audience from the request and relevant thread; ask only when ambiguity materially affects the content or authorization. For files and Canvases, confirm the selected evidence and intended access level. When given a channel name, use `slack_resolve_channel` before asking the human for its ID. Respect lookup budgets/cooldowns; incomplete or rate-limited lookup is not evidence that the channel does not exist. A user-token match does not establish bot posting permission. Do not upload whole sessions or unrelated sensitive data. Retain the extension's write confirmation gates.
+
+## Message voice
+
+Write like a helpful colleague, not an investigation transcript. The goal is less work for the reader, not the fewest possible words.
+
+- **Choose the reader and purpose.** For a mixed audience, lead with impact and current status. For operators, retain exact conditions and identifiers needed to act. Distinguish an FYI, a request, a decision, and an investigation update; do not manufacture an action item for an FYI.
+- **Put the point first.** Start with the outcome, change, or request. Use familiar words, short sentences, and a calm, direct tone. Remove ceremonial introductions, repeated conclusions, and routine accounts of how the agent did its work.
+- **Keep routine updates small.** Prefer a short paragraph or a lead plus 2–4 brief bullets. Shorter is fine. This is a default, not a word limit: requested reports, plans, and decision-critical detail may need more space. Do not shorten exact user-supplied text when asked to send it verbatim.
+- **Preserve meaning.** Keep facts, counts, scope, uncertainty, conditions, ownership, and approval status. Put a qualification that changes the main claim beside it, not only behind a link. Never turn an estimate into a promise or a partial recovery into incident closure. Include owners and deadlines only when known.
+- **Make follow-ups about the change.** Use relevant thread context rather than repeating it. Link existing evidence with descriptive labels instead of copying a report into the message. Do not create extra messages, uploads, or documents merely to move detail elsewhere without authorization.
+- **Format for the surface.** Messages and upload comments use Slack mrkdwn: `*bold*` sparingly, blank lines, short bullets, and `<url|descriptive label>` links. Avoid Markdown headings, pipe tables, and decorative emoji. Canvas documents use native Markdown. An upload comment should explain why the attachment matters, not reproduce it; never rewrite attached evidence for style.
+
+When drafting or revising messages, read [message examples](references/message-examples.md). They demonstrate audience choices, concise updates, and preservation of important caveats; their facts and links are fictional, not content to publish.
+
+Before sending, check: can this reader quickly find what changed or what is needed, and is every important qualification still visible? Apply this to the authorized text only; retain the existing approval gates.
+
+## Publishing approvals
 
 For repeated replies/uploads to an authorized thread, the human can select **Approve thread for this session** once, or use `/slack-approvals allow <parent-permalink>` after `/reload`. The extension then recognizes that exact workspace/bot/channel/parent scope for this Pi session, including reload/resume. Conversational pre-approval alone does not create a stored grant. Do not set the global skip-confirm flag to simulate scoped approval. Thread grants never authorize broadcasts, message edits/deletes, or Canvas mutations/access changes. `/slack-approvals` inspects/revokes grants; new/forked sessions require their own consent.
 
@@ -19,7 +36,7 @@ For an authorized ongoing investigation, post substantive new evidence, changed 
 
 - Short update: `slack_post_message`, with message mrkdwn (single-asterisk bold, short bullets, Slack links). Avoid Markdown pipe tables in messages.
 - Current findings for decision makers: `slack_create_canvas`, with native Markdown headings, compact tables, and evidence links. The Canvas is the current report, not the investigation diary.
-- Investigation record: the Slack thread holds technical detail, queries, raw metrics, competing hypotheses, and investigative chronology. Link to relevant contributions rather than copying all of them into the Canvas.
+- Technical discussion: use focused thread replies for evidence and questions relevant to the participants. A thread is not a reason to dump the full investigation. Keep long logs, queries, and chronology in existing linked evidence or explicitly requested attachments/appendices. Link relevant contributions rather than copying them into every update or Canvas.
 - Exact SQL, code, logs: `slack_upload_file` with `snippetType` (e.g. `sql`). A Markdown snippet is source text, not a rendered report.
 - Downloadable evidence or images: `slack_upload_file` with a local `path`; set image `altText` when applicable.
 
@@ -34,7 +51,7 @@ Default structure:
 3. **Important unknowns:** uncertainty or limitations that could materially change interpretation. Keep these near the affected findings rather than burying them in an appendix. Do not repeat routine disclaimers after every paragraph.
 4. **References / appendix:** supporting methodology, detailed qualifications, and selected evidence. Prefer numbered references linked to thread messages or evidence files; do not assume native Markdown footnotes render in Slack. Never present local `/tmp/...` paths as shareable links.
 
-Most esoteric detail belongs in the thread. An appendix is for useful supporting material, not a dump of the investigation transcript. Existing user-authored or explicitly requested sections should not be silently removed merely to match this default structure.
+Supporting technical detail belongs in focused thread replies or linked evidence. An appendix is for useful supporting material, not a dump of the investigation transcript. Existing user-authored or explicitly requested sections should not be silently removed merely to match this default structure.
 
 ## Publish and share
 

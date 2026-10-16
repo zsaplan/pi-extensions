@@ -20,6 +20,7 @@ import {
   uploadFile,
 } from './publishing.ts';
 import {resolveConversation, type SlackApiCaller} from './slack.ts';
+import {SLACK_MESSAGE_WRITING_GUIDELINES} from './writing-guidelines.ts';
 
 export interface PublishingDependencies {
   client: () => {client: SlackApiCaller; config: SlackConfig};
@@ -257,6 +258,7 @@ export function registerPublishingTools(
     promptSnippet:
       'Upload evidence, reports, images, or syntax-formatted snippets to Slack.',
     promptGuidelines: [
+      ...SLACK_MESSAGE_WRITING_GUIDELINES,
       'Use slack_upload_file only when the user requests uploading the selected file/content to Slack. Provide exactly one of path or content.',
       'slack_upload_file uploads are private without channel. threadTs must be the parent message timestamp. A session thread grant covers uploads only to that exact thread. Do not upload an entire session or unrelated sensitive evidence.',
       'slack_upload_file snippetType is for source/logs/SQL; a Markdown snippet is not a rendered Canvas. Keep initialComment short and use message mrkdwn.',
