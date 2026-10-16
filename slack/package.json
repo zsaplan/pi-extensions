@@ -1,0 +1,52 @@
+{
+  "name": "@zsaplan/pi-slack",
+  "version": "0.1.0",
+  "description": "Pi extension that lets the agent read Slack with SLACK_USER_TOKEN and write Slack with SLACK_BOT_TOKEN.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zsaplan/pi-extensions.git",
+    "directory": "slack"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "slack",
+    "user-token",
+    "bot-token",
+    "research"
+  ],
+  "files": [
+    "src",
+    "skills",
+    "scripts",
+    "DESIGN.md",
+    "README.md",
+    "package.json"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "scripts": {
+    "lint": "gts lint",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/*.test.ts",
+    "verify": "npm run lint && npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "parse5": "^7.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "gts": "^7.0.0",
+    "typebox": "^1.1.24",
+    "typescript": "^5.9.3"
+  }
+}

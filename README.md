@@ -13,6 +13,7 @@ Personal repo-backed source for pi extensions.
 - `rainman/` → `@zsaplan/pi-rainman`
 - `response-review/` → `@zsaplan/pi-response-review`
 - `session-file-footer/` → `@zsaplan/pi-session-file-footer`
+- `slack/` → `@zsaplan/pi-slack`
 
 Extension packages keep their own `package.json` and `pi` manifest. `rain-core/` is the shared deterministic utility layer; model policy and runtime orchestration stay in the extension packages.
 
@@ -63,6 +64,10 @@ pi-extensions/
 │   ├── package.json
 │   ├── README.md
 │   └── src/
+├── slack/
+│   ├── package.json
+│   ├── README.md
+│   └── src/
 └── README.md
 ```
 
@@ -81,6 +86,7 @@ pi -e ./raindistiller
 pi -e ./rainman
 pi -e ./response-review
 pi -e ./session-file-footer
+pi -e ./slack
 
 # install the whole repo-backed package
 pi install .

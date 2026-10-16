@@ -16,6 +16,9 @@
     "response-review/test/**/*.test.ts",
     "session-file-footer/src/**/*.ts",
     "session-file-footer/test/**/*.test.ts",
+    "slack/src/**/*.ts",
+    "slack/scripts/**/*.ts",
+    "slack/test/**/*.test.ts",
     "response-review/web/**/*.ts",
     "response-review/knip.config.ts"
   ],
