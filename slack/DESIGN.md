@@ -47,13 +47,17 @@ Write tools reject text over the safe per-message limit by default before callin
 
 This is instruction-only. No payload transformation, additional model, required audience parameter, or new send gate is introduced. Existing approval rules, verbatim requests, and evidence bytes are unchanged. Routine updates favor a short lead and a few bullets, but requested reports/plans and material qualifications take precedence. Canvas documents retain their separate Markdown and report structure.
 
-Automated verification (2026-10-16, existing `slack-extension` worktree): `npm run verify --workspace slack` passed lint, typecheck, and all 107 existing tests. The change diff and new local references were inspected. Local evidence is in `slack/tmp/voice-guidance-I68T1y/verify.log` and `changes.patch` (gitignored). The first run encountered lint errors from temporary source backups; those backups were moved outside the package before the successful rerun. No live Slack writes or model-quality evaluation were performed.
+Validation (2026-10-16): all five polish categories approved the voice-only diff against baseline `45c025f`. Slack lint, typecheck, and all 107 tests passed again from installed trunk at `a99aa9b`. The integrated root verification reached its 300-second command limit during the unchanged task-assistant suite; its separate completion passed (93 tests, one intentional skip), as did `verify:live-config`. Earlier integration blockers were an expired private npm registry token and a missing generated task-assistant build; public locked dependencies and the package build resolved them without changing unrelated source.
 
-Manual acceptance after `/reload` (not yet completed; use drafts only, no Slack writes):
+Live acceptance in the [authorized test thread](https://britecore.slack.com/archives/C01F7L63F9P/p1792167642567769):
 
-- [ ] Draft the same fictional incident for a mixed audience and an engineering thread; confirm the emphasis differs without changing facts or hiding uncertainty.
-- [ ] Draft a follow-up and a request; confirm the follow-up avoids repeating background and the request adds no unsupported owner or deadline.
-- [ ] Have the user judge readability of the drafts; package checks do not establish writing quality.
+- [x] A fresh Pi process loaded the installed trunk Slack package without warnings and generated four fictional drafts. Generation had no Slack credentials; posting remained a separate authorized operation.
+- [x] The mixed-audience and engineering messages preserve the same counts and open incident. The engineering version adds the duplicate-submission safeguard.
+- [x] The follow-up reports new acceptance without repeating the investigation. The request invents no reviewer, deadline, or approval.
+- [x] Four labeled test replies (24–58 words) were posted without broadcast and read back with exact text matches, including line breaks and bullets. No existing messages were edited or deleted.
+- [ ] Have the user judge readability and desktop/mobile rendering; API readback and package checks do not establish reader preference or visual quality.
+
+Installed package: `/Users/zach/zsaplan/pi-extensions/slack`. Existing sessions need `/reload` to switch their source path; the posting implementation in the test session was byte-identical to installed trunk. Repeatable local evidence in that checkout: `slack/tmp/voice-live-20261016/` contains `draft-request.md`, `drafts.json`, `readback.txt`, `report.json`, and `verify.log` (gitignored). `report.json` records each message timestamp and the limits of the checks.
 
 ## Session-scoped grants
 
