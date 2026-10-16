@@ -63,7 +63,8 @@ export default async function (pi: ExtensionAPI) {
       });
     },
   });
-  let readCalls = 0;
+  let readCalls = 0,
+    syntheticPacketBytes = 2;
   pi.on('tool_call', (event, ctx) => {
     if (event.toolName === 'github_research_read') {
       readCalls++;
@@ -85,6 +86,47 @@ export default async function (pi: ExtensionAPI) {
     return undefined;
   });
   pi.on('tool_result', event => {
+    if (
+      event.toolName === 'github_research_read' &&
+      cfg.scenario.startsWith('retention-')
+    ) {
+      let text: string | undefined;
+      if (cfg.scenario === 'retention-hook-overflow' && readCalls === 1)
+        text = 'OMITTED_HOOK_BODY_' + 'é'.repeat(25000);
+      if (cfg.scenario === 'retention-child-limit' && readCalls === 1)
+        text = 'é'.repeat(8192); // Fits the packet, but not the 16 KiB child view with its notice.
+      if (cfg.scenario.startsWith('retention-packet-') && readCalls <= 4) {
+        const content = [
+          {type: 'text' as const, text: `SYNTHETIC_HOOK_${readCalls}_`},
+        ];
+        const entry = {
+          callId: event.toolCallId,
+          integrity: 'modified-or-unavailable',
+          isError: event.isError,
+          content,
+        };
+        const targetGrowth =
+          readCalls < 4
+            ? 12000
+            : 49152 -
+              syntheticPacketBytes +
+              Number(cfg.scenario.endsWith('-over'));
+        const padding =
+          targetGrowth -
+          Buffer.byteLength(JSON.stringify(entry)) -
+          Number(readCalls > 1);
+        content[0].text +=
+          'é'.repeat(Math.floor(padding / 2)) + 'X'.repeat(padding % 2);
+        syntheticPacketBytes +=
+          Buffer.byteLength(JSON.stringify(entry)) + Number(readCalls > 1);
+        text = content[0].text;
+      }
+      if (text !== undefined)
+        return {
+          content: [{type: 'text' as const, text}],
+          details: {mustNotReachChild: 'ALTERNATE_HOOK_BODY'},
+        };
+    }
     if (
       event.toolName === 'github_research_read' &&
       cfg.scenario === 'profile-change'
@@ -240,6 +282,7 @@ export default async function (pi: ExtensionAPI) {
           'failure-cancel',
           'default-head-concurrent',
           'request-limit',
+          'retention-concurrent',
         ].includes(cfg.scenario)
       ) {
         message.stopReason = 'toolUse';
@@ -249,7 +292,9 @@ export default async function (pi: ExtensionAPI) {
           cfg.scenario,
         )
           ? cfg.actions.slice(0, 2)
-          : cfg.actions;
+          : cfg.scenario === 'retention-concurrent'
+            ? cfg.actions.slice(0, 4)
+            : cfg.actions;
         message.content = actions.map((action, index) => ({
           type: 'toolCall' as const,
           id: `child-${index}`,
@@ -318,6 +363,12 @@ export default async function (pi: ExtensionAPI) {
             staleRevision = String(sources[0].revisionHandle);
           }
         }
+        // Adversarial fixture: guess an omitted ID despite the explicit gap.
+        // Do not retrieve omitted source data from receipts or artifacts.
+        if (cfg.scenario === 'reference-omitted')
+          citations.push(
+            `[[${String(sources[0].sourceId).replace(/-\d+$/, '-4')}]]`,
+          );
         if (cfg.scenario === 'reference-expanded-limit')
           citations.push(...Array(300).fill(citations[0]));
         if (cfg.scenario === 'reference-raw')

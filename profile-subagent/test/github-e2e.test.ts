@@ -25,6 +25,8 @@ const cli = join(
   repo,
   'node_modules/@earendil-works/pi-coding-agent/dist/cli.js',
 );
+import {checkGithubRetention} from './github-retention-check.ts';
+
 type Json = Record<string, unknown>;
 const parse = (text: string) => JSON.parse(text) as Json;
 const withoutReferences = (value: unknown) =>
@@ -733,6 +735,23 @@ test(
       ...read('sites/wide.txt'),
       limit: 40,
     }));
+    for (const name of ['retention-continue', 'retention-concurrent'])
+      cases[name] = [
+        ...cases['reference-omitted'].slice(0, 4),
+        {...read('sites/wide.txt'), revision: '@previous', start: 41, limit: 1},
+      ];
+    for (const name of ['retention-hook-overflow', 'retention-child-limit'])
+      cases[name] = [
+        read('config/service.yml'),
+        {...read('config/service.yml'), limit: 1},
+      ];
+    cases['retention-packet-exact'] = Array.from({length: 4}, () =>
+      read('config/service.yml'),
+    );
+    cases['retention-packet-over'] = [
+      ...cases['retention-packet-exact'],
+      {...read('config/service.yml'), limit: 1},
+    ];
     cases['reference-handles'] = [
       read('config/service.yml'),
       {
@@ -1013,6 +1032,7 @@ test(
         }
       }
       for (const report of reports) {
+        await checkGithubRetention(report);
         const binding = report.binding as Json;
         assert.equal(binding.taskId, `fixture-${scenario}`);
         assert.equal(binding.threadKey, `fixture-channel/${scenario}`);
@@ -1315,6 +1335,50 @@ test(
               2,
             );
             assert.equal(summary.childToolResults.failed, 1);
+          }
+          if (scenario.startsWith('retention-')) {
+            const checked = await checkGithubRetention(reports[0]);
+            assert.equal(reports[0].status, 'completed');
+            assert.equal(checked.checked, cases[scenario].length);
+            assert.equal(
+              checked.gaps,
+              scenario === 'retention-packet-exact' ? 0 : 1,
+            );
+            assert.equal(summary.childToolResults.failed, checked.gaps);
+            assert.equal(packet!.omitted, checked.gaps);
+            assert.equal(
+              packet!.records.length + checked.gaps,
+              cases[scenario].length,
+            );
+            assert.equal(
+              (reports[0].referenceValidation as Json).status,
+              scenario === 'retention-packet-exact' ? 'unreferenced' : 'valid',
+            );
+            assert.equal(
+              result.requests.length,
+              4,
+              'No automatic retry or extra HTTP',
+            );
+            const transcript = await readFile(
+              join(String(reports[0].artifactDir), 'messages.json'),
+              'utf8',
+            );
+            assert.doesNotMatch(
+              transcript,
+              /ALTERNATE_HOOK_BODY|OMITTED_HOOK_BODY/,
+            );
+            if (scenario === 'retention-packet-exact')
+              assert.equal(checked.packetBytes, 49152);
+            if (scenario === 'retention-packet-over')
+              assert.doesNotMatch(transcript, /SYNTHETIC_HOOK_4_/);
+            if (scenario !== 'retention-packet-exact')
+              assert.equal(
+                observations.at(-1)!.status,
+                'ok',
+                'A later small source fits without evicting earlier evidence',
+              );
+            evidence.at(-1)!.passed = true;
+            return;
           }
           if (scenario === 'packet-limit') {
             assert.ok(summary.sourceObservations.omitted > 0);

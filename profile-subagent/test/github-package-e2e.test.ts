@@ -6,6 +6,7 @@ import {createRequire} from 'node:module';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import test from 'node:test';
 import {loadCatalog} from '../src/profiles.ts';
+import {checkGithubRetention} from './github-retention-check.ts';
 
 process.umask(0o077);
 const pkg = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -145,6 +146,13 @@ test(
           limit: 1,
         },
       ],
+      'token-retention': [
+        ...Array.from({length: 4}, () => ({
+          ...file('fixture/research', 'README.md', head),
+          limit: 40,
+        })),
+        {...file('fixture/research', 'README.md', head), start: 41, limit: 1},
+      ],
       'token-empty': [{operation: 'resolve', repository: 'fixture/empty'}],
       'token-repository-names': [
         discovery,
@@ -200,6 +208,8 @@ test(
           await readFile(join(output, 'result.json'), 'utf8'),
         );
         assert.equal(value.activeHttp, 0);
+        if (value.report.sourceEvidence)
+          await checkGithubRetention(value.report);
         if (scenario === 'legacy-policy') {
           assert.match(
             JSON.stringify(value.report),
@@ -222,7 +232,8 @@ test(
           assert.equal(
             records.length,
             tokenCases[scenario].length -
-              (scenario === 'token-tool-contract' ? 2 : 0),
+              (scenario === 'token-tool-contract' ? 2 : 0) -
+              report.sourceEvidence.omitted,
           );
           assert.equal(
             report.activitySummary.childToolResults.returned,
@@ -232,6 +243,13 @@ test(
             report.activitySummary.childToolResults.failed,
             report.sourceEvidence.childToolFailures.length,
           );
+          if (scenario === 'token-retention') {
+            assert.equal(report.sourceEvidence.omitted, 1);
+            assert.equal(report.activitySummary.childToolResults.failed, 1);
+            assert.equal(report.sourceEvidence.records.length, 4);
+            assert.equal(report.referenceValidation.status, 'valid');
+            assert.equal(report.github.calls, 5);
+          }
           if (scenario === 'token-tool-contract') {
             assert.equal(report.activitySummary.childToolResults.failed, 2);
             assert.equal(report.github.calls, 1);

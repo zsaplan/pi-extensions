@@ -5,6 +5,7 @@ import {mkdtemp, mkdir, readFile, stat, writeFile} from 'node:fs/promises';
 import {join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import test from 'node:test';
+import {checkGithubRetention} from './github-retention-check.ts';
 
 const pkg = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
@@ -35,6 +36,28 @@ test(
       {name: 'bundled-entry', scenario: 'success', bundledHost: true},
       {name: 'compiled-bundled-entry', scenario: 'success', bundledHost: true},
       {name: 'codemode', scenario: 'success', viaCodemode: true},
+      {
+        name: 'bundled-retention',
+        scenario: 'token-retention',
+        bundledHost: true,
+        actions: [
+          ...Array.from({length: 4}, () => ({
+            operation: 'file',
+            repository: 'fixture/research',
+            path: 'README.md',
+            commit: 'a'.repeat(40),
+            limit: 40,
+          })),
+          {
+            operation: 'file',
+            repository: 'fixture/research',
+            path: 'README.md',
+            commit: 'a'.repeat(40),
+            start: 41,
+            limit: 1,
+          },
+        ],
+      },
     ];
     const results: {name: string; passed: boolean}[] = [];
     for (const item of cases) {
@@ -89,6 +112,7 @@ test(
       } else {
         for (const attempt of value.attempts) {
           const report = attempt.report;
+          await checkGithubRetention(report);
           assert.equal(report.binding.sessionId, attempt.parentSessionId);
           assert.equal(
             report.binding.threadKey,
@@ -122,8 +146,16 @@ test(
             assert.equal(report.verification, 'unverified-report');
             assert.equal(report.research.accountingComplete, true);
             assert.deepEqual(attempt.enclosingUsage, report.usage);
-            assert.equal(report.sourceEvidence.records.length, 1);
-            const record = report.sourceEvidence.records[0];
+            assert.equal(
+              report.sourceEvidence.records.length,
+              item.name === 'bundled-retention' ? 4 : 1,
+            );
+            if (item.name === 'bundled-retention') {
+              assert.equal(report.sourceEvidence.omitted, 1);
+              assert.equal(report.activitySummary.childToolResults.failed, 1);
+              assert.equal(report.github.calls, 5);
+            }
+            const record = report.sourceEvidence.records.at(-1);
             if (item.name === 'missing-credential' || item.name === 'denied') {
               assert.equal(record.isError, true);
               assert.equal(value.wireGithub, 0);
