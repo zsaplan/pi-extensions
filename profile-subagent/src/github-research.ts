@@ -36,8 +36,11 @@ type Assignment = {
   reader: ReturnType<typeof createGithubReader>;
   receipts: Map<string, {text: string; isError: boolean}>;
   observations: Observation[];
+  evidenceBytes: number;
   omitted: number;
 };
+const evidenceLimitBytes = 49152;
+const childContentLimitBytes = 16384;
 
 // getBinding is trusted host policy, never a tool or data supplied by the child.
 export function registerGithubResearch(
@@ -95,7 +98,9 @@ export function registerGithubResearch(
         observationId: id,
         ...result,
       });
-      if (Buffer.byteLength(JSON.stringify(observation)) > 16384)
+      if (
+        Buffer.byteLength(JSON.stringify(observation)) > childContentLimitBytes
+      )
         observation = {
           observationId: id,
           status: 'unavailable',
@@ -203,6 +208,7 @@ export function registerGithubResearch(
         reader,
         receipts: new Map(),
         observations: [],
+        evidenceBytes: 2, // Serialized empty observation array: [].
         omitted: 0,
       };
       const assignmentKey = key(sessionId, id);
@@ -214,7 +220,12 @@ export function registerGithubResearch(
       const activity = createGithubActivity();
       let omittedToolFailures = 0,
         unreturnedAdapterCalls = 0;
-      const capture = (result: Outcome) => {
+      const evidenceBudget = (usedBytes = assignment.evidenceBytes) => ({
+        limitBytes: evidenceLimitBytes,
+        usedBytes,
+        remainingBytes: evidenceLimitBytes - usedBytes,
+      });
+      const capture = (result: Outcome): Outcome => {
         const receipt = assignment.receipts.get(result.toolCall.id);
         assignment.receipts.delete(result.toolCall.id);
         const content = result.result.content;
@@ -232,15 +243,76 @@ export function registerGithubResearch(
           isError: result.isError,
           content: structuredClone(content),
         };
-        if (
-          Buffer.byteLength(
-            JSON.stringify([...assignment.observations, observation]),
-          ) <= 49152
-        ) {
+        const candidateBytes = Buffer.byteLength(
+          JSON.stringify([...assignment.observations, observation]),
+        );
+        // The packet remains the exact post-hook observation. Only the child
+        // view gets host retention metadata; never parse/rebuild modified data.
+        const value: Record<string, unknown> | undefined =
+          intact && content[0].type === 'text'
+            ? JSON.parse(content[0].text)
+            : undefined;
+        const evidenceRetention = {
+          retained: true,
+          usableReferences:
+            !!value && value.status === 'ok' && !value.credentialRedacted,
+          ...evidenceBudget(candidateBytes),
+        };
+        let delivered: Outcome['result']['content'] = value
+          ? [
+              {
+                type: 'text',
+                text: JSON.stringify({...value, evidenceRetention}),
+              },
+            ]
+          : [
+              ...content,
+              {type: 'text', text: JSON.stringify({evidenceRetention})},
+            ];
+        const deliveredBytes = delivered.reduce(
+          (n, part) =>
+            n +
+            Buffer.byteLength(
+              part.type === 'text' ? part.text : JSON.stringify(part),
+            ),
+          0,
+        );
+        const retained =
+          candidateBytes <= evidenceLimitBytes &&
+          deliveredBytes <= childContentLimitBytes;
+        if (retained) {
+          // Synchronous check/commit: concurrent completions share one budget.
+          // Retained records are never evicted after their IDs reach the child.
           assignment.observations.push(observation);
-          if (intact && content[0].type === 'text')
-            assignment.references.accept(JSON.parse(content[0].text));
-        } else assignment.omitted++;
+          assignment.evidenceBytes = candidateBytes;
+          if (value) assignment.references.accept(value);
+        } else {
+          assignment.omitted++;
+          delivered = [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                status: 'unavailable',
+                reason:
+                  candidateBytes > evidenceLimitBytes
+                    ? 'Evidence packet capacity exceeded; source not retained or delivered. Use a smaller new file window only if useful and budget remains, otherwise report the gap. Do not retry the same window.'
+                    : 'Source plus retention notice exceeds the child response bound; source not retained or delivered. Use a smaller new window or report the gap.',
+                evidenceRetention: {
+                  retained: false,
+                  usableReferences: false,
+                  ...evidenceBudget(),
+                },
+              }),
+            },
+          ];
+        }
+        // No omitted bodies/IDs/handles or alternate details reach the child.
+        // Top-level parent call/accounting metadata remains unchanged.
+        return {
+          ...result,
+          isError: !retained || result.isError,
+          result: {content: delivered, details: undefined},
+        };
       };
       const executeObserved: ExtensionToolContext['executeTool'] = async (
         name,
@@ -268,8 +340,7 @@ export function registerGithubResearch(
         pending.add(call);
         try {
           const result = await call;
-          capture(result);
-          return result;
+          return capture(result);
         } catch (error) {
           unreturnedAdapterCalls++;
           throw error;
@@ -346,6 +417,7 @@ export function registerGithubResearch(
               .map(o => o.callId),
             records: assignment.observations,
             omitted: assignment.omitted,
+            budget: evidenceBudget(),
             childToolFailures,
             omittedToolFailures,
             unreturnedAdapterCalls,

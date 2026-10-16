@@ -109,6 +109,24 @@ Local failure cases verified on Node 26.10.0 / SDK 0.99.2:
 
 Private local evidence: `tmp/tool-contract/verified-kQSBOg/VERIFICATION.md`, linked to the original source, packed and interactive fixture outputs. Reproduce with the package/root verification commands below. The first root run was interrupted by a 300-second command timeout while the unrelated task-assistant suite was still passing; a fresh full run completed with exit 0. Original failed/interrupted logs remain preserved.
 
+## Retention before child delivery
+
+Source results pass the normal parent permission/result hooks, then a synchronous retention check before delivery to the child. The 49,152-byte record cap is unchanged. Accepted records are never evicted. Concurrent completions share the same check/commit, rather than each receiving a separate allowance.
+
+The exact post-hook content remains in `sourceEvidence.records`. The child view adds host `evidenceRetention` metadata: `retained`, `usableReferences`, `limitBytes`, `usedBytes` and `remainingBytes`. Intact JSON gets this field alongside the source; modified content is preserved with a separate notice and `usableReferences: false`. It is never parsed back into trusted evidence. The final `sourceEvidence.budget` reports the serialized record-array size, including its brackets, escaping and record metadata. Budget snapshots are after each result; parallel results can arrive in a different order.
+
+When a record cannot fit, the child gets an explicit failed gap result instead of the omitted source body, source IDs, newly issued handles or alternate details. A source that would exceed the existing 16 KiB child-content ceiling once its notice is included is also withheld without spending packet capacity. Both cases count as omitted observations and failed child tool results; the underlying adapter/HTTP work remains charged normally. No raw receipt/cache reconstruction, eviction, automatic retry or larger budget is introduced. A deliberately smaller subsequent read still passes the normal hooks and limits and creates a new observation; it does not restore an omitted reference.
+
+This prevents silently presenting packet-omitted sources as usable evidence. It does not force the model to honor a gap, choose useful windows or support each claim. Unknown/modified references still fail final validation, and the full report is still withheld on invalid references. Host notices add child context; whole-workflow savings are not established.
+
+Acceptance for this increment:
+- [x] Source E2E: transcript-to-packet reconciliation, parallel completions, smaller follow-up windows, redaction/denial, UTF-8 byte boundaries, exact/full and one-byte-over packets, child-content overflow, and rejection of a guessed omitted ID.
+- [x] Packed/native and bundled/interactive SDK E2E, preserving cleanup and once-counted usage.
+- [x] Focused package: 303 tests passed. Complete repository verification passed with one existing optional task-assistant skip. Node 26.10.0 / SDK 0.99.2; no live model or GitHub calls.
+- [ ] Separate installation/reload and authorized live acceptance. No live run is authorized by this local implementation.
+
+Private verification record: `tmp/evidence-retention/verified-SoLlGH/VERIFICATION.md`. `test/github-retention-check.ts` checks actual child transcripts against retained post-hook records in source, packed and bundled fixtures. Reproduce through the package/root commands below; these are scripted mechanism tests, not model-quality acceptance.
+
 ## Host-owned opt-in
 
 Build with `npm run build --workspace profile-subagent` or pack with `npm pack ./profile-subagent` (prepack builds). Import `registerGithubResearch` from `@zsaplan/pi-profile-subagent/github-research`; the read adapter is exported from `@zsaplan/pi-profile-subagent/github-read`.

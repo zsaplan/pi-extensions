@@ -120,7 +120,9 @@ if (!live) {
       },
     }),
   );
-  const body = 'setting: example\npassword: fake-sensitive\n';
+  const body = cfg.scenario.endsWith('retention')
+    ? ('Y'.repeat(300) + '\n').repeat(45)
+    : 'setting: example\npassword: fake-sensitive\n';
   const blob = createHash('sha1')
     .update(`blob ${Buffer.byteLength(body)}\0`)
     .update(body)
