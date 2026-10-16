@@ -8,6 +8,7 @@ import type {
 } from '@earendil-works/pi-coding-agent';
 import {githubResearchProfileId, loadProfile} from './profiles.ts';
 import {runProfile} from './runner.ts';
+import {createGithubReferences} from './github-references.ts';
 import {
   createGithubReader,
   containsControl,
@@ -30,6 +31,7 @@ type Observation = {
   content: unknown;
 };
 type Assignment = {
+  references: ReturnType<typeof createGithubReferences>;
   reader: ReturnType<typeof createGithubReader>;
   receipts: Map<string, {text: string; isError: boolean}>;
   observations: Observation[];
@@ -81,7 +83,7 @@ export function registerGithubResearch(
     label: 'Assigned GitHub evidence',
     exposure: 'codemode',
     description:
-      'Internal read-only GitHub research adapter; requires an active assigned run. The token determines repository access. Supports focused repositories search (query, optional page), resolve (repository, optional ref), and root "." for list/search/history. File/history use path and optional immutable commit. Omitted commit pins the default branch on first read. History accepts optional since/until UTC timestamps. For discussion use ONLY operation, repository, kind, number and optional page; never path or commit. No arbitrary URLs, writes, secret paths, symlinks, attachments or redirects. Results disclose limits. Research only what is needed to answer the assigned question.',
+      'Internal read-only GitHub research adapter; requires an active assigned run. The token determines repository access. Supports focused repositories search (query, optional page), resolve (repository, optional ref), and root "." for list/search/history. File/history use path and optional immutable commit, or revision: a revisionHandle returned in this assignment (never both). Cite returned sourceId markers as [[S...]] rather than transcribing URLs; reference identity is not claim verification. Omitted commit pins the default branch on first read. History accepts optional since/until UTC timestamps. For discussion use ONLY operation, repository, kind, number and optional page; never path or commit. No arbitrary URLs, writes, secret paths, symlinks, attachments or redirects. Results disclose limits. Research only what is needed to answer the assigned question.',
     parameters: GithubReadSchema,
     prepareArguments(args) {
       if (!Check(GithubReadSchema, args))
@@ -101,8 +103,21 @@ export function registerGithubResearch(
         signal ?? new AbortController().signal,
       );
       signal?.throwIfAborted();
-      const text = JSON.stringify({observationId: id, ...result}),
-        isError = result.status !== 'ok';
+      let observation = assignment.references.decorate({
+        observationId: id,
+        ...result,
+      });
+      if (Buffer.byteLength(JSON.stringify(observation)) > 16384)
+        observation = {
+          observationId: id,
+          status: 'unavailable',
+          reason:
+            'Reference metadata exceeds observation bound; no partial source returned.',
+          budget: result.budget,
+          observedAt: result.observedAt,
+        };
+      const text = JSON.stringify(observation),
+        isError = observation.status !== 'ok';
       assignment.receipts.set(id, {text, isError});
       return {content: [{type: 'text', text}], details: undefined, isError};
     },
@@ -112,7 +127,7 @@ export function registerGithubResearch(
     label: 'GitHub researcher (experimental)',
     exposure: 'direct',
     description:
-      'Experimental read-only repository researcher, not a code reviewer. Requires a host-approved task/session/thread/reservation and a host-supplied GitHub token; any repository it can read is available. Run inline; no new pool or delivery. Use for substantial source research, not a simple local check or a duplicate investigation. Supply the question and known repository/path/ref leads, marking unverified leads as such; the child does not inherit your context. Search is shallow (five files in one directory), not a repository-wide index. There are sixteen adapter calls total, separate from fifty HTTP attempts; prioritize decisive file reads over directory tours. Inspect returned evidence and gaps; reread only material unresolved claims. Follow relevant leads only and stop when the question is answered or blocked. Returns unverified prose and bounded post-hook observations. No writes, repeated failed requests or restoration/compliance certification.',
+      'Experimental read-only repository researcher, not a code reviewer. Requires a host-approved task/session/thread/reservation and a host-supplied GitHub token; any repository it can read is available. Run inline; no new pool or delivery. Use for substantial source research, not a simple local check or a duplicate investigation. Supply the question and known repository/path/ref leads, marking unverified leads as such; the child does not inherit your context. Search is shallow (five files in one directory), not a repository-wide index. There are sixteen adapter calls total, separate from fifty HTTP attempts; prioritize decisive file reads over directory tours. Inspect returned evidence and gaps; reread only material unresolved claims. Follow relevant leads only and stop when the question is answered or blocked. Returns unverified prose, bounded post-hook observations and referenceValidation; inspect reference issues separately from execution status. Reference identity does not verify claims. No writes, repeated failed requests or restoration/compliance certification.',
     parameters: Type.Object(
       {task: Type.String({minLength: 1, maxLength: 12000})},
       {additionalProperties: false},
@@ -196,6 +211,7 @@ export function registerGithubResearch(
         ? AbortSignal.any([signal, controller.signal])
         : controller.signal;
       const assignment: Assignment = {
+        references: createGithubReferences(),
         reader,
         receipts: new Map(),
         observations: [],
@@ -231,9 +247,11 @@ export function registerGithubResearch(
           Buffer.byteLength(
             JSON.stringify([...assignment.observations, observation]),
           ) <= 49152
-        )
+        ) {
           assignment.observations.push(observation);
-        else assignment.omitted++;
+          if (intact && content[0].type === 'text')
+            assignment.references.accept(JSON.parse(content[0].text));
+        } else assignment.omitted++;
       };
       const executeObserved: ExtensionToolContext['executeTool'] = async (
         name,
@@ -248,12 +266,16 @@ export function registerGithubResearch(
           profile.digest
         )
           throw new Error('Research profile changed during execution.');
-        const call = ctx.executeTool(name, args, {
-          ...opts,
-          signal: opts?.signal
-            ? AbortSignal.any([combined, opts.signal])
-            : combined,
-        });
+        const call = ctx.executeTool(
+          name,
+          assignment.references.resolve(args),
+          {
+            ...opts,
+            signal: opts?.signal
+              ? AbortSignal.any([combined, opts.signal])
+              : combined,
+          },
+        );
         pending.add(call);
         try {
           const result = await call;
@@ -297,6 +319,7 @@ export function registerGithubResearch(
         await Promise.allSettled([...pending]);
         const details = {
           ...result.details,
+          ...assignment.references.render(result.details.output),
           verification: 'unverified-report',
           handoffIssues: [] as string[],
           binding: {

@@ -7,7 +7,14 @@ const shaSchema = Type.String({pattern: '^[a-f0-9]{40}$'});
 const dateSchema = Type.String({
   pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$',
 });
-const common = {repository: text, commit: Type.Optional(shaSchema), path: text};
+const common = {
+  repository: text,
+  commit: Type.Optional(shaSchema),
+  revision: Type.Optional(
+    Type.String({pattern: '^R[a-f0-9]{12}-[1-9][0-9]*$'}),
+  ),
+  path: text,
+};
 export const GithubReadSchema = Type.Union([
   Type.Object(
     {
@@ -153,6 +160,27 @@ export function createGithubReader(transport: GithubTransport) {
   const repositories = new Map<string, Repository>();
   const trees = new Map<string, unknown>();
   const roots = new Map<string, string>();
+  const blobs = new Map<
+    string,
+    {body: string; size: number; verifiedAt: string}
+  >();
+  const immutablePending = new Map<string, Promise<unknown>>();
+  const immutableFailures = new Map<string, unknown>();
+  let retainedBytes = 0,
+    cacheHits = 0,
+    sharedLoads = 0,
+    skippedRetention = 0;
+  function retain<T>(cache: Map<string, T>, key: string, value: T) {
+    if (cache.has(key)) return;
+    // Serialized retained payload, not a claim about total JavaScript heap size.
+    const size = Buffer.byteLength(JSON.stringify([key, value]));
+    if (retainedBytes + size > 786432) {
+      skippedRetention++;
+      return;
+    }
+    cache.set(key, value);
+    retainedBytes += size;
+  }
   const credentials = new Set<string>();
   // Per-assignment only. Serialize identical in-flight requests; retain failures,
   // not successful mutable responses. Waiting callers cannot retry a failed GET.
@@ -180,6 +208,56 @@ export function createGithubReader(transport: GithubTransport) {
       });
     } finally {
       signal.removeEventListener('abort', abort);
+    }
+  }
+  function reusedImmutableFailure(error: unknown): never {
+    if (error instanceof BoundaryError && error.requestFailure) {
+      reusedFailures++;
+      throw new BoundaryError(
+        `Prior identical request failed; no new HTTP request. ${error.message}`,
+        error.status,
+        {...error.requestFailure, reused: true},
+      );
+    }
+    throw new BoundaryError(
+      `Prior immutable read failed; no new HTTP request. ${error instanceof BoundaryError ? error.message : 'Raw errors are withheld.'}`,
+      error instanceof BoundaryError ? error.status : 'unavailable',
+    );
+  }
+  async function shareImmutable<T>(
+    key: string,
+    signal: AbortSignal,
+    load: () => Promise<T>,
+  ): Promise<T> {
+    signal.throwIfAborted();
+    if (immutableFailures.has(key))
+      reusedImmutableFailure(immutableFailures.get(key));
+    const prior = immutablePending.get(key);
+    if (prior) {
+      sharedLoads++;
+      await waitForRequest(
+        prior.then(
+          () => {},
+          () => {},
+        ),
+        signal,
+      );
+      signal.throwIfAborted();
+      try {
+        return (await prior) as T;
+      } catch (error) {
+        return reusedImmutableFailure(error);
+      }
+    }
+    const pending = load();
+    immutablePending.set(key, pending);
+    try {
+      return await pending;
+    } catch (error) {
+      immutableFailures.set(key, error);
+      throw error;
+    } finally {
+      immutablePending.delete(key);
     }
   }
   async function get(
@@ -317,7 +395,12 @@ export function createGithubReader(transport: GithubTransport) {
   }
   async function tree(g: Repository, id: string, signal: AbortSignal) {
     const key = `${g.repository}:${id}`;
-    if (!trees.has(key)) {
+    signal.throwIfAborted();
+    if (trees.has(key)) {
+      cacheHits++;
+      return (trees.get(key) as unknown[]).map(record);
+    }
+    return shareImmutable(`tree:${key}`, signal, async () => {
       const data = record((await get(g, `git/trees/${id}`, signal)).value);
       if (
         sha(data.sha) !== id ||
@@ -325,20 +408,27 @@ export function createGithubReader(transport: GithubTransport) {
         !Array.isArray(data.tree)
       )
         fail('Incomplete or mismatched GitHub tree; coverage unavailable.');
-      trees.set(key, data.tree);
-    }
-    return (trees.get(key) as unknown[]).map(record);
+      const entries = data.tree.map(record);
+      retain(trees, key, entries);
+      return entries;
+    });
   }
   async function root(g: Repository, commit: string, signal: AbortSignal) {
     const key = `${g.repository}:${commit}`;
-    if (!roots.has(key)) {
+    signal.throwIfAborted();
+    if (roots.has(key)) {
+      cacheHits++;
+      return roots.get(key)!;
+    }
+    return shareImmutable(`root:${key}`, signal, async () => {
       const data = record(
         (await get(g, `git/commits/${commit}`, signal)).value,
       );
       if (sha(data.sha) !== commit) fail('GitHub commit identity mismatch.');
-      roots.set(key, sha(record(data.tree).sha));
-    }
-    return roots.get(key)!;
+      const id = sha(record(data.tree).sha);
+      retain(roots, key, id);
+      return id;
+    });
   }
   async function lookup(
     g: Repository,
@@ -379,7 +469,8 @@ export function createGithubReader(transport: GithubTransport) {
       id = sha(item.sha);
     if (ref && shaPattern.test(ref) && ref !== id)
       fail('GitHub commit identity mismatch.');
-    roots.set(
+    retain(
+      roots,
       `${g.repository}:${id}`,
       sha(record(record(item.commit).tree).sha),
     );
@@ -453,33 +544,55 @@ export function createGithubReader(transport: GithubTransport) {
     if (typeof entry.size !== 'number' || entry.size > 32768)
       fail('File exceeds 32 KiB or size is unavailable.');
     const id = sha(entry.sha),
-      data = record((await get(g, `git/blobs/${id}`, signal)).value);
-    if (
-      sha(data.sha) !== id ||
-      data.encoding !== 'base64' ||
-      typeof data.content !== 'string'
-    )
-      fail('Unsupported GitHub blob response.');
-    const encoded = data.content.replace(/\n/g, '');
-    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))
-      fail('Invalid GitHub blob encoding.');
-    const raw = Buffer.from(encoded, 'base64');
-    if (
-      raw.length !== entry.size ||
-      data.size !== raw.length ||
-      raw.length > 32768 ||
-      createHash('sha1')
-        .update(`blob ${raw.length}\0`)
-        .update(raw)
-        .digest('hex') !== id
-    )
-      fail('GitHub blob size/hash mismatch.');
-    const body = new TextDecoder('utf-8', {fatal: true}).decode(raw);
-    if (body.includes('\0')) fail('Binary file observation unavailable.');
-    // Redact complete values before clipping, so an excerpt cannot leak a prefix.
-    const source = body.length ? redact(body).split('\n') : [];
-    if (body.endsWith('\n')) source.pop();
-    return {blob: id, lines: source};
+      key = `${g.repository}:${id}`;
+    const reused = blobs.has(key) || immutablePending.has(`blob:${key}`);
+    let verified = blobs.get(key);
+    if (verified) cacheHits++;
+    else
+      verified = await shareImmutable(`blob:${key}`, signal, async () => {
+        const data = record((await get(g, `git/blobs/${id}`, signal)).value);
+        if (
+          sha(data.sha) !== id ||
+          data.encoding !== 'base64' ||
+          typeof data.content !== 'string'
+        )
+          fail('Unsupported GitHub blob response.');
+        const encoded = data.content.replace(/\n/g, '');
+        if (!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded))
+          fail('Invalid GitHub blob encoding.');
+        const raw = Buffer.from(encoded, 'base64');
+        if (
+          raw.length !== entry.size ||
+          data.size !== raw.length ||
+          raw.length > 32768 ||
+          createHash('sha1')
+            .update(`blob ${raw.length}\0`)
+            .update(raw)
+            .digest('hex') !== id
+        )
+          fail('GitHub blob size/hash mismatch.');
+        const body = new TextDecoder('utf-8', {fatal: true}).decode(raw);
+        if (body.includes('\0')) fail('Binary file observation unavailable.');
+        const value = {
+          body,
+          size: raw.length,
+          verifiedAt: new Date().toISOString(),
+        };
+        retain(blobs, key, value);
+        return value;
+      });
+    signal.throwIfAborted();
+    if (verified.size !== entry.size) fail('GitHub blob size/hash mismatch.');
+    // Redact each logical read, including cache hits, before taking a window.
+    const source = verified.body.length
+      ? redact(verified.body).split('\n')
+      : [];
+    if (verified.body.endsWith('\n')) source.pop();
+    return {
+      blob: id,
+      lines: source,
+      reuse: {blob: reused, verifiedAt: verified.verifiedAt},
+    };
   }
   function lines(source: string[], start: number, limit: number) {
     return source.slice(start - 1, start - 1 + limit).map((value, i) => ({
@@ -669,6 +782,7 @@ export function createGithubReader(transport: GithubTransport) {
         commit,
         path: args.path,
         blob: file.blob,
+        reuse: file.reuse,
         lines: selected,
         citation: `${base}/blob/${commit}/${encodePath(args.path)}${selected.length ? `#L${start}-L${selected.at(-1)!.line}` : ''}`,
         coverage: {
@@ -701,6 +815,7 @@ export function createGithubReader(transport: GithubTransport) {
             matches.push({
               path: entry.path,
               blob: file.blob,
+              reuse: file.reuse,
               lines: hits.slice(0, 3).flatMap(n => lines(file.lines, n, 1)),
               omittedHits: Math.max(0, hits.length - 3),
               citation: `${base}/blob/${commit}/${encodePath(entry.path)}#L${hits[0]}`,
@@ -781,7 +896,13 @@ export function createGithubReader(transport: GithubTransport) {
     };
   }
   return {
-    stats: () => ({calls, requests, responseBytes: bytes, reusedFailures}),
+    stats: () => ({
+      calls,
+      requests,
+      responseBytes: bytes,
+      reusedFailures,
+      immutableReuse: {cacheHits, sharedLoads, retainedBytes, skippedRetention},
+    }),
     async read(input: unknown, signal: AbortSignal) {
       signal.throwIfAborted();
       calls++;
@@ -801,6 +922,10 @@ export function createGithubReader(transport: GithubTransport) {
           throw new BoundaryError('Assignment tool-call limit reached.');
         if (!Check(GithubReadSchema, input))
           throw new BoundaryError('Unsupported operation or arguments.');
+        if ('revision' in input)
+          throw new BoundaryError(
+            'Revision handles must be resolved by the active assignment.',
+          );
         result = {
           status: 'ok',
           operation: input.operation,

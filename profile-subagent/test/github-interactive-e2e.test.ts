@@ -137,6 +137,12 @@ test(
             } else {
               assert.equal(record.isError, false);
               assert.equal(record.integrity, 'intact-adapter-observation');
+              assert.equal(report.referenceValidation.status, 'valid');
+              assert.ok(
+                report.output.includes(
+                  JSON.parse(record.content[0].text).citation,
+                ),
+              );
               assert.ok(
                 JSON.parse(record.content[0].text).citation.includes(
                   '/blob/' + 'a'.repeat(40),
