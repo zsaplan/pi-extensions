@@ -113,11 +113,13 @@ Follow-up after the second GA formatting pass: the fallback and scope repairs la
 Follow-up acceptance:
 
 - [x] Review the block-selection example and guidance for preserved caveats, unchanged authorization, and bounded full-body inspection; verify package/root checks and all five review categories.
-- [ ] Source-pinned fresh Pi loading verifies the revised shared guidance and skill/examples in the installed package.
+- [x] Source-pinned fresh Pi loading verifies the revised shared guidance and skill/examples in the installed package.
 
 Validation (2026-10-16): the example selects a unique original object before insertion, retains the separate caveat, and inspects the final body without round-tripping arbitrary Slack blocks. Slack lint/typecheck and all 108 tests passed; root `npm run verify` passed with the existing intentional task-assistant skip. All five polish categories approved against pre-change local `main` (`4e69fc9`). Evidence: `slack/tmp/assembled-message-review-20261016/{verify-slack.log,verify-root.log,review.json}` in the feature worktree.
 
-The existing desktop/mobile and live approval checks above/below remain pending; this guidance-only follow-up makes no Slack writes.
+Installation (2026-10-16): implementation `1f86b56` was fast-forwarded into local `main`. Installed Slack verification again passed all 108 tests. A fresh Pi SDK process matched the guidance/skill/example files against that commit, confirmed the shared guidance on post/update/upload tools, and discovered the skill without errors or warnings. No settings or dependency changes were needed. Repeatable installed evidence: `slack/tmp/assembled-message-review-20261016/{installed-load.json,installed-verify.log,check-installed.mjs}`; run the loader check without Slack tokens, supplying the trunk checkout and expected commit `1f86b56`. Existing sessions need `/reload`. Nothing was pushed to GitHub.
+
+The existing desktop/mobile and live approval checks above/below remain pending; this guidance-only follow-up made no Slack writes and does not establish the quality of future model-authored posts.
 
 ## Session-scoped grants
 
