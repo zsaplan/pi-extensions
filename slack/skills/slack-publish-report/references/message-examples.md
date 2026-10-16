@@ -152,6 +152,25 @@ Source: “Functional QA is unverified for production and UAT. Some UAT timeouts
 
 Do not turn “no retry decision was supplied” into either approval or a new prohibition. Preserve the stated facts; flag material ambiguity in Pi instead of deciding it during a formatting pass.
 
+## Scripted layout edits: inspect the assembled result
+
+Suppose a draft layout has a header, metric fields, then a section containing both the metric definition and an event-delivery caveat. The goal is to move the definition above the fields while keeping the caveat.
+
+- Wrong: insert a new definition, then use the first section starting with the same words to find the old one. The new section may match first, leaving the old definition duplicated.
+- Better: select the unique original block before insertion, preserve its distinct caveat, then assemble and inspect the final body. A small layout can also be rebuilt directly.
+
+Illustrative assembly for a draft using the supported static-block schema: `oldBlockText` is the exact original section text; `remainingContent` is a section retaining its distinct caveat; `definition` is the definition section to place after the header. This is not a recipe for round-tripping arbitrary Slack-returned blocks.
+
+```js
+const matches = blocks.filter(block => block.text?.text === oldBlockText);
+if (matches.length !== 1) throw new Error('Re-read: original block is not unique');
+const original = matches[0];
+const revised = blocks.map(block => block === original ? remainingContent : block);
+revised.splice(1, 0, definition);
+```
+
+Read the assembled body before sending and the actual body on readback: header, definition, fields, retained caveat. Check for unnecessary repetition without weakening any qualification. A clean fallback and the expected block types would not detect a duplicated definition. Readable projections help inspection; they are not replacement payloads or proof of desktop/mobile appearance.
+
 ## Short is not always correct
 
 Source: “We expect the rollout Friday if validation passes. Production approval is still pending.”

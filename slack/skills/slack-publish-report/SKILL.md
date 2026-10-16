@@ -22,14 +22,15 @@ When drafting or revising messages, read [message examples](references/message-e
 
 For rich messages, write the agent-authored `text` fallback separately as stand-alone plain language for accessibility and notifications. Include all essential facts, caveats, and relevant links, not just the title. Do not generate it by mechanically stripping Markdown; leave out pipe tables and code fences. Keep qualifications beside their claims in the visible layout too, not only in a context footer. Exact user-supplied wording and attached evidence remain unchanged when requested verbatim.
 
-Before sending, briefly compare the source, visible message, and any fallback:
+After all scripted transformations and before sending, briefly compare the source, final assembled message, and any fallback—not just the intended edits:
 
 - Can the reader quickly find what changed, remains blocked, or is needed?
+- Does the assembled body repeat headings, definitions, or caveats unnecessarily? Remove only redundant agent-authored wording; keep distinct qualifications beside the claims they limit and preserve requested verbatim text.
 - Does each count retain its subject, environment, checkpoint, and status meaning? “Applied,” “passing checks,” and “accepted” are not interchangeable. Finding every number somewhere is not enough.
 - Are the scope of uncertainty, conditions, ownership, and permission unchanged? A qualification moved under one environment can accidentally narrow a release-wide claim.
 - Does the fallback make sense without the rich layout, while retaining essential facts and relevant links?
 
-This is a short editorial check, not another model call, tool, or review report. Apply it only to authorized content; retain the existing approval gates.
+On readback, inspect the actual message body using `formatMode=verbatim` or the full block content. Fallback previews, block-type lists, and boolean checks alone cannot establish that the visible wording is correct. Narrow clipped reads before claiming verification. This is a brief editorial check, not a new reviewer model, automation layer, or report. Readback findings do not authorize extra writes or automatic retries; retain the existing approval gates.
 
 ### Rich message mechanics
 
@@ -37,6 +38,7 @@ This is a short editorial check, not another model call, tool, or review report.
 - Rich messages are single-part: no `longTextMode=split`. Shorten the report or use an already authorized longer-lived surface; do not create extra posts or artifacts merely to bypass limits.
 - Markdown is rendered by Slack. Static blocks support `header`, `section` (text and/or up to ten metric fields), `divider`, `context`, and simple `table` cells (`raw_text`/`raw_number`). Use Markdown for formatted table cells. No buttons, interactive elements, custom renderer, or second model is needed.
 - Read the current message before editing. `formatMode=verbatim` is a readable projection of blocks and text, not replacement Markdown. `formatMode=blocks` exposes original message JSON subject to output limits. Returned block types may exceed the small authoring schema; never blindly round-trip a projection or truncated source.
+- When scripting block changes, identify the unique original block before inserting its replacement. Do not insert a similarly worded section and then take the first loose text match; it may select the new section. Retain distinct content from the original block, including caveats, and inspect the assembled result. Prefer building a small final layout directly when simpler.
 - Supply a complete new rich layout on edits. Text-only edits check the exact target using `SLACK_USER_TOKEN` and refuse to flatten existing blocks. `clearBlocks=true` explicitly replaces the top-level layout with text; use it only when that change is intended, not to bypass a failed read. Legacy attachments are retained by Slack and are not edited by this tool. There is no atomic stale-edit guard.
 - Approval previews show fallback plus rich source, not a Slack visual preview. API success/readback does not verify desktop/mobile appearance. Do not automatically retry a failed or uncertain write.
 

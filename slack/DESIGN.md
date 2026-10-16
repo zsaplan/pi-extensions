@@ -108,6 +108,17 @@ Installed evidence: `slack/tmp/editorial-guidance-20261016/{installed-load.json,
 
 Visual status (2026-10-16): Playwright reports no active browser sessions. No authenticated Slack browser session was available in that list, so visual inspection was not performed; the check remains pending, not inferred from API readbacks. No Slack messages will be created or edited to satisfy it without separate authorization. Screen-reader/notification usability also remains unverified.
 
+Follow-up after the second GA formatting pass: the fallback and scope repairs landed, but scripted block insertion left duplicate definitions. The original-block selector matched a newly inserted section, and the readback summary exposed fallback/type checks rather than the full visible body. The existing editorial check now explicitly covers the final assembled body and actual readback body. A short example selects the unique original block before insertion and preserves its separate caveat. No runtime transformation or approval behavior changes. Evaluation evidence: `slack/tmp/ga-latest-turn-evaluation/evaluation.md`.
+
+Follow-up acceptance:
+
+- [x] Review the block-selection example and guidance for preserved caveats, unchanged authorization, and bounded full-body inspection; verify package/root checks and all five review categories.
+- [ ] Source-pinned fresh Pi loading verifies the revised shared guidance and skill/examples in the installed package.
+
+Validation (2026-10-16): the example selects a unique original object before insertion, retains the separate caveat, and inspects the final body without round-tripping arbitrary Slack blocks. Slack lint/typecheck and all 108 tests passed; root `npm run verify` passed with the existing intentional task-assistant skip. All five polish categories approved against pre-change local `main` (`4e69fc9`). Evidence: `slack/tmp/assembled-message-review-20261016/{verify-slack.log,verify-root.log,review.json}` in the feature worktree.
+
+The existing desktop/mobile and live approval checks above/below remain pending; this guidance-only follow-up makes no Slack writes.
+
 ## Session-scoped grants
 
 Edit-approval acceptance checks:
