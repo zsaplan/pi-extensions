@@ -13,6 +13,8 @@ import {
   type SlackMessage,
 } from './slack.ts';
 
+import {messageContentText} from './message-content.ts';
+
 const DEFAULT_LOOKBACK_DAYS = 30;
 const DEFAULT_MAX_CHANNELS = 100;
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL = 200;
@@ -244,7 +246,7 @@ function addScoredHit(
   terms: string[],
   threadTs?: string,
 ): void {
-  const text = message.text ?? '';
+  const text = messageContentText(message);
   const {score, matchedTerms} = scoreSlackText(text, query, terms);
   if (score <= 0) return;
 

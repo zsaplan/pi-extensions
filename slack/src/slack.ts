@@ -1,5 +1,11 @@
 import {createHash} from 'node:crypto';
 import type {SlackConfig} from './config.ts';
+import {
+  messageContentSource,
+  messageContentText,
+  type MessageContent,
+} from './message-content.ts';
+import type {MessageBlocks} from './message-layout.ts';
 
 export interface SlackResponseMetadata {
   next_cursor?: string;
@@ -36,7 +42,7 @@ export interface SlackConversation {
   num_members?: number;
 }
 
-export interface SlackMessage {
+export interface SlackMessage extends MessageContent {
   type?: string;
   subtype?: string;
   user?: string;
@@ -105,6 +111,7 @@ export interface PostMessageOptions {
   threadTs?: string;
   mrkdwn?: boolean;
   replyBroadcast?: boolean;
+  blocks?: MessageBlocks;
 }
 
 export interface UpdateMessageOptions {
@@ -112,6 +119,7 @@ export interface UpdateMessageOptions {
   ts: string;
   text: string;
   mrkdwn?: boolean;
+  blocks?: MessageBlocks;
 }
 
 export interface DeleteMessageOptions {
@@ -274,7 +282,7 @@ function pageLimit(remaining: number): number {
 export const DEFAULT_SAFE_SLACK_TEXT_LIMIT = 3500;
 
 export type SlackLongTextMode = 'reject' | 'split';
-export type SlackMessageFormatMode = 'compact' | 'verbatim';
+export type SlackMessageFormatMode = 'compact' | 'verbatim' | 'blocks';
 
 export interface SlackTextAnalysis {
   characterCount: number;
@@ -735,6 +743,7 @@ export async function postMessage(
     'chat.postMessage',
     {
       channel: options.channel,
+      blocks: options.blocks,
       mrkdwn: options.mrkdwn ?? true,
       reply_broadcast: options.replyBroadcast,
       text: options.text,
@@ -753,6 +762,7 @@ export async function updateMessage(
     'chat.update',
     {
       channel: options.channel,
+      blocks: options.blocks,
       mrkdwn: options.mrkdwn ?? true,
       text: options.text,
       ts: options.ts,
@@ -836,7 +846,10 @@ export function formatMessageLine(
   options: FormatMessageLineOptions = {},
 ): string {
   const header = formatMessageHeader(message);
-  const rawText = message.text ?? '';
+  if (options.formatMode === 'blocks') {
+    return `${header}\n${messageContentSource(message)}`;
+  }
+  const rawText = messageContentText(message);
 
   if (options.formatMode === 'verbatim') {
     const text = rawText.trimEnd();

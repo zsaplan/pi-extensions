@@ -147,6 +147,7 @@ test('thread post approval covers uploads/replies but excludes broadcasts, messa
     ...thread,
     ts: '2.000001',
     text: 'Edit',
+    clearBlocks: true,
   });
   await execute('slack_delete_message', {...thread, ts: '2.000001'});
   await execute('slack_create_canvas', {title: 'Canvas', markdown: 'text'});

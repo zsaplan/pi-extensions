@@ -39,11 +39,11 @@ The user token must be able to access conversations before pi can read them. The
 - `slack_auth_test` — validate `SLACK_USER_TOKEN` or `SLACK_BOT_TOKEN` and show workspace/token identity.
 - `slack_resolve_channel` — resolve an exact name/ID using membership-first lookup, bounded visible fallback, and a revalidated short-lived cache.
 - `slack_list_conversations` — list conversations visible to the selected user or bot token; `membership=member` uses Slack `users.conversations` for conversations the identity belongs to.
-- `slack_read_messages` — read recent messages from a channel by ID or `#name` using the selected token; pass `formatMode=verbatim` to preserve Slack text/newlines.
-- `slack_read_thread` — read replies for a Slack thread timestamp using the selected token; pass `formatMode=verbatim` when checking mrkdwn/code blocks.
+- `slack_read_messages` — read recent messages, including structured blocks, using the selected token; `formatMode=verbatim` keeps readable line breaks, while `blocks` exposes source JSON.
+- `slack_read_thread` — read thread replies with the same compact/verbatim/blocks modes.
 - `slack_read_permalink` — parse a Slack archives permalink and read thread context, falling back to nearby history on `invalid_arguments`.
-- `slack_post_message` — post a message or thread reply using `SLACK_BOT_TOKEN`; long messages are rejected by default and can be sent as safe multi-part posts with `longTextMode=split`.
-- `slack_update_message` — update a message by URL or channel/timestamp, with the same length preflight and optional continuation splitting.
+- `slack_post_message` — post text, native Markdown, or a static block layout using `SLACK_BOT_TOKEN`. Only ordinary text can use `longTextMode=split`.
+- `slack_update_message` — replace a message by URL or channel/timestamp. Supply a complete rich layout, or explicitly opt into clearing it with `clearBlocks=true`; otherwise text edits inspect the existing message using `SLACK_USER_TOKEN`.
 - `slack_delete_message` — delete one or more Slack messages by URL or channel/timestamp using `SLACK_BOT_TOKEN`.
 - `slack_research_messages` — scan bounded recent channel history for a topic with general filters for token kind, channels/source, time bounds, threads, and permalinks.
 - `slack_create_canvas` — create a titled native-Markdown Canvas; optional channel placement adds a channel tab with write access.
@@ -102,7 +102,27 @@ This is prompt guidance, not automatic rewriting or a hard word limit. There is 
 
 Slack write tools preflight message length, code-fence balance, and code-block size before calling Slack. Messages over the safe limit are rejected by default so the agent can shorten them before causing Slack-side `msg_too_long` failures or accidental auto-splitting. If a multi-part message is acceptable, pass `longTextMode=split`; the extension splits on line/code-block boundaries, labels parts, closes/reopens code fences across chunks, and returns every posted timestamp.
 
-Use `formatMode=verbatim` on read/thread/permalink tools when checking whether a message's mrkdwn, SQL, or code blocks rendered correctly.
+### Rich message layouts
+
+The existing post/update tools accept optional `markdown` or `blocks` (mutually exclusive). Required `text` is the ordinary message when neither is supplied; with a rich layout it is the accessible fallback and must contain all essential facts, caveats, and links—not just a title. No new OAuth scopes or interactivity service are needed. Writes still use `chat:write` on the bot token, and approvals are unchanged.
+
+- `markdown`: standard Markdown sent as a native Slack Markdown block, including headings, tables, dividers, and links. Slack performs the translation; there is no local Markdown renderer.
+- `blocks`: a static subset for dashboards: header, section text/metric fields, divider, context, and table. Table cells accept `raw_text` (`text`) or `raw_number` (both numeric `value` and display `text`); Markdown handles more elaborate table formatting. No interactive elements or arbitrary block passthrough.
+- Limits: up to 12,000 Markdown/content characters, 50 static blocks, and 10,000 characters across table cells. Static block JSON is capped at 50,000 characters. Individual block limits also apply. The fallback must be nonblank and at most 4,000 characters, and is still subject to `maxChars` (default 3,500). Slack validates translated Markdown and may reject a layout beyond its own limits.
+- Rich messages cannot use `longTextMode=split` or `mrkdwn=false`. Approval shows the fallback and full rich source, not just a short summary. Rich edits replace the complete layout; there is no atomic stale-edit check.
+- Text-only updates inspect the exact target with the configured user read token. Existing blocks cause a refusal unless `clearBlocks=true` explicitly permits replacing the top-level layout with text. Supply `threadTs` when needed to locate a reply. Missing access or an unavailable target fails closed; tokens never switch automatically. Legacy attachments are retained and are not edited by this tool.
+- Read/thread/permalink tools and research include table cells, metric fields, rich-text lists, and attachment content. `formatMode=verbatim` is a readable projection with line breaks, **not** lossless replacement Markdown. `formatMode=blocks` exposes source JSON subject to normal output limits. Unsupported read content is marked rather than silently treated as complete. Returned blocks may exceed the limited authoring schema.
+- API readback is not proof of desktop/mobile rendering. Check the actual Slack clients separately. On uncertain writes, inspect the known message before retrying.
+
+See the [fictional rich-format examples](skills/slack-publish-report/references/message-examples.md#investigation-summary-native-markdown) for payloads and layout choices. Upload comments remain ordinary Slack mrkdwn.
+
+Repeat the local registered-tool/HTTP workflow checks from the repository root:
+
+```bash
+node --test slack/test/message-layout.test.ts
+```
+
+The test uses a local Slack-shaped server and fixture tokens, never live Slack. Its repeatable evidence is written to `slack/tmp/message-layout-e2e/report.json`, including checks, approval previews, and request payloads. Slack's Markdown translation and visual appearance remain separate live acceptance checks.
 
 ## Canvas reports, files, and snippets
 
@@ -125,7 +145,7 @@ The default Canvas is a concise **current-state, findings-only report for decisi
 - Upload completion may precede file processing/sharing metadata. Results say `channel_share_requested`, not that another reader already has access. Sharing lists in metadata are capped at 50 entries each with `sharingTruncated` when applicable.
 - Creation/upload results return IDs; use `slack_get_file_info` for a permalink if one was not returned. Metadata lookup failure is not a reason to recreate the artifact. Successful metadata retrieval does not prove another user has access.
 
-All new writes retain the interactive approval/non-interactive opt-in policy; file uploads may reuse an exact session thread grant, and supported Canvas content edits may reuse a separate exact Canvas grant. They always use `SLACK_BOT_TOKEN`; metadata lookup also uses the bot token to see its newly created artifacts. Ownership transfer, file/whole-Canvas deletion, bulk uploads, and Block Kit are deliberately excluded.
+All new writes retain the interactive approval/non-interactive opt-in policy; file uploads may reuse an exact session thread grant, and supported Canvas content edits may reuse a separate exact Canvas grant. They always use `SLACK_BOT_TOKEN`; metadata lookup also uses the bot token to see its newly created artifacts. Ownership transfer, file/whole-Canvas deletion, bulk uploads, and interactive Block Kit elements are deliberately excluded.
 
 ### Iterative Canvas polishing
 

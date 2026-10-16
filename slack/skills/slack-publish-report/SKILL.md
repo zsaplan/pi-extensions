@@ -16,11 +16,20 @@ Write like a helpful colleague, not an investigation transcript. The goal is les
 - **Keep routine updates small.** Prefer a short paragraph or a lead plus 2–4 brief bullets. Shorter is fine. This is a default, not a word limit: requested reports, plans, and decision-critical detail may need more space. Do not shorten exact user-supplied text when asked to send it verbatim.
 - **Preserve meaning.** Keep facts, counts, scope, uncertainty, conditions, ownership, and approval status. Put a qualification that changes the main claim beside it, not only behind a link. Never turn an estimate into a promise or a partial recovery into incident closure. Include owners and deadlines only when known.
 - **Make follow-ups about the change.** Use relevant thread context rather than repeating it. Link existing evidence with descriptive labels instead of copying a report into the message. Do not create extra messages, uploads, or documents merely to move detail elsewhere without authorization.
-- **Format for the surface.** Messages and upload comments use Slack mrkdwn: `*bold*` sparingly, blank lines, short bullets, and `<url|descriptive label>` links. Avoid Markdown headings, pipe tables, and decorative emoji. Canvas documents use native Markdown. An upload comment should explain why the attachment matters, not reproduce it; never rewrite attached evidence for style.
+- **Format for the job.** Routine messages and upload comments use Slack mrkdwn: `*bold*` sparingly, whitespace, short bullets, and `<url|label>` links—not Markdown headings or pipe tables. For narrative reports, supply `markdown` using standard Markdown headings, tables, and links. For dashboards, use static `blocks` with a clear status, metric fields, findings, and sources. Keep tables compact and dividers between real topics. Status icons need explanatory text; avoid decorative emoji. Do not make every reply a report. Canvas documents use native Markdown. Upload comments remain brief mrkdwn; never rewrite attached evidence for style.
 
 When drafting or revising messages, read [message examples](references/message-examples.md). They demonstrate audience choices, concise updates, and preservation of important caveats; their facts and links are fictional, not content to publish.
 
-Before sending, check: can this reader quickly find what changed or what is needed, and is every important qualification still visible? Apply this to the authorized text only; retain the existing approval gates.
+Before sending, check: can this reader quickly find what changed or what is needed, and is every important qualification still visible? For rich messages, required `text` is the accessible fallback: include all essential facts, caveats, and relevant links, not just the title. Keep qualifications beside their claims in the visible layout too, not only in a context footer. Apply this to the authorized content only; retain the existing approval gates.
+
+### Rich message mechanics
+
+- Use either `markdown` or `blocks`, never both. Leave both out for ordinary text. `mrkdwn=false` is for text-only messages, not rich layouts.
+- Rich messages are single-part: no `longTextMode=split`. Shorten the report or use an already authorized longer-lived surface; do not create extra posts or artifacts merely to bypass limits.
+- Markdown is rendered by Slack. Static blocks support `header`, `section` (text and/or up to ten metric fields), `divider`, `context`, and simple `table` cells (`raw_text`/`raw_number`). Use Markdown for formatted table cells. No buttons, interactive elements, custom renderer, or second model is needed.
+- Read the current message before editing. `formatMode=verbatim` is a readable projection of blocks and text, not replacement Markdown. `formatMode=blocks` exposes original message JSON subject to output limits. Returned block types may exceed the small authoring schema; never blindly round-trip a projection or truncated source.
+- Supply a complete new rich layout on edits. Text-only edits check the exact target using `SLACK_USER_TOKEN` and refuse to flatten existing blocks. `clearBlocks=true` explicitly replaces the top-level layout with text; use it only when that change is intended, not to bypass a failed read. Legacy attachments are retained by Slack and are not edited by this tool. There is no atomic stale-edit guard.
+- Approval previews show fallback plus rich source, not a Slack visual preview. API success/readback does not verify desktop/mobile appearance. Do not automatically retry a failed or uncertain write.
 
 ## Publishing approvals
 
@@ -34,7 +43,9 @@ For an authorized ongoing investigation, post substantive new evidence, changed 
 
 ## Choose a surface
 
-- Short update: `slack_post_message`, with message mrkdwn (single-asterisk bold, short bullets, Slack links). Avoid Markdown pipe tables in messages.
+- Short update: `slack_post_message`, with ordinary message mrkdwn (single-asterisk bold, short bullets, Slack links).
+- Investigation summary: the same tool with `markdown`, a clear status, short sections, and a compact comparison table when useful. Include a complete essential-content `text` fallback.
+- Recurring dashboard: the same tool with static `blocks` for status, side-by-side metric fields, selected findings, and a source footer. Do not hide uncertainty in the footer.
 - Current findings for decision makers: `slack_create_canvas`, with native Markdown headings, compact tables, and evidence links. The Canvas is the current report, not the investigation diary.
 - Technical discussion: use focused thread replies for evidence and questions relevant to the participants. A thread is not a reason to dump the full investigation. Keep long logs, queries, and chronology in existing linked evidence or explicitly requested attachments/appendices. Link relevant contributions rather than copying them into every update or Canvas.
 - Exact SQL, code, logs: `slack_upload_file` with `snippetType` (e.g. `sql`). A Markdown snippet is source text, not a rendered report.

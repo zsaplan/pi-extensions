@@ -293,6 +293,7 @@ test('slack_update_message can split updates into continuation replies', async t
       longTextMode: 'split',
       maxChars: 500,
       text: 'updated\n'.repeat(180),
+      clearBlocks: true,
       url: 'https://britecore.slack.com/archives/C12345678/p1700000000000100?thread_ts=1699999999.000100',
     },
     undefined,

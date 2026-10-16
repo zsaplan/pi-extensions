@@ -10,6 +10,11 @@ import {fileURLToPath} from 'node:url';
 import {Type, type Static} from 'typebox';
 import {registerPublishingTools} from './publishing-tools.ts';
 import {SLACK_MESSAGE_WRITING_GUIDELINES} from './writing-guidelines.ts';
+import {
+  prepareMessageLayout,
+  RICH_MESSAGE_PROPERTIES,
+} from './message-layout.ts';
+import {messageHasBlocks} from './message-content.ts';
 import {createSlackApprovalGate} from './approvals.ts';
 import {
   getSlackConfigStatusMessage,
@@ -54,7 +59,7 @@ const TOKEN_KIND_SCHEMA = Type.Optional(
 const FORMAT_MODE_SCHEMA = Type.Optional(
   Type.String({
     description:
-      'Message rendering mode: compact collapses whitespace; verbatim preserves Slack text/newlines. Default: compact.',
+      'compact: readable text including blocks, collapsed whitespace (default). verbatim: readable projection with line breaks, not lossless source. blocks: original text/blocks/attachments JSON, subject to output limits.',
   }),
 );
 const LONG_TEXT_MODE_SCHEMA = Type.Optional(
@@ -184,7 +189,11 @@ const READ_PERMALINK_SCHEMA = Type.Object({
 });
 const POST_MESSAGE_SCHEMA = Type.Object({
   channel: Type.String({description: 'Slack channel ID or #channel-name.'}),
-  text: Type.String({description: 'Message text to send to Slack.'}),
+  text: Type.String({
+    description:
+      'Message text, or accessible fallback containing all essential information when markdown/blocks is supplied.',
+  }),
+  ...RICH_MESSAGE_PROPERTIES,
   threadTs: Type.Optional(
     Type.String({description: 'Optional thread timestamp for replies.'}),
   ),
@@ -219,7 +228,17 @@ const UPDATE_MESSAGE_SCHEMA = Type.Object({
         'Parent thread timestamp for continuation parts when longTextMode=split. Defaults to the updated message ts.',
     }),
   ),
-  text: Type.String({description: 'Replacement message text.'}),
+  text: Type.String({
+    description:
+      'Replacement message text, or accessible fallback containing all essential information when markdown/blocks is supplied.',
+  }),
+  ...RICH_MESSAGE_PROPERTIES,
+  clearBlocks: Type.Optional(
+    Type.Boolean({
+      description:
+        'Explicitly replace a rich layout with text and remove top-level blocks. Legacy attachments are retained. Cannot combine with markdown/blocks. Otherwise text-only updates check the current message with SLACK_USER_TOKEN and refuse to flatten blocks.',
+    }),
+  ),
   mrkdwn: Type.Optional(
     Type.Boolean({description: 'Enable Slack mrkdwn parsing. Default: true.'}),
   ),
@@ -444,8 +463,10 @@ function normalizeFormatMode(
 ): SlackMessageFormatMode {
   const normalized = value?.trim().toLowerCase();
   if (!normalized || normalized === 'compact') return 'compact';
-  if (normalized === 'verbatim') return 'verbatim';
-  throw new Error('Slack formatMode must be "compact" or "verbatim".');
+  if (normalized === 'verbatim' || normalized === 'blocks') return normalized;
+  throw new Error(
+    'Slack formatMode must be "compact", "verbatim", or "blocks".',
+  );
 }
 
 function normalizeLongTextMode(value: string | undefined): SlackLongTextMode {
@@ -657,6 +678,49 @@ async function resolveMessageReference(
     threadTs: params.threadTs ?? permalink?.threadTs,
     ts,
   };
+}
+
+async function guardTextOnlyUpdate(
+  channel: string,
+  ts: string,
+  threadTs: string | undefined,
+  signal?: AbortSignal,
+): Promise<void> {
+  const {client} = requireSlackClientForTokenKind('user');
+  let messages: SlackMessage[] = [];
+  const options = {oldest: ts, latest: ts, inclusive: true, limit: 2};
+  try {
+    messages = await readThreadReplies(
+      client,
+      channel,
+      threadTs ?? ts,
+      options,
+      signal,
+    );
+  } catch (error) {
+    if (
+      !(error instanceof SlackApiError) ||
+      !['invalid_arguments', 'thread_not_found'].includes(
+        error.slackError ?? '',
+      )
+    )
+      throw error;
+  }
+  let current = messages.find(message => message.ts === ts);
+  if (!current) {
+    messages = await readConversationHistory(client, channel, options, signal);
+    current = messages.find(message => message.ts === ts);
+  }
+  if (!current) {
+    throw new Error(
+      'Cannot inspect the exact Slack message. Read it first (supply threadTs for a reply), then provide a complete markdown/blocks replacement or clearBlocks=true only if removing its layout is intended.',
+    );
+  }
+  if (messageHasBlocks(current)) {
+    throw new Error(
+      'This message contains blocks. Read it first and supply a complete markdown/blocks replacement. Use clearBlocks=true only to explicitly replace its top-level layout with text; legacy attachments are retained.',
+    );
+  }
 }
 
 function continuationThreadTs(
@@ -940,7 +1004,7 @@ export default function slackExtension(pi: ExtensionAPI) {
     promptGuidelines: [
       'Use slack_read_permalink when the user gives a Slack archives URL instead of manually parsing channel and timestamp.',
       'The tool tries conversations.replies first and falls back to nearby conversations.history for permalinks Slack will not treat as a thread.',
-      'Use formatMode=verbatim when checking Slack mrkdwn/code-block formatting.',
+      'Use formatMode=verbatim for readable structured content; use formatMode=blocks for original message block JSON. Read projections are not lossless replacement payloads, and API reads do not verify visual rendering.',
     ],
     parameters: READ_PERMALINK_SCHEMA,
     async execute(_toolCallId, params: ReadPermalinkParams, signal) {
@@ -1035,7 +1099,7 @@ export default function slackExtension(pi: ExtensionAPI) {
       'For ongoing investigations, announce substantive new evidence, changed conclusions, or material uncertainty—not document editing, formatting, routine verification, or tool limitations. Keep operational status in the Pi session unless explicitly requested in Slack. Editorial-only changes need no announcement.',
       'slack_post_message sends chat.postMessage with SLACK_BOT_TOKEN, not SLACK_USER_TOKEN.',
       'slack_post_message requires interactive approval unless its exact thread has a session grant or PI_SLACK_SKIP_SEND_CONFIRM=1 is set. Choose Approve thread for this session to allow future replies/uploads there; conversational pre-approval alone does not create an extension grant.',
-      'Long messages are rejected by default before sending; pass longTextMode=split only when multi-part posting is acceptable.',
+      'Use markdown for narrative reports or static blocks for metric dashboards, with an essential-content text fallback. Rich messages cannot be split. Ordinary long text is rejected by default; use longTextMode=split only when multi-part posting is acceptable.',
     ],
     parameters: POST_MESSAGE_SCHEMA,
     async execute(
@@ -1045,6 +1109,7 @@ export default function slackExtension(pi: ExtensionAPI) {
       _onUpdate,
       ctx,
     ) {
+      const layout = prepareMessageLayout(params);
       const {client, config} = requireSlackWriteClient();
       const conversation = await resolveConversation(
         client,
@@ -1060,7 +1125,9 @@ export default function slackExtension(pi: ExtensionAPI) {
         : conversationDisplayName(conversation);
       await confirmSlackWrite(config, ctx, {
         confirm: params.confirm,
-        preview: `Parts: ${prepared.chunks.length}\n\n${previewText(params.text)}`,
+        preview:
+          layout?.preview ??
+          `Parts: ${prepared.chunks.length}\n\n${previewText(params.text)}`,
         threadScope:
           params.threadTs && !params.replyBroadcast
             ? {channelId: conversation.id, parentThreadTs: params.threadTs}
@@ -1078,6 +1145,7 @@ export default function slackExtension(pi: ExtensionAPI) {
             client,
             {
               channel: conversation.id,
+              blocks: layout?.blocks,
               mrkdwn: params.mrkdwn,
               replyBroadcast: index === 0 ? params.replyBroadcast : undefined,
               text: chunk,
@@ -1104,6 +1172,7 @@ export default function slackExtension(pi: ExtensionAPI) {
           analysis: prepared.analysis,
           channel: conversation.id,
           channelName: conversation.name,
+          format: layout?.format ?? 'text',
           parts: postedParts,
           threadTs: params.threadTs,
           warnings: uniqueStrings(warnings),
@@ -1116,14 +1185,14 @@ export default function slackExtension(pi: ExtensionAPI) {
     name: 'slack_update_message',
     label: 'Slack Update Message',
     description:
-      'Update a Slack message using SLACK_BOT_TOKEN, with length preflight and optional safe splitting into continuation replies.',
+      'Update a Slack message using SLACK_BOT_TOKEN. Supports complete rich layouts. Text-only edits inspect with SLACK_USER_TOKEN unless clearBlocks explicitly permits removing the layout. Only ordinary text can split into continuations.',
     promptSnippet:
       'Update a Slack message or thread reply using SLACK_BOT_TOKEN.',
     promptGuidelines: [
       ...SLACK_MESSAGE_WRITING_GUIDELINES,
       'Use slack_update_message instead of hand-written Slack Web API calls when the user asks to edit a message.',
       'Pass url when the user gives a Slack permalink; otherwise pass channel and ts.',
-      'Long updates are rejected by default before sending; pass longTextMode=split only when updating the target plus posting continuation replies is acceptable.',
+      'Read the current message before editing. Supply a complete markdown/blocks replacement for rich content. clearBlocks=true explicitly replaces the top-level layout with text; legacy attachments remain. Do not use it merely to bypass a failed read. Rich updates never split. For ordinary text use longTextMode=split only when continuation replies are authorized.',
       'When splitting an update to a thread reply, pass the parent threadTs so continuation parts stay in the original thread.',
     ],
     parameters: UPDATE_MESSAGE_SCHEMA,
@@ -1134,15 +1203,27 @@ export default function slackExtension(pi: ExtensionAPI) {
       _onUpdate,
       ctx,
     ) {
+      const layout = prepareMessageLayout(params);
       const {client, config} = requireSlackWriteClient();
       const reference = await resolveMessageReference(client, params, signal);
       const prepared = prepareSlackMessageText(params.text, {
         longTextMode: normalizeLongTextMode(params.longTextMode),
         maxChars: params.maxChars,
       });
+      if (!layout && !params.clearBlocks) {
+        await guardTextOnlyUpdate(
+          reference.conversation.id,
+          reference.ts,
+          reference.threadTs,
+          signal,
+        );
+      }
       await confirmSlackWrite(config, ctx, {
         confirm: params.confirm,
-        preview: `Parts: ${prepared.chunks.length}\n\n${previewText(params.text)}`,
+        preview:
+          layout?.preview ??
+          `${params.clearBlocks ? 'REMOVE top-level blocks; legacy attachments retained.\n' : ''}Parts: ${prepared.chunks.length}\n\n${previewText(params.text)}`,
+        signal,
         target: `${conversationDisplayName(reference.conversation)} message ${reference.ts}`,
         title: 'Update Slack message?',
       });
@@ -1153,6 +1234,7 @@ export default function slackExtension(pi: ExtensionAPI) {
           client,
           {
             channel: reference.conversation.id,
+            blocks: layout?.blocks ?? (params.clearBlocks ? [] : undefined),
             mrkdwn: params.mrkdwn,
             text: prepared.chunks[0],
             ts: reference.ts,
@@ -1195,6 +1277,8 @@ export default function slackExtension(pi: ExtensionAPI) {
           analysis: prepared.analysis,
           channel: reference.conversation.id,
           channelName: reference.conversation.name,
+          format: layout?.format ?? 'text',
+          clearedBlocks: params.clearBlocks === true,
           parts,
           threadTs,
           ts: reference.ts,

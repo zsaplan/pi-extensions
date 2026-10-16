@@ -59,6 +59,27 @@ Live acceptance in the [authorized test thread](https://britecore.slack.com/arch
 
 Installed package: `/Users/zach/zsaplan/pi-extensions/slack`. Existing sessions need `/reload` to switch their source path; the posting implementation in the test session was byte-identical to installed trunk. Repeatable local evidence in that checkout: `slack/tmp/voice-live-20261016/` contains `draft-request.md`, `drafts.json`, `readback.txt`, `report.json`, and `verify.log` (gitignored). `report.json` records each message timestamp and the limits of the checks.
 
+## Rich message layouts
+
+Add optional `markdown` or static `blocks` to existing post/update tools. Required `text` remains the ordinary message or the accessible fallback containing all essential information. Markdown is translated by Slack, not a local parser. Static blocks cover headers, sections/metric fields, dividers, context, and simple tables; interactive elements are out of scope. Upload comments remain mrkdwn.
+
+Rich messages are single-part, bounded, and fully represented in approval previews. They do not change grants, channel access, or OAuth scopes. Text-only edits inspect the existing message using the configured user read token and refuse to flatten blocks unless `clearBlocks: true` explicitly authorizes it. Rich replacements supply a complete new layout. This is not an atomic concurrency guard. Numeric table cells require both `value` and display `text` per Slack's [RawNumberElement contract](https://docs.slack.dev/tools/node-slack-sdk/reference/types/interfaces/RawNumberElement/); limits and read projections use display text. Reads and research include structured content; `formatMode: "blocks"` exposes source for inspection, not a promise of lossless round-tripping through the limited writing schema.
+
+Failure cases to verify through the registered tools and HTTP transport:
+
+- [x] Ordinary text posting, splitting, and thread routing still work.
+- [x] Markdown and dashboard layouts reach Slack with the intended fallback and no extra posts.
+- [x] Approval previews include the actual rich content; cancellation and missing approval prevent writes.
+- [x] Invalid/conflicting layouts, unsupported interactive blocks, excessive sizes, and rich splitting fail before writes.
+- [x] Text-only updates cannot silently remove blocks; an explicit clear is allowed. Missing read access or an unavailable target fails closed.
+- [x] Read/thread/permalink and research find table cells, metric fields, rich-text lists/links, and attachment content even when fallback text is only a summary.
+- [x] Unsupported read content is marked, and exact source is available subject to normal output limits.
+- [x] Package and repository verification pass; all five review categories approve.
+- [ ] Installed trunk loads the new schemas in a fresh Pi process.
+- [ ] Live Slack rendering and mobile/desktop readability are checked separately after explicit authorization. Local transport tests do not establish Slack rendering.
+
+Automated evidence (2026-10-16): `npm run verify --workspace slack` passed all 108 tests, including the registered-tool/local-HTTP workflow. Final root `npm run verify` passed all workspaces and live-config checks (task-assistant retains one intentional skip). All five polish categories approved against pre-change local `main` (`ca0dec1`), including a second pass after checking Slack's numeric-cell contract. Gitignored evidence in the feature checkout: `slack/tmp/message-layout-e2e/report.json` (repeatable command, checks, previews, requests) and `slack/tmp/rich-messages-20261016/` (verification logs and review results). No live Slack writes were made for this change; rendering and human readability remain unchecked above.
+
 ## Session-scoped grants
 
 The interactive gate receives a structured `threadScope` only from new non-broadcast replies and file uploads with a channel/parent timestamp. No user/model tool parameter can grant consent. A human selects approval-once or thread-for-session in the UI, or confirms `/slack-approvals allow <parent-permalink>`.
@@ -127,5 +148,5 @@ Tools bound Slack pagination and cap rendered output. Final text is also truncat
 - Slack search API integration
 - bulk uploads, file/whole-Canvas deletion, or ownership transfer
 - atomic cross-client edit locking, automatic conflict merges, or lossless HTML-to-Markdown conversion
-- automatic session publishing and Block Kit message layouts
+- automatic session publishing, interactive Block Kit elements, and arbitrary layout passthrough
 - long-running full-workspace archival
