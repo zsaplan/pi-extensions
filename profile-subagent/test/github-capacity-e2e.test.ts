@@ -109,9 +109,9 @@ test(
             {
               type: 'toolCall',
               id: 'research',
-              name: child ? 'github_research_read' : 'github_research_run',
+              name: child ? 'github_file' : 'github_research_run',
               arguments: child
-                ? {operation: 'file', repository, path: 'config/example.yml'}
+                ? {repository, path: 'config/example.yml'}
                 : {
                     task: `Research ${repository}; preserve unavailable evidence.`,
                   },

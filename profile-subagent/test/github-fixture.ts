@@ -9,6 +9,8 @@ import {
 } from '@earendil-works/pi-ai';
 import type {ExtensionAPI} from '@earendil-works/pi-coding-agent';
 
+import {childCall} from './github-child-call.ts';
+
 // Scripted transport, not a live model or instruction-fidelity qualification.
 export default async function (pi: ExtensionAPI) {
   const cfg = JSON.parse(
@@ -165,6 +167,9 @@ export default async function (pi: ExtensionAPI) {
         child,
         tools: getCurrentTools(context.messages).map(t => t.name),
         results: results.length,
+        ...(child && results.length === 0
+          ? {toolSchemas: getCurrentTools(context.messages)}
+          : {}),
       });
       const message: AssistantMessage = {
         role: 'assistant',
@@ -216,7 +221,7 @@ export default async function (pi: ExtensionAPI) {
           ];
         } else message.content = [{type: 'text', text: 'PARENT_DONE'}];
       } else if (
-        cfg.scenario === 'adapter-limit' &&
+        ['adapter-limit', 'failure-detail-cap'].includes(cfg.scenario) &&
         results.length < cfg.actions.length
       ) {
         message.stopReason = 'toolUse';
@@ -346,15 +351,17 @@ export default async function (pi: ExtensionAPI) {
         if (cfg.scenario === 'reference-malformed')
           citations.push('[[Sunfinished');
         const note =
-          cfg.scenario === 'heldout-conflict'
-            ? 'Documentation says retry_limit is 9, while settings specify 3 and the consumer reads settings.retry_limit. This is a source conflict, not proof of runtime behavior.'
-            : cfg.scenario === 'heldout-incomplete'
-              ? 'Consumer evidence is inaccessible. Documentation and settings disagree; the complete runtime question remains unanswered.'
-              : cfg.scenario === 'adapter-limit'
-                ? 'Partial research: adapter budget exhausted before decisive file reads. No manifest contents or restore candidate established.'
-                : cfg.scenario === 'configuration'
-                  ? 'Compare the observed pre-introduction and introduction versions; equal blob IDs across the old/new paths support a rename, not a new introduction. Later value changes do not establish deployment.'
-                  : 'Snapshot configuration supports configured intent only. Successful restoration and SOC2 compliance remain unverified; execution evidence is unavailable here.';
+          cfg.scenario === 'tool-contract-errors'
+            ? 'Deliberately inaccurate fixture summary: one refused search and two schema failures.'
+            : cfg.scenario === 'heldout-conflict'
+              ? 'Documentation says retry_limit is 9, while settings specify 3 and the consumer reads settings.retry_limit. This is a source conflict, not proof of runtime behavior.'
+              : cfg.scenario === 'heldout-incomplete'
+                ? 'Consumer evidence is inaccessible. Documentation and settings disagree; the complete runtime question remains unanswered.'
+                : cfg.scenario === 'adapter-limit'
+                  ? 'Partial research: adapter budget exhausted before decisive file reads. No manifest contents or restore candidate established.'
+                  : cfg.scenario === 'configuration'
+                    ? 'Compare the observed pre-introduction and introduction versions; equal blob IDs across the old/new paths support a rename, not a new introduction. Later value changes do not establish deployment.'
+                    : 'Snapshot configuration supports configured intent only. Successful restoration and SOC2 compliance remain unverified; execution evidence is unavailable here.';
         message.content = [
           {
             type: 'text',
@@ -367,6 +374,12 @@ export default async function (pi: ExtensionAPI) {
           },
         ];
       }
+      if (child)
+        message.content = message.content.map(part =>
+          part.type === 'toolCall' && part.name === 'github_research_read'
+            ? {...part, ...childCall(part.arguments)}
+            : part,
+        );
       const stream = createAssistantMessageEventStream();
       stream.push({type: 'start', partial: message});
       stream.push({
