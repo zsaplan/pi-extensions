@@ -50,7 +50,8 @@ export async function installResearchTransport(
   const waiters = new Set<() => void>();
   const sent = new Set<number>(),
     connected = new Set<number>();
-  let requests = 0,
+  let attemptedRequests = 0,
+    requests = 0,
     terminals = 0,
     knownCost = 0,
     failure: string | undefined;
@@ -106,7 +107,6 @@ export async function installResearchTransport(
           frame.previous_response_id !== undefined
         )
           fail('Research frame/retry refused.');
-        sent.add(requests);
         record('send', {
           request: requests,
           model: frame.model,
@@ -114,6 +114,7 @@ export async function installResearchTransport(
           tier: 'default',
         });
         send(data);
+        sent.add(requests);
       };
       socket.addEventListener(
         'close',
@@ -135,6 +136,7 @@ export async function installResearchTransport(
   });
   globalThis.WebSocket = Guard;
   runtime.streamSimple = (model, context, options) => {
+    attemptedRequests++;
     if (
       failure ||
       model.provider !== researchDefaults.provider ||
@@ -144,10 +146,11 @@ export async function installResearchTransport(
       options?.reasoning !== 'high' ||
       requests !== terminals ||
       knownCost >= 0.25 ||
-      ++requests > 10 ||
+      requests >= 10 ||
       Date.now() >= deadlineAt
     )
       return fail('Research model/accounting/deadline/cost admission refused.');
+    requests++;
     const headers = {
       ...options.headers,
       'x-codex-routing-hint': 'model=gpt-6-luna;tier=default',
@@ -281,9 +284,13 @@ export async function installResearchTransport(
       return {
         requestedTier: 'default',
         transport: 'websocket',
+        attemptedRequests,
+        refusedRequests: attemptedRequests - requests,
         requests,
+        sentRequests: sent.size,
         terminals,
-        accountingComplete: requests > 0 && requests === terminals,
+        accountingComplete:
+          requests > 0 && requests === sent.size && requests === terminals,
         knownSdkCost: knownCost,
         input,
         output,

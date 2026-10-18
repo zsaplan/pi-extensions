@@ -97,7 +97,10 @@ export function createGithubActivity() {
           partialFileWindows++;
         if (value.operation === 'search' && Array.isArray(coverage.unavailable))
           unavailableSearchFiles += coverage.unavailable.length;
-        if (coverage.earlierPagesNotObserved === true)
+        if (
+          coverage.earlierPagesNotObserved === true ||
+          value.earlierPagesNotObserved === true
+        )
           pagesWithEarlierPagesOutsideResponse++;
         if (coverage.attachments === 'not read')
           responsesWithoutAttachmentInspection++;

@@ -168,6 +168,11 @@ test(
     const results: {scenario: string; passed: boolean}[] = [];
     for (const scenario of [
       'success',
+      'summary-success',
+      'summary-violates',
+      'summary-cancel',
+      'transport-limit',
+      'transport-expired',
       'blocked',
       'redacted',
       'provider-error',
@@ -195,7 +200,10 @@ test(
               'Read fixture/research README at commit ' +
               head +
               ' and report the setting without claiming runtime execution.',
-            actions: tokenCases[scenario],
+            actions: scenario.startsWith('summary-')
+              ? Array.from({length: 12}, () => file('fixture/research'))
+              : tokenCases[scenario],
+            transportProbe: scenario.startsWith('transport-'),
             ...(scenario === 'legacy-policy' ? {legacyRepositories: []} : {}),
           }),
         );
@@ -210,7 +218,63 @@ test(
         assert.equal(value.activeHttp, 0);
         if (value.report.sourceEvidence)
           await checkGithubRetention(value.report);
-        if (scenario === 'legacy-policy') {
+        if (scenario.startsWith('transport-')) {
+          const count = scenario === 'transport-limit' ? 10 : 0;
+          const research = value.report.research;
+          assert.equal(research.attemptedRequests, count + 1);
+          assert.equal(research.refusedRequests, 1);
+          assert.equal(research.requests, count);
+          assert.equal(research.sentRequests, count);
+          assert.equal(research.terminals, count);
+          assert.equal(research.accountingComplete, count > 0);
+          assert.equal(research.cleanupComplete, true);
+          assert.equal(value.frames, count);
+          assert.equal(value.wireGithub, 0);
+        } else if (scenario.startsWith('summary-')) {
+          const report = value.report;
+          assert.equal(value.frames, 10);
+          assert.equal(report.finalSummaryTurn, true);
+          // A disobedient tool response can race cancellation into a locally
+          // refused continuation. It must not count as an admitted/sent request.
+          assert.equal(
+            report.research.attemptedRequests,
+            scenario === 'summary-violates' ? 11 : 10,
+          );
+          assert.equal(
+            report.research.refusedRequests,
+            scenario === 'summary-violates' ? 1 : 0,
+          );
+          assert.equal(report.research.requests, 10);
+          assert.equal(report.research.sentRequests, 10);
+          assert.equal(
+            report.research.terminals,
+            scenario === 'summary-cancel' ? 9 : 10,
+          );
+          assert.equal(
+            report.research.accountingComplete,
+            scenario !== 'summary-cancel',
+          );
+          assert.equal(report.research.cleanupComplete, true);
+          assert.equal(report.sourceEvidence.records.length, 9);
+          assert.equal(report.github.calls, 9);
+          assert.equal(
+            report.status,
+            scenario === 'summary-success' ? 'completed' : 'failed',
+          );
+          assert.deepEqual(value.enclosingUsage, report.usage);
+          if (scenario === 'summary-success') {
+            assert.ok(report.output.length > 0);
+            assert.equal(report.referenceValidation.status, 'valid');
+            assert.equal(report.turns, 10);
+          } else if (scenario === 'summary-violates')
+            assert.match(report.error, /turn limit/);
+          else
+            assert.ok(
+              report.handoffIssues.includes(
+                'Parent cancelled the research assignment.',
+              ),
+            );
+        } else if (scenario === 'legacy-policy') {
           assert.match(
             JSON.stringify(value.report),
             /Repository access options are no longer supported/,

@@ -390,6 +390,35 @@ test(
           send({message: 'PRIVATE_CREDENTIAL_ERROR'}, 404);
           return;
         }
+        if (
+          scenario === 'directory-navigation' &&
+          kind === 'tree' &&
+          match[2] === git('show', '-s', '--format=%T', head)
+        ) {
+          const blob = git('rev-parse', `${head}:sites/uat.yml`);
+          const size = Number(git('cat-file', '-s', blob));
+          value = {
+            ...value,
+            tree: [
+              ...Array.from({length: 25}, (_, n) => ({
+                path: `.config-${String(n).padStart(2, '0')}`,
+                size,
+                type: 'blob',
+                mode: '100644',
+                sha: blob,
+              })),
+              ...['target.yml', '.env', 'target.secret', 'target-link'].map(
+                path => ({
+                  path,
+                  size,
+                  type: 'blob',
+                  mode: path === 'target-link' ? '120000' : '100644',
+                  sha: blob,
+                }),
+              ),
+            ],
+          };
+        }
         if (scenario === 'truncated-tree' && kind === 'tree')
           value = {...value, truncated: true};
         if (
@@ -523,6 +552,24 @@ test(
       page,
     });
     const cases: Record<string, Array<Record<string, unknown>>> = {
+      'final-turn-batch': Array.from({length: 11}, () => ({
+        ...read('sites/uat.yml'),
+        limit: 1,
+      })),
+      'final-turn-violates': Array.from({length: 11}, () => ({
+        ...read('sites/uat.yml'),
+        limit: 1,
+      })),
+      'directory-navigation': [
+        {...base, operation: 'list', path: '.'},
+        {...base, operation: 'list', path: '.', page: 2},
+        {...base, operation: 'list', path: '.', nameContains: 'target'},
+        {...base, operation: 'list', path: '.', nameContains: '.env'},
+        {...base, operation: 'list', path: '.', page: 3},
+        {...base, operation: 'list', path: '.', page: 1.5},
+        {...base, operation: 'list', path: '.', page: 101},
+        {...base, operation: 'search', path: '.', term: 'ABSENT_MARKER'},
+      ],
       'tool-contract-errors': [
         ...[50, 65, 42].map(limit => ({...read('sites/uat.yml'), limit})),
         ...['config/service.yml', 'sites/uat.yml'].map(path => ({
@@ -1001,11 +1048,19 @@ test(
         .split('\n')
         .map(parse);
       const childLogs = logs.filter(l => l.child === true);
-      for (const item of childLogs) {
+      for (const [index, item] of childLogs.entries()) {
+        const finalSummary =
+          index === 9 &&
+          ![
+            'repeat',
+            'failure-new-assignment',
+            'assignment-reference-isolation',
+          ].includes(scenario);
         assert.deepEqual(
           [...(item.tools as string[])].sort(),
-          Object.values(childNames).sort(),
+          finalSummary ? [] : Object.values(childNames).sort(),
         );
+        if (finalSummary) assert.equal(item.finalSummaryNotice, true);
         if (item.toolSchemas) {
           const schemas = item.toolSchemas as Array<{
             name: string;
@@ -1211,6 +1266,60 @@ test(
             assert.equal(result.requests.length, 0);
             evidence.at(-1)!.passed = true;
             return;
+          }
+          if (scenario.startsWith('final-turn-')) {
+            assert.equal(reports[0].finalSummaryTurn, true);
+            assert.equal(result.logs.filter(l => l.child === true).length, 10);
+            assert.equal(
+              observations.length,
+              scenario === 'final-turn-batch' ? 11 : 9,
+            );
+            assert.ok(observations.every(o => o.status === 'ok'));
+            if (scenario === 'final-turn-batch') {
+              assert.equal(reports[0].status, 'completed');
+              assert.equal(reports[0].turns, 10);
+              assert.equal(
+                (reports[0].referenceValidation as Json).status,
+                'valid',
+              );
+              const last = result.logs.filter(l => l.child === true).at(-1)!;
+              assert.equal(last.results, 11);
+            } else {
+              assert.equal(reports[0].status, 'failed');
+              assert.match(String(reports[0].error), /turn limit/);
+            }
+          }
+          if (scenario === 'directory-navigation') {
+            assert.equal(reports[0].status, 'completed');
+            assert.equal(observations.length, 6); // Two invalid page values never reach the adapter.
+            assert.equal((observations[0].entries as unknown[]).length, 20);
+            assert.equal(observations[0].nextPage, 2);
+            assert.equal((observations[1].entries as unknown[]).length, 6);
+            assert.equal(observations[1].nextPage, null);
+            assert.equal(observations[1].earlierPagesNotObserved, true);
+            assert.deepEqual(
+              (observations[2].entries as Json[]).map(e => e.path),
+              ['target.yml'],
+            );
+            assert.deepEqual(observations[3].entries, []);
+            assert.deepEqual(observations[4].entries, []);
+            assert.equal((observations[5].coverage as Json).maxFiles, 5);
+            assert.equal(
+              ((observations[5].coverage as Json).checked as string[]).length,
+              5,
+            );
+            assert.ok(
+              packet!.records.every(
+                o =>
+                  !JSON.stringify(o.content).includes('target.secret') &&
+                  !JSON.stringify(o.content).includes('target-link'),
+              ),
+            );
+            assert.equal(
+              result.requests.filter(r => r.path.includes('/git/trees/'))
+                .length,
+              1,
+            );
           }
           const summary = reports[0].activitySummary as {
             childToolResults: {

@@ -38,7 +38,12 @@ export const GithubOperationSchemas = [
     {additionalProperties: false},
   ),
   Type.Object(
-    {...common, operation: Type.Literal('list')},
+    {
+      ...common,
+      operation: Type.Literal('list'),
+      page: Type.Optional(Type.Integer({minimum: 1, maximum: 100})),
+      nameContains: Type.Optional(Type.String({minLength: 1, maxLength: 100})),
+    },
     {additionalProperties: false},
   ),
   Type.Object(
@@ -504,6 +509,7 @@ export function createGithubReader(transport: GithubTransport) {
     commit: string,
     path: string,
     signal: AbortSignal,
+    selection: {page?: number; nameContains?: string} = {},
   ) {
     const entry =
       path === ''
@@ -527,13 +533,27 @@ export function createGithubReader(transport: GithubTransport) {
         ((e.type === 'tree' && e.mode === '040000') ||
           (e.type === 'blob' && ['100644', '100755'].includes(String(e.mode)))),
     );
+    // Filter only safe direct entries. Pagination never expands the response
+    // or performs an automatic follow-up request; immutable tree reuse applies.
+    const matching = visible.filter(e =>
+      String(e.path).includes(selection.nameContains ?? ''),
+    );
+    const page = selection.page ?? 1;
+    const selected = matching.slice((page - 1) * 20, page * 20);
+    const hasMore = page * 20 < matching.length;
     return {
-      entries: visible.slice(0, 20).map(e => ({
+      entries: selected.map(e => ({
         path: childPath(e.path),
         type: String(e.type),
         sha: sha(e.sha),
       })),
-      omitted: entries.length - visible.slice(0, 20).length,
+      omitted: entries.length - selected.length,
+      page,
+      nameContains: selection.nameContains,
+      matchingEntries: matching.length,
+      earlierPagesNotObserved: page > 1,
+      hasMore,
+      nextPage: hasMore && page < 100 ? page + 1 : null,
     };
   }
   async function contents(
@@ -775,10 +795,10 @@ export function createGithubReader(transport: GithubTransport) {
     const commit = args.commit ?? (await defaultHead(g, signal));
     if (args.operation === 'list')
       return {
-        ...(await listing(g, commit, path, signal)),
+        ...(await listing(g, commit, path, signal, args)),
         commit,
         coverage:
-          'Shallow directory only; omitted entries may be unsafe or over the 20-entry bound.',
+          'Shallow directory only; case-sensitive literal name filter, twenty safe entries per page, at most 100 pages. Omitted entries include unsafe, filtered and other-page entries. No automatic paging; absence here is not repository absence.',
       };
     if (args.operation === 'file') {
       const file = await contents(g, commit, args.path, signal, redact),
