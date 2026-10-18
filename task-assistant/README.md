@@ -6,15 +6,15 @@ The coordinator discovers work in Slack, keeps a durable local task queue, and c
 
 The implementation includes bounded evidence tools, approval-bound trials and regular use, recoverable Slack delivery, and an optional macOS background service. It is a restricted investigator and drafter, not an unrestricted coding or operations agent. Nothing starts automatically with ordinary Pi sessions. Deployment-specific approvals, transcripts, incident details and acceptance records belong outside Git.
 
-## Reproducible private Mac release
+## Build and install on another Mac
 
-Use [packaging/INSTALL.md](packaging/INSTALL.md) for a destination-local, paused installation and [packaging/MIGRATION.md](packaging/MIGRATION.md) for separate stateful-move/rollback gates. Build and clean-install E2E commands are in [packaging/README.md](packaging/README.md). This does not migrate existing approvals, research bindings or task state automatically.
+Use [packaging/INSTALL.md](packaging/INSTALL.md) for **clone → build → paused install** on native Apple Silicon macOS. Both components build from the checkout; no external researcher snapshot or original developer paths are required. [packaging/README.md](packaging/README.md) documents pinned inputs and the fresh-clone E2E. [packaging/MIGRATION.md](packaging/MIGRATION.md) retains separate stateful-move/rollback gates. This does not migrate existing approvals, research bindings or task state automatically.
 
 ## Opt-in GitHub research
 
 `serve` and `step` accept `--github-research-config PRIVATE.json`. This loads the existing profile-subagent host API, not its TUI-only entry or another scheduler. The parent remains on SDK 1.1.0; the native researcher retains its separately installed, qualified SDK 0.99.2, Luna/high/default-tier WebSocket transport and existing read-only limits. Do not replace either SDK or use the base/non-native runner as an automatic fallback.
 
-The operator-owned 0600 configuration binds `schema_version:1`, the exact task `root`, an absolute frozen `package_dir` (compiled `dist/`, `profiles/`, `package.json`), `profile_digest`, `files` (relative paths to SHA-256 content hashes), `dependency_lock: {file, hash}`, and `auth_path` (private Codex OAuth storage). Keep the snapshot and its linked dependency checkout intact. All compiled JavaScript must be inventoried. Package/profile/lockfile changes fail closed. The first use binds the configuration hash in `intake/github-research.json`; changing or omitting it requires deliberate operator review, not deletion of the binding.
+The operator-owned 0600 configuration binds `schema_version:1`, the exact task `root`, an absolute frozen `package_dir` (compiled `dist/`, `profiles/`, `package.json`), `profile_digest`, `files` (relative paths to SHA-256 content hashes), `dependency_lock: {file, hash}`, and `auth_path` (private Codex OAuth storage). Keep the snapshot and its dependency installation intact. Source-built releases use destination-local dependencies, not a developer checkout. All compiled JavaScript must be inventoried. Package/profile/lockfile changes fail closed. The first use binds the configuration hash in `intake/github-research.json`; changing or omitting it requires deliberate operator review, not deletion of the binding.
 
 - Supply `GH_TOKEN` (or `GITHUB_TOKEN` for a direct CLI run). Repository access follows that token; the exact task question still bounds the work. Credentials are never model arguments. For an existing macOS service, deliberately add `GH_TOKEN` to its private credentials file and the configuration flag to its saved arguments while stopped. No credential discovery shell or installation runs inside a worker.
 - With research enabled, a new task's session and durable Slack parent are prepared before research setup or model work. The existing idempotent messenger handles parent creation; `step` without a communication client requires an already-published parent.
@@ -23,11 +23,12 @@ The operator-owned 0600 configuration binds `schema_version:1`, the exact task `
 - The child inherits the worker's absolute 120-second deadline and existing model reservation (claim identity for a direct non-budgeted step). It gets no separate rolling-budget reservation or fresh 90 seconds. A cancellable inline gate respects the native researcher's one-active-run limit within the existing two workers; waiting consumes the same deadline. Child cleanup is awaited before releasing the slot.
 - Original results and bounded evidence stay under `runs/github-research/TASK/`. The parent uses existing task settlement and serialized Slack delivery; the child cannot post, review code, change systems or certify runtime success. Pinned GitHub Markdown source links are permitted in answers; bare local Markdown artifacts remain blocked.
 
-Build and run the optional cross-version fixture with a separately reviewed researcher checkout:
+Build and run the optional cross-version fixture from the reviewed repository root:
 
 ```bash
 npm run build --workspace task-assistant
-TASK_RESEARCH_PACKAGE=/absolute/reviewed/profile-subagent \
+npm run build --workspace profile-subagent
+TASK_RESEARCH_PACKAGE="$PWD/profile-subagent" \
   node --test task-assistant/test/github-research.test.ts
 ```
 

@@ -12,7 +12,6 @@ import {
   chmod,
   utimes,
   writeFile,
-  realpath,
 } from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -24,20 +23,27 @@ import {
   save,
   sha,
   verifyFiles,
+  runtime,
 } from './release-lib.mjs';
 
 process.umask(0o077);
 const here = path.dirname(fileURLToPath(import.meta.url)),
   pkg = path.resolve(here, '..'),
   repo = path.resolve(pkg, '..');
-const opt = args(process.argv.slice(2), [
-  '--out',
-  '--researcher-dir',
-  '--allow-dirty',
-]);
+const opt = args(process.argv.slice(2), ['--out', '--allow-dirty']);
+requireThat(opt['--out'], 'out_required');
+const build = await json(path.join(here, 'research-build.json'));
+runtime({runtime: {node: build.node}});
+const npmVersion = execFileSync('npm', ['--version'], {
+  encoding: 'utf8',
+}).trim();
+requireThat(npmVersion === build.npm, 'unqualified_npm_version');
 requireThat(
-  opt['--out'] && opt['--researcher-dir'],
-  'out_and_researcher_dir_required',
+  sha(await readFile(path.join(repo, 'package-lock.json'))) ===
+    build.dependencyLockSha256 &&
+    (await json(path.join(repo, 'node_modules/typescript/package.json')))
+      .version === build.typescript,
+  'build_dependencies_changed',
 );
 const git = (...argv) =>
   execFileSync('git', ['-C', repo, ...argv], {encoding: 'utf8'}).trim();
@@ -57,12 +63,30 @@ async function sourceSnapshot() {
 }
 const snapshotHash = await sourceSnapshot();
 const commit = git('rev-parse', 'HEAD'),
-  researcher = await realpath(opt['--researcher-dir']);
+  researcher = path.join(repo, 'profile-subagent');
 const frozen = await json(path.join(here, 'research-source.json'));
-await verifyFiles(researcher, frozen.files);
+requireThat(build.revision === frozen.revision, 'research_revision_mismatch');
+await verifyFiles(researcher, build.files);
+const inputs = {
+  ...(await inventory(researcher, 'src')),
+  ...(await inventory(researcher, 'profiles')),
+  ...Object.fromEntries(
+    await Promise.all(
+      ['package.json', 'tsconfig.json', 'tsconfig.build.json'].map(
+        async name => [name, sha(await readFile(path.join(researcher, name)))],
+      ),
+    ),
+  ),
+};
+requireThat(
+  Object.keys(inputs).length === Object.keys(build.files).length &&
+    Object.entries(inputs).every(([name, hash]) => build.files[name] === hash),
+  'unexpected_research_source',
+);
 const out = path.resolve(opt['--out']);
 await mkdir(out, {recursive: true, mode: 0o700});
-const stage = await mkdtemp(path.join(out, '.stage-'));
+const stage = await mkdtemp(path.join(out, '.stage-')),
+  scratch = await mkdtemp(path.join(out, '.build-'));
 async function copy(from, to) {
   requireThat((await lstat(from)).isFile(), 'non_regular_release_input');
   await mkdir(path.dirname(to), {recursive: true, mode: 0o700});
@@ -77,6 +101,7 @@ for (const name of [
   'MIGRATION.md',
   'example-config.json',
   'research-source.json',
+  'research-build.json',
 ])
   await copy(path.join(here, name), path.join(stage, name));
 for (const [from, to] of [
@@ -85,21 +110,44 @@ for (const [from, to] of [
 ])
   for (const name of ['package.json', 'package-lock.json'])
     await copy(path.join(here, from, name), path.join(stage, to, name));
-execFileSync('npm', ['run', 'build', '--workspace', 'task-assistant'], {
-  cwd: repo,
-  stdio: 'inherit',
-});
-for (const name of (await readdir(path.join(pkg, 'dist'))).sort())
+// Fresh compiler output: never package stale checkout dist or incremental caches.
+for (const [name, source] of [
+  ['app', pkg],
+  ['researcher', researcher],
+]) {
+  execFileSync(
+    process.execPath,
+    [
+      path.join(repo, 'node_modules/typescript/bin/tsc'),
+      '-p',
+      path.join(source, 'tsconfig.build.json'),
+      '--outDir',
+      path.join(scratch, name, 'dist'),
+      '--tsBuildInfoFile',
+      path.join(scratch, name, 'build.tsbuildinfo'),
+    ],
+    {cwd: repo, stdio: 'inherit'},
+  );
+}
+for (const name of (await readdir(path.join(scratch, 'app/dist'))).sort())
   if (name.endsWith('.js'))
     await copy(
-      path.join(pkg, 'dist', name),
+      path.join(scratch, 'app/dist', name),
       path.join(stage, 'app/dist', name),
     );
 for (const name of Object.keys(frozen.files))
   await copy(
-    path.join(researcher, name),
+    path.join(
+      name.startsWith('dist/') ? path.join(scratch, 'researcher') : researcher,
+      name,
+    ),
     path.join(stage, 'researcher/profile-subagent', name),
   );
+// Every shipped researcher runtime/profile byte must match the qualified baseline.
+await verifyFiles(
+  path.join(stage, 'researcher/profile-subagent'),
+  frozen.files,
+);
 requireThat(
   (await sourceSnapshot()) === snapshotHash,
   'source_changed_during_build',
@@ -147,6 +195,11 @@ await save(path.join(stage, 'release.json'), {
   schemaVersion: 1,
   id,
   source: {commit, tree: git('rev-parse', 'HEAD^{tree}'), dirty, snapshotHash},
+  build: {
+    typescript: build.typescript,
+    dependencyLockSha256: build.dependencyLockSha256,
+    researcherSourceHash: sha(JSON.stringify(build.files)),
+  },
   researcher: {
     revision: frozen.revision,
     snapshotHash: sha(JSON.stringify(frozen.files)),
@@ -157,7 +210,7 @@ await save(path.join(stage, 'release.json'), {
     arch: 'arm64',
     node: process.versions.node,
     nodeMinimum: '22.19.0',
-    npm: execFileSync('npm', ['--version'], {encoding: 'utf8'}).trim(),
+    npm: npmVersion,
     parentSdk: '1.1.0',
     researcherSdk: '0.99.2',
   },

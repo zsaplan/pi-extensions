@@ -1,42 +1,59 @@
-# Private task-assistant release — native Apple Silicon macOS
+# Task assistant — source build and paused Mac installation
 
-This is an application release, not a Pi extension install and not a state backup.
-It includes compiled task-assistant code and the frozen GitHub profile/code snapshot.
-Parent SDK/CLI **1.1.0** and researcher SDK/CLI **0.99.2** install separately.
-No global Pi command, developer checkout, copied node_modules, Cloudflare or Pi Durable is used.
+Use native arm64 **Node 26.10.0 and npm 11.19.1** from a trusted distribution. The application's
+existing floor is Node 22.19.0; other versions are not qualified here. Git and public npm-registry
+access are also required. No global Pi installation or files from another Mac are needed.
 
-## Install without starting anything
+## Clone and build
 
-Use native arm64 **Node 26.10.0 and npm 11.19.1**, the tested pair recorded in release.json.
-The existing application floor is Node 22.19.0; other versions are not qualified by this release.
-Install Node/npm separately from a trusted distribution. Resolve any version-manager shim to the
-actual npm CLI JavaScript file for --npm-cli. The installer invokes it with the selected Node.
-
-Transfer the .tgz and .sha256 through a private approved channel. Compare the hash with the
-separately supplied RESULT.md before unpacking. Do not transfer auth, state or development folders.
+After the source-install change has been published, use the reviewed commit/tag identified in the
+release result. Replace `REVIEWED_RELEASE_REF` below; do not assume an arbitrary main HEAD is qualified.
+Use a new checkout rather than changing an existing service's source or dependencies.
 
 ```sh
+git clone https://github.com/zsaplan/pi-extensions.git pi-task-assistant-source
+cd pi-task-assistant-source
+git checkout --detach REVIEWED_RELEASE_REF
+npm ci --ignore-scripts
 umask 077
-# In the directory containing the release and its checksum:
-shasum -a 256 -c task-assistant-RELEASE-darwin-arm64.tgz.sha256
-mkdir unpacked
-tar -xzf task-assistant-RELEASE-darwin-arm64.tgz -C unpacked
+OUT="$(mktemp -d "$HOME/task-assistant-release.XXXXXX")"
+npm run release --workspace task-assistant -- --out "$OUT"
+ARCHIVE="$(find "$OUT" -maxdepth 1 -name '*.tgz')"
+ID="$(basename "$ARCHIVE" .tgz)"
+```
+
+Stop if any command fails. The build compiles both components from this checkout with locked
+build dependencies. Existing dist files are ignored, and researcher source/runtime fingerprints
+must match the qualified baseline. Parent SDK/CLI **1.1.0** and researcher SDK/CLI **0.99.2** remain
+separate. Nothing connects to Slack or starts a service during the build.
+
+## Install the built release without starting anything
+
+Continue in the same shell:
+
+```sh
+(cd "$OUT" && shasum -a 256 -c "$ID.tgz.sha256")
+UNPACK="$(mktemp -d "$HOME/task-assistant-unpack.XXXXXX")"
+tar -xzf "$ARCHIVE" -C "$UNPACK"
 mkdir -p "$HOME/Applications/task-assistant/releases"
-node unpacked/install.mjs \
-  --prefix "$HOME/Applications/task-assistant/releases/RELEASE" \
-  --npm-cli "$(command -v npm)"
-RELEASE="$HOME/Applications/task-assistant/releases/RELEASE"
+RELEASE="$HOME/Applications/task-assistant/releases/$ID"
+node "$UNPACK/install.mjs" --prefix "$RELEASE" --npm-cli "$(command -v npm)"
 PRIVATE="$HOME/.local/share/task-assistant"
 node "$RELEASE/manage.mjs" init-config --file "$PRIVATE/config.json" --private-base "$PRIVATE"
 node "$RELEASE/manage.mjs" check --config "$PRIVATE/config.json"
 ```
 
-Install uses the included lockfiles, public registry tarball integrity and destination-local npm ci,
-with lifecycle scripts disabled and no inherited npm authentication/config. It needs registry access.
-No credentials, tasks, approvals, LaunchAgent or listener are created. Existing destinations are
-refused. Keep a failed partial destination and its .install logs for inspection; never enable it.
-Checks are local only; missing prerequisites are expected on a fresh host. Hashes are integrity
-checks, not signatures: transfer the release and trusted checksum securely.
+If npm is a version-manager shim, supply the actual npm CLI JavaScript path. Use canonical paths,
+not symlinked destination parents. The installer invokes npm with the selected Node and uses
+separate destination-local `npm ci` installs, registry integrity, disabled lifecycle scripts and
+empty npm configuration. It creates no credentials, tasks, approvals, LaunchAgent or listener.
+Existing destinations are refused. Keep failed partial destinations and private `.install` logs
+for inspection; do not overwrite or enable them. Missing prerequisites in the offline check are
+expected on a fresh host. File existence is not proof of valid authentication or approval.
+
+Alternatively, transfer a verified archive/checksum privately, set `ARCHIVE`, `OUT` and `ID` to
+those files, and use the same installation steps. Compare its hash against an independently trusted
+release result first. No live state or credentials belong in an archive. Hashes are not signatures.
 
 ## Configure the service account (later explicit step)
 

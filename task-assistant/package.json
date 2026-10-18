@@ -25,6 +25,8 @@
     "lint": "gts lint && eslint packaging/*.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.build.json",
+    "release": "node packaging/build-release.mjs",
+    "test:source-install": "node packaging/test-source-install.mjs",
     "prepare": "npm run build",
     "test": "npm run build && node --test test/*.test.ts",
     "verify": "npm run lint && npm run typecheck && npm run test"
