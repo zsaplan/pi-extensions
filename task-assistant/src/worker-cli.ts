@@ -1,4 +1,10 @@
-import {classifyPending, recoverRuns, runNextTask} from './worker.ts';
+import {
+  classifyPending,
+  recoverRuns,
+  runNextTask,
+  type ModelConfig,
+} from './worker.ts';
+import {TaskGithubResearch} from './github-research.ts';
 import {options, output, required} from './queue-cli.ts';
 import {TaskStore} from './store.ts';
 import {requireAutoTrialScope} from './auto-trial.ts';
@@ -11,8 +17,9 @@ export async function workerCommand(args: string[]): Promise<void> {
     '--model',
     '--agent-dir',
     '--session-library',
+    '--github-research-config',
   ]);
-  const config = {
+  const config: ModelConfig = {
     provider: required(values, '--provider'),
     model: required(values, '--model'),
     agentDir: values.get('--agent-dir'),
@@ -26,6 +33,11 @@ export async function workerCommand(args: string[]): Promise<void> {
   try {
     await requireAutoTrialScope(store, false);
     await requireSessionLibrary(store, config.sessionLibrary);
+    const researchConfig = values.get('--github-research-config');
+    config.githubResearch = await TaskGithubResearch.open(
+      store,
+      researchConfig,
+    );
     await recoverRuns(store);
     const triage = await classifyPending(store, config, controller.signal);
     const worker = await runNextTask(store, config, controller.signal);

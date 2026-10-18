@@ -124,7 +124,11 @@ export class SlackPresentation {
     this.names.set(id, name);
     return name;
   }
-  async render(text: string, sources: Source[] = []): Promise<string> {
+  async render(
+    text: string,
+    sources: Source[] = [],
+    format: 'mrkdwn' | 'markdown' = 'mrkdwn',
+  ): Promise<string> {
     const signal = AbortSignal.timeout(3000);
     const known = new Set([
       this.inbox.owner_user_id,
@@ -182,6 +186,14 @@ export class SlackPresentation {
         )
           return undefined;
         // Preserve supplied destinations/labels; no fetch and no claim that the target was inspected.
+        if (format === 'markdown') {
+          const display = title ? await humanize(decode(title)) : target;
+          const safeTitle = display
+            .replace(/[\\[\]]/g, '\\$&')
+            .replace(/[<>|\r\n]/g, ' ');
+          const safeTarget = target.replace(/\(/g, '%28').replace(/\)/g, '%29');
+          return `[${escapeSlack(safeTitle)}](${escapeSlack(safeTarget)})`;
+        }
         return `<${escapeSlack(target)}${title ? `|${escapeSlack((await humanize(decode(title))).replace(/[<>|\r\n]/g, ' '))}` : ''}>`;
       } catch {
         return undefined;
@@ -203,7 +215,7 @@ export class SlackPresentation {
         const name = await alias(id, true);
         replacement =
           /^[CGD]/.test(id) && this.origin
-            ? `<${this.origin}/archives/${id}|${escapeSlack(name)}>`
+            ? await link(`${this.origin}/archives/${id}`, name)
             : escapeSlack(name);
       } else if (token.startsWith('<')) {
         const parts = token.slice(1, -1).split('|');

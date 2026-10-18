@@ -7,6 +7,7 @@ import {StoreError, TaskStore} from './store.ts';
 import type {ReadonlySlackClient} from './slack.ts';
 import type {TaskLogFeed} from './task-logs.ts';
 import type {TaskInvestigation} from './task-investigation.ts';
+import type {RegularUse} from './regular-use.ts';
 
 export type TaskRunResult = Awaited<ReturnType<typeof runNextTask>>;
 
@@ -28,6 +29,8 @@ export async function runTaskBatch(
     sourceClient?: ReadonlySlackClient;
     logs?: TaskLogFeed;
     investigation?: TaskInvestigation;
+    budget?: RegularUse;
+    canDispatch?: () => boolean;
     // False holds further dispatch after an uncertain publication; running peers still settle.
     onSettled?: (result: TaskRunResult) => Promise<boolean | void>;
   },
@@ -53,7 +56,12 @@ export async function runTaskBatch(
     {length: Math.min(options.workers, ids.length)},
     async () => {
       try {
-        while (!held && !combined.aborted && next < ids.length) {
+        while (
+          !held &&
+          !combined.aborted &&
+          next < ids.length &&
+          (options.canDispatch?.() ?? true)
+        ) {
           const id = ids[next++];
           const result = await runNextTask(
             store,
@@ -64,6 +72,8 @@ export async function runTaskBatch(
             options.logs,
             options.investigation,
             id,
+            options.budget,
+            options.canDispatch,
           );
           results.push(result);
           if (

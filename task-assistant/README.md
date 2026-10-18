@@ -6,13 +6,48 @@ The coordinator discovers work in Slack, keeps a durable local task queue, and c
 
 The implementation includes bounded evidence tools, approval-bound trials and regular use, recoverable Slack delivery, and an optional macOS background service. It is a restricted investigator and drafter, not an unrestricted coding or operations agent. Nothing starts automatically with ordinary Pi sessions. Deployment-specific approvals, transcripts, incident details and acceptance records belong outside Git.
 
+## Reproducible private Mac release
+
+Use [packaging/INSTALL.md](packaging/INSTALL.md) for a destination-local, paused installation and [packaging/MIGRATION.md](packaging/MIGRATION.md) for separate stateful-move/rollback gates. Build and clean-install E2E commands are in [packaging/README.md](packaging/README.md). This does not migrate existing approvals, research bindings or task state automatically.
+
+## Opt-in GitHub research
+
+`serve` and `step` accept `--github-research-config PRIVATE.json`. This loads the existing profile-subagent host API, not its TUI-only entry or another scheduler. The parent remains on SDK 1.1.0; the native researcher retains its separately installed, qualified SDK 0.99.2, Luna/high/default-tier WebSocket transport and existing read-only limits. Do not replace either SDK or use the base/non-native runner as an automatic fallback.
+
+The operator-owned 0600 configuration binds `schema_version:1`, the exact task `root`, an absolute frozen `package_dir` (compiled `dist/`, `profiles/`, `package.json`), `profile_digest`, `files` (relative paths to SHA-256 content hashes), `dependency_lock: {file, hash}`, and `auth_path` (private Codex OAuth storage). Keep the snapshot and its linked dependency checkout intact. All compiled JavaScript must be inventoried. Package/profile/lockfile changes fail closed. The first use binds the configuration hash in `intake/github-research.json`; changing or omitting it requires deliberate operator review, not deletion of the binding.
+
+- Supply `GH_TOKEN` (or `GITHUB_TOKEN` for a direct CLI run). Repository access follows that token; the exact task question still bounds the work. Credentials are never model arguments. For an existing macOS service, deliberately add `GH_TOKEN` to its private credentials file and the configuration flag to its saved arguments while stopped. No credential discovery shell or installation runs inside a worker.
+- With research enabled, a new task's session and durable Slack parent are prepared before research setup or model work. The existing idempotent messenger handles parent creation; `step` without a communication client requires an already-published parent.
+- The registered `github_research_run` and internal `github_research_read` use Pi's normal extension pipeline. The internal adapter rejects direct/unassigned calls. Delegate a complete question with known leads. The parent must inspect decisive retained source observations and qualifications, not accept the report solely because references validate.
+- Each task can admit one assignment for its initial context and one per new, routed canonical owner task-thread context. Source and reviewer updates do not renew it. Admission is persisted before execution. Later calls/restarts return the original result without another child or duplicate usage; an unfinished admission cannot silently retry. Cached results are explicitly historical.
+- The child inherits the worker's absolute 120-second deadline and existing model reservation (claim identity for a direct non-budgeted step). It gets no separate rolling-budget reservation or fresh 90 seconds. A cancellable inline gate respects the native researcher's one-active-run limit within the existing two workers; waiting consumes the same deadline. Child cleanup is awaited before releasing the slot.
+- Original results and bounded evidence stay under `runs/github-research/TASK/`. The parent uses existing task settlement and serialized Slack delivery; the child cannot post, review code, change systems or certify runtime success. Pinned GitHub Markdown source links are permitted in answers; bare local Markdown artifacts remain blocked.
+
+Build and run the optional cross-version fixture with a separately reviewed researcher checkout:
+
+```bash
+npm run build --workspace task-assistant
+TASK_RESEARCH_PACKAGE=/absolute/reviewed/profile-subagent \
+  node --test task-assistant/test/github-research.test.ts
+```
+
+The fixture snapshots the compiled package and uses only synthetic GitHub, model and Slack transports. It retains a repeatable report, parent/child requests and actual task sessions under ignored `task-assistant/tmp/github-worker-e2e-*`. It is not live acceptance. Install/restart only after package/root verification, inspection of existing blocked work and uncertain sends, and applicable owner authorization. Do not requeue historical tasks just to demonstrate this capability.
+
 ## Readable answers and references
 
-A waiting task can answer a clarification without resolving its pending decision. New settled journals publish the explicit `reply` first; `question` remains task state and is used as a fallback when there is no answer. Unchanged source-only work retains the previous **answer text and delivery key**, including across cancellation/recovery. A genuine owner reply still gets a fresh response. Legacy journals keep their original publication behavior so installing this fix does not silently replay previously omitted answers.
+Task cards use a short title and a quoted, color-and-shape status cue with a readable label: 🟦 Queued, 🔵 In progress, 🟠 Waiting, 🟣 Review, ✅ Task closed. Closed describes task tracking, not independent verification, PR acceptance or execution approval. The root uses native side-by-side **Summary / Goal** fields with quoted text under each heading. Goal always comes from the canonical task outcome, including when compact copy is present. Any pending owner question appears below those primary fields, followed by a genuine next step and unchanged source labels/links. The final context footer includes the exact **Pi session ID** and **task ID**—not local session paths or transcript contents. Slack controls field stacking/wrapping on narrow clients; visual acceptance remains separate. Capacity notices use ⏸️ Work on hold and precisely labeled count fields. There is no arbitrary text color, fake code-box table, extra formatter model or new publishing permission.
+
+An optional **Tickets** row above Sources links Jira Cloud issue IDs and Zendesk ticket/request IDs found in canonical task text or current routed conversation receipts for up to three registered source messages and their roots. It does not scan other threads or fetch ticket contents. Destinations must be explicit HTTPS `*.atlassian.net/browse/KEY-N`, `*.zendesk.com/agent/tickets/N` or help-center request URLs; bare IDs and unknown/custom hosts are not guessed. Labels come from the URL, duplicates are collapsed within each tenant, and query/fragment parameters are not copied. The same bounded row appears in the fallback; excess references are counted rather than overflowing either payload. Links are navigation, not verification or execution authority. Existing task/copy schemas and source labels remain unchanged.
+
+The existing `finish_task` call may include `card: {title, summary, next}` (72/700/400 characters; `next` may be null). This is separately authored public presentation, not task state. Preserve all decision-relevant scope, uncertainty and approval conditions in the visible summary/action; shorter is not permission to omit caveats. The complete fallback also keeps the original request/goal. Copy is saved under `runs/cards/TASK.json`, bound to semantic task state, claim/session and destination. A stale binding is ignored, restoring a conservative full-context card; missing optional copy keeps legacy runs compatible. An authorized operator may prepare copy through `saveCardCopy` while holding the store lock, without rewriting original task records, journals or reservations. No historical reply is automatically backfilled. The host adds task/session identifiers only in the owner-DM root footer and its complete fallback; authored summaries and replies should not repeat them.
+
+Authorized source-thread and owner-reference reads include a bounded `formatted_text` projection for Slack fields, tables, rich text, and embedded attachment metadata. Canonical `text`, receipt hashes, source identities, and approval/reference gates are unchanged. Projections disclose clipping and unsupported content, are context only, and never fetch linked files/images. The pure projection helper and writing rules are adapted from the Slack extension at `1f86b569d4ef9d287e2ac5679da2b824a8a3fde0`; later changes to the installed extension do not silently change a frozen task runtime. Task cards and capacity notices now use native static blocks (headers, sections and fields). Longer replies can use native Markdown headings, lists and tables through `finish_task.reply_markdown` or `task_reply.markdown`; the existing text field remains a separately authored, complete accessible fallback. Simple replies remain ordinary text. The bounded layout validator is frozen from the same Slack source, with `verbatim: true` support for safe static text. No interactive controls, uploads or Canvases are introduced.
+
+A waiting task can answer a clarification without resolving its pending decision. New settled journals publish the explicit `reply` first; `question` remains task state and is used as a fallback when there is no answer. Unchanged source-only work retains the previous **answer text, Markdown layout and delivery key**, including across cancellation/recovery. A genuine owner reply still gets a fresh response. Legacy journals keep their original publication behavior so installing this fix does not silently replay previously omitted answers.
 
 Task parents and replies resolve Slack user/group/channel IDs to readable names, preserve safe native Slack links, convert ordinary Markdown links, and link registered source messages using the verified workspace origin. Names use bounded bot-token metadata reads (`users.info`, `conversations.info`, `usergroups.list`): at most eight distinct identifiers per render, a three-second render lookup budget, 64 KiB per response and 128 cached results per destination. Only display labels are retained; no new worker tools or linked-content access are granted. Missing scope, rate limits or unavailable/foreign metadata produce honest fallbacks (such as “you” or “Slack member (name unavailable)”), not guessed names. An absent verified origin means the source link is unavailable. Model-supplied mentions/groups/broadcasts are not notification tokens; only the coordinator's stored-owner prefix can notify the owner when a response is needed. HTTP(S) links are presentation, not proof their contents were inspected.
 
-Reply intents freeze the rendered body and fingerprint the logical answer. Name changes or lookup failures after an uncertain send cannot cause a duplicate or a new body under the same intent. A changed logical answer under that key still fails closed. Parent summaries omit links that cross their length limit rather than corrupting their destinations. Old messages are not edited/backfilled automatically, and live client rendering/permissions remain a separate acceptance check.
+Version-two reply intents freeze and hash the complete rendered payload (fallback plus blocks) and fingerprint the logical answer, including its Markdown. Version-three settled run records retain both surfaces through quiet continuations and suppress them together. Existing version-one text intents and old run records are read without migration or replay. Do not downgrade to a runtime that does not understand rich intents. Name changes or lookup failures after an uncertain send cannot cause a duplicate or a new body under the same intent. A changed logical answer or Markdown layout under that key still fails closed. Slack can expand Markdown into native headers/rich text/tables and regenerate block IDs. Rich uncertain sends therefore require exactly one bot message with the frozen `client_msg_id` in the bound destination/thread; matching fallback text alone is insufficient. Missing/ambiguous identity remains held without reposting. Slack's current method reference does not guarantee `client_msg_id` on bot readbacks, so automatic rich-send reconciliation is conditional and needs separate live qualification. No new app metadata schema, scope or registration is assumed. Full-payload hashes also control card/notice update suppression; a deliberate plain update explicitly clears old blocks. Parent summaries omit links that cross their length limit rather than corrupting their destinations. Previously sent replies are not edited/backfilled automatically. Persistent parent cards use the current renderer when synchronized; they are current-state summaries, not historical replies. Live client rendering/permissions remain a separate acceptance check.
 
 ## Explicitly approved continuation windows
 
@@ -26,12 +61,12 @@ The operator supplies a private JSON approval record, not a model/source message
 
 After explicit owner approval, a closed automatic-trial root can transition with `serve --regular-use APPROVAL.json`. The approval binds the original trial/history hashes, inherited task/session/parent identities, root, owner DM, discovery feeds, model, worker count, session library and limits. A separate `runs/regular-use.json` preserves reservations without modifying old trial windows. Changed/omitted scope fails before recovery/network/model work. This is not a way to reopen a trial under its old approval.
 
-- Maximum three open tasks and five **new** reservations per rolling 24 hours (approval may choose lower limits). Unmaterialized reservations count as open. Completed tasks free an open slot, not the daily budget. Existing related updates continue when new admission is full. Up to two workers; 150-second polling.
-- New mentions, watched-channel roots and direct owner requests must be at or after the approval time. Old backlog/excluded threads remain deferred. No extra worker tools, Jira, production actions or GitHub review capability. Any partial intake, blocked classification, worker or delivery failure stops regular operation for inspection.
-- `service install --approval PATH` installs `~/Library/LaunchAgents/com.zsaplan.pi-task-assistant.plist` and starts it. Default service directory: `~/.pi/agent/task-assistant-background`; `--directory` selects another. App JavaScript is copied into a runtime snapshot; dependencies remain linked to this checkout and its lockfile is verified at startup. Do not move/delete the checkout or modify dependencies without deliberate redeployment. Node's recorded executable must remain installed.
-- Only the two Slack tokens are saved in a private 0600 file under a 0700 service directory; they are not put in plist, argv or status. Pi provider authentication continues through the existing agent credential store. Runtime/cooldown/session/delivery protections are unchanged. This is user-level access control, not an OS sandbox.
-- Launch at login; no `KeepAlive` restart loop. `service stop` pauses durably and requests graceful shutdown. `service start` explicitly clears the pause/failure latch and starts again; it does not kill a running coordinator. `service status` shows PIDs, last completed cycle/age, limits and failure state. Inspect before restarting uncertain delivery. Stdout/stderr rotate at 10 MiB with one previous file each.
-- Mac must be awake and online. The service does not prevent sleep. An interrupted request during sleep/offline can leave it paused on error; inspect status and explicitly start it again. Live sleep/login/reboot recovery is not yet verified.
+- Without a separately approved backlog policy, the legacy limits are three open tasks and five **new** reservations per rolling 24 hours (approval may choose lower limits). Unmaterialized reservations count as open. Completed tasks free an open slot, not the daily budget. Existing related updates continue when new admission is full. Up to two workers; 150-second polling.
+- New mentions, watched-channel roots and direct owner requests must be at or after the approval time. Old backlog/excluded threads remain deferred. No extra worker tools, Jira, production actions or GitHub review capability. Temporary read availability failures wait as described below; other incomplete intake, blocked classification, worker or delivery failures still stop for inspection.
+- `service install --approval PATH` installs `~/Library/LaunchAgents/com.zsaplan.pi-task-assistant.plist` **paused**, without calling launchctl or connecting to Slack. Start is a separate explicit command. Default service directory: `~/.pi/agent/task-assistant-background`; `--directory` selects another. App JavaScript is copied into a runtime snapshot; dependencies link to the selected installation. `--dependency-lock`, `--agent-dir` and `--github-research-config` set explicit installation/auth/research paths. Do not move/delete the installation or modify dependencies without deliberate redeployment. Node's recorded executable must remain installed.
+- The two Slack tokens (plus an explicitly configured optional `GH_TOKEN`) are saved in a private 0600 file under a 0700 service directory; they are not put in plist, argv or status. Pi provider authentication continues through the existing agent credential store. Runtime/cooldown/session/delivery protections are unchanged. This is user-level access control, not an OS sandbox.
+- Launch at login; no `KeepAlive` restart loop. `service stop` pauses durably and requests graceful shutdown. `service start` explicitly clears the pause/failure latch and starts again; it does not kill a running coordinator. `service status` shows PIDs, last completed cycle/age, limits, persisted read health and a monitoring state: starting, monitoring, waiting for Slack, stale (no health update for two polling intervals), stopped, failed or paused. This is local status, not a separate push-alert/watchdog service. Inspect before restarting uncertain delivery. Stdout/stderr rotate at 10 MiB with one previous file each.
+- Mac must be awake and online. The service does not prevent sleep. In regular mode, a read interrupted by temporary connectivity loss waits for the next normal poll in the same process. Other failures still require inspection and an explicit start. Fixture recovery is not proof of unattended live sleep/login/reboot reliability.
 
 ```bash
 node task-assistant/dist/cli.js service status
@@ -41,13 +76,50 @@ node task-assistant/dist/cli.js service start
 
 Install only after package/root verification and recorded owner consent. Validate PID, a successful fresh cycle and Slack readback—not installation output alone. Retain historical task roots and approvals. See [recovery and limits](#recovery-and-limits).
 
+## Backlog capacity and model effort
+
+Regular use can add `--backlog-approval CAPACITY.json` to separate tracking from investigation. A practical starting policy is **50 unfinished tracked tasks**, **two workers**, and **120 reserved model-deadline minutes per rolling 24 hours**. These are operator-chosen limits, not measured throughput or a dollar budget. There is no daily new-task count limit in this mode. Waiting/review tasks occupy backlog space but do not consume a worker or model effort merely by remaining open.
+
+- Every observed request is saved before classification. Eligible input is processed owner-replies-first, then existing-task updates, then oldest new requests. The original startup cutoff and exclusions remain; this change does not backfill old requests or reopen closed trials.
+- A classification attempt reserves 60 seconds before any model call; an investigation attempt reserves 120 seconds before claiming work. Reservations are durable and serialized across both workers. Cancellation, failed attempts, restart and policy changes do not refund them. Reusing a saved classification needs no new model reservation. Expired reservations free budget after 24 hours; actual shorter model calls do not free it early. Existing per-run deadlines/turn limits still apply, so this is deliberately conservative rather than actual usage accounting.
+- Exhausted effort leaves receipts pending and tasks queued, not failed or discarded. Classified queued tasks get a local session and Slack parent even before their first investigation. The coordinator publishes one capacity notice per continuous hold, updates it without repeated notifications, and clears it when the hold ends. That notice is informational, not a Slack approval/control endpoint. Uncertain delivery still requires reconciliation.
+- Intake still starts every 150 seconds. Discovery and inbox roots are checked each cycle; up to 40 registered source/task threads are checked oldest-success-first. Skipped threads retain their checkpoints. At 50 tasks with distinct source and parent threads, full thread coverage normally takes three polls (about 7.5 minutes), not one. Slow calls, pagination and cooldowns can delay this further. Cycle reports expose selected/deferred thread counts.
+- Regular-mode preflight/intake connection failures, Slack 5xx responses and read rate limits pause new model dispatch and publication until healthy intake returns. Retry only on the next normal 150-second poll, respecting durable method cooldowns; no restart loop or immediate retry. Failed feed checkpoints do not advance. Already-started bounded workers may settle privately. Authentication, identity, permissions, malformed/state errors and uncertain writes remain fail-stop; this does not retry failed model sessions or ambiguous sends.
+- `service status` and cycle reports show task-state counts, captured pending items, queued tasks, capacity reasons, reserved/remaining model effort and the next available investigation slot. Capacity overflow is visible and remains eligible when a slot opens.
+
+The separate private approval has `schema_version:1`, a new UUID `id`, ISO `approved_at`, `regular_approval_hash` (SHA-256 of `JSON.stringify` of the unchanged original regular approval), `previous_approval_hash` (null initially; otherwise the hash of the latest capacity approval), and `limits: {max_tracked_tasks, model_minutes_per_day}`. Supported bounds are 1–50 tracked tasks and 2–1440 reserved minutes. Actual owner approval must precede preparing this record. Its hash binds the existing root, identity, model, discovery, original cutoff and inherited task bindings.
+
+Approval history is append-only, capped at 100 entries. Changing a limit requires a new approval linked to the latest one; it does not clear current effort reservations. The regular ledger upgrades to schema 2 and retains the original approval/admissions. Missing capacity scope, altered approvals and stale approval replay fail before network/model work. Old runtimes reject the upgraded ledger rather than ignoring its budget.
+
+For a new service installation, pass `service install --approval REGULAR.json --backlog-approval CAPACITY.json`. For an existing service, first stop it, verify that both processes have exited and preserve its state/recovery records. Deliberately redeploy the verified runtime and add the capacity approval to its saved `serve` arguments before restarting. Do not replace files beneath a live coordinator or edit the ledger to bypass checks. A failed upgrade should remain stopped; restoring an older runtime must not reset schema 2, approvals or spent budget. Keep deployment-specific steps and evidence private.
+
+The compiled-CLI fixture suite exercises a 50-task waiting backlog, owner input while full, saved overflow, fair thread rotation, lost capacity-notice responses, budget exhaustion, a reservation-before-call SIGKILL, two-worker contention, restart and simulated 24-hour resumption. These are synthetic API/model checks, not evidence of sustained full-load operation against live Slack.
+
+## Related follow-ups across source threads
+
+In regular mode, a fresh human request in a discovered C/G channel thread may continue an existing open task. An exact GitHub organization/repository/PR URL in its canonical root/request nominates candidates from original task-source receipts; a bare PR number, similar wording or reviewer output does not. The classifier must separately confirm the same requested outcome. Distinct or ambiguous work stays separate, and saved distinct requests wait when capacity is full rather than being forced into a candidate. Exact owner task-thread bindings take precedence.
+
+Context reads are limited to five fetch attempts per classification pass, each with a 20-message first page and an optional exact-message lookup. Snapshots are redacted/clipped and disclose partial coverage. Search/canonical text changes are promoted before reconsideration, and context is rechecked before a new association takes effect. A saved decision cannot act on a changed root. No linked URL is crawled.
+
+Associations retain receipt/context hashes in `intake/associations/`, separately from immutable primary sources, sessions and Slack parents. At most three associated source threads are journaled per task; exceeding this bound requires inspection. Valid associations share the existing 40-thread polling rotation and can extend full-coverage time beyond the primary-source-only estimate. Workers can read these explicit source indices, but associated evidence cannot authorize owner references, external actions or budget renewal. Closure has only the verified-owner-completion exception below. Existing duplicate records are not automatically merged, closed or rebound.
+
+Run `node task-assistant/test/related-work-quality.mjs --provider` for synthetic real-model routing checks. Compiled-CLI tests cover same-process read recovery, private in-flight settlement/recovered publication, full-capacity routing, session/parent preservation, restart, edited context and closure guards. These checks do not prove natural live routing quality or host lifecycle reliability.
+
 ## Reviewer-result handoff
 
 Use the existing reviewer rather than duplicating its GitHub review. A result posted under the shared bot identity in the **exact published task thread** can continue that task's exact session. A top-level result in the same DM requires an explicit owner link in the task thread; PR similarity alone never routes it.
 
 - Canonical conversation intake excludes this coordinator's durable sent-message timestamps/client IDs, including edited replies. Matching uncertain sends stay excluded; other same-bot messages wait until delivery is reconciled. Keep delivery intents intact: missing/corrupt history is not a supported recovery method. Intent inspection is capped at 5,000 records per task.
 - Eligible evidence routes by exact workspace/inbox/parent identity, not a classifier. It cannot admit a new task, change sources, authorize references or replenish owner-only follow-up budgets. Other authors/bot identities, source-channel posts, unrelated threads and completed tasks do not gain this automatic path. Shared identity does not authenticate a particular reviewer.
-- Reviewer text is untrusted, redacted and clipped to 2,000 characters for the worker. Attribute reported findings, keep blockers/uncertainty, ignore embedded commands and remain silent on unchanged/irrelevant results. Reviewer-only input cannot close the task. This adds no GitHub tool, merge/production authority, live approval or historical receipt rewrite.
+- Reviewer text is untrusted, redacted and clipped to 2,000 characters for the worker. Attribute reported findings, keep blockers/uncertainty and ignore embedded commands. Default to updating task state quietly—even a changed verdict is already visible in the reviewer message. A public addition requires `reply_basis` with its kind (`answer`, `decision`, `new_finding`) and a short private explanation of what it adds beyond that report. Code suppresses unqualified echoes, staged replies and question fallback, including later quiet continuations of a suppressed question; the model judges whether an addition is meaningful. Direct owner questions still require an answer. Reviewer-only input cannot close the task. This adds no GitHub tool, merge/production authority, live approval or historical receipt rewrite.
+
+A pure owner request for another review can stay quiet with `quiet_review_request:true` only when code verifies a canonical task-thread request addressed to the shared bot, an exact PR URL already present in prior reviewer evidence, and no explicit question wording. The model must also judge that this is solely a review request. This does not claim the separate reviewer accepted or started it. Other owner input retains the answer requirement.
+
+## Reported completion in registered sources
+
+A canonical owner message in a registered C/G source thread may establish **reported task completion**, including alongside reviewer evidence. The worker selects `completion_receipt_id` from `owner_source_receipts` only for explicit completed work—not approval, plans, questions, partial completion or quoted claims. Code verifies author/workspace, exact primary or validated associated source, routed task, content hash and absence of newer captured canonical owner input, including input still pending classification. It revalidates before settlement and application/recovery. Missing/edited/superseded authority fails closed.
+
+This exception only closes tracking. It grants no external action, reference access, or renewed investigation allowance. Task identity, session and parent stay unchanged. Already-handled receipts and closed tasks are not retroactively replayed by installation; closed-task routing/reopening is unchanged. Older binaries do not understand the new private-publication markers: do not downgrade a live store without inspecting its journals and delivery state. Run `node task-assistant/test/completion-quality.mjs --provider` for synthetic production-prompt checks, alongside the compiled-CLI fixtures; neither is natural live acceptance.
 
 ## Owner-provided evidence
 
@@ -79,7 +151,7 @@ Configuration returns only boolean Faro/service settings, explicit/default/unspe
 
 `finish_task` requires a public summary, next action, question and explicit `reply`: an inline answer, or `null` for materially unchanged findings without an owner question. Optional `private_notes` remain local. `task_reply` stages the one final answer; it does not immediately post or cause a second coordinator completion. Publication follows successful settlement and is flushed before another run can replace its journal. Per-run delivery keys preserve restart reconciliation while allowing the same useful answer to distinct owner questions. `task_sync_slack` still updates the parent. Obvious private-file references and delivery narration are rejected; this is a boundary check, not a guarantee of good judgment. No reports are uploaded automatically.
 
-Slack answer guidance defaults to 40–60 words: a bold finding, one or two short evidence/limitation bullets, then a labelled next step when useful, separated by blank lines. Use native Slack `*bold*`, not Markdown headings or tables. Simple answers/questions can stay one line; requested detail or material evidence limits may need more space. This is a writing preference, not automatic truncation or a new rejection rule. Preserve time coverage and uncertainty; formatting-only changes do not justify another reply.
+Slack answer guidance favors an outcome-first short update, not a fixed word count or template. Use explicit status cues, quote important questions/decisions, and choose native Markdown tables for useful comparisons. Keep simple follow-ups simple; reserve code blocks for actual code/logs, not prose boxes. Rich replies require a separately authored complete fallback. Preserve time coverage, uncertainty and approval conditions in both surfaces; formatting-only changes do not justify another reply.
 
 ## Task discovery
 
@@ -132,15 +204,15 @@ npm run build --workspace task-assistant
 node task-assistant/dist/cli.js --help
 ```
 
-| Command | Behavior |
-| --- | --- |
-| `preflight` | One bounded, read-only Slack access check |
-| `run` | Repeat preflight checks, not task execution |
-| `enqueue` | Read one JSON request from stdin; create/find a complete local task |
-| `list` / `move` | Inspect local task IDs/status or make an explicit status transition |
-| `intake` | Read Slack and persist receipts/checkpoints; no model calls or posts |
-| `step` | Classify pending receipts and run one local task; no Slack communication |
-| `serve` | Intake, serial classification, bounded task work (one worker by default, opt-in two), and optional task-specific Slack updates |
+| Command         | Behavior                                                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `preflight`     | One bounded, read-only Slack access check                                                                                      |
+| `run`           | Repeat preflight checks, not task execution                                                                                    |
+| `enqueue`       | Read one JSON request from stdin; create/find a complete local task                                                            |
+| `list` / `move` | Inspect local task IDs/status or make an explicit status transition                                                            |
+| `intake`        | Read Slack and persist receipts/checkpoints; no model calls or posts                                                           |
+| `step`          | Classify pending receipts and run one local task; no Slack communication                                                       |
+| `serve`         | Intake, serial classification, bounded task work (one worker by default, opt-in two), and optional task-specific Slack updates |
 
 Every stateful command requires `--root PATH`. Use one state root on a local filesystem, outside the checkout for real use. The root owns one coordinator lock. Do not open its task sessions in another writing Pi process while it is running.
 
@@ -176,8 +248,19 @@ node task-assistant/dist/cli.js move --root /path/to/state --task-id task-HASH -
 {
   "request": "Investigate the supplied example and prepare a local note.",
   "outcome": "A local draft; no external actions.",
-  "sources": [{"workspace_id":"TEXAMPLE","channel_id":"CSOURCE","message_ts":"1700000000.000001"}],
-  "inbox": {"workspace_id":"TEXAMPLE","channel_id":"DASSIST","owner_user_id":"UOWNER","bot_user_id":"UBOT"}
+  "sources": [
+    {
+      "workspace_id": "TEXAMPLE",
+      "channel_id": "CSOURCE",
+      "message_ts": "1700000000.000001"
+    }
+  ],
+  "inbox": {
+    "workspace_id": "TEXAMPLE",
+    "channel_id": "DASSIST",
+    "owner_user_id": "UOWNER",
+    "bot_user_id": "UBOT"
+  }
 }
 ```
 

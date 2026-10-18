@@ -22,7 +22,7 @@
     "DESIGN.md"
   ],
   "scripts": {
-    "lint": "gts lint",
+    "lint": "gts lint && eslint packaging/*.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "prepare": "npm run build",

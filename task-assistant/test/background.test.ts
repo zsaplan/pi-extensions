@@ -98,11 +98,31 @@ test(
     assert.equal(status.worker_alive, true);
     assert.equal(status.supervisor_alive, true);
     assert.doesNotMatch(JSON.stringify(status), /test-private-/);
+    const getStatus = () =>
+      JSON.parse(
+        execFileSync(
+          process.execPath,
+          [cli, 'service', 'status', '--directory', dir],
+          {encoding: 'utf8'},
+        ),
+      );
+    assert.equal(status.monitoring, 'starting');
+    await save('state/runs/slack-read-health.json', {
+      state: 'monitoring',
+      checked_at: new Date(Date.now() - 400000).toISOString(),
+    });
+    assert.equal(getStatus().monitoring, 'stale');
+    await save('state/runs/slack-read-health.json', {
+      state: 'waiting_for_slack',
+      checked_at: new Date().toISOString(),
+    });
+    assert.equal(getStatus().monitoring, 'waiting_for_slack');
     const pid = status.status.worker_pid;
     running.p.kill('SIGTERM');
     const stopped = await running.ended;
     assert.equal(stopped.code, 0);
     assert.equal((await json(path.join(dir, 'status.json'))).state, 'stopped');
+    assert.equal(getStatus().monitoring, 'stopped');
     assert.equal(await readFile(finished, 'utf8'), 'stopped');
     assert.throws(
       () => process.kill(pid, 0),
@@ -112,6 +132,7 @@ test(
     const failed = await start().ended;
     assert.equal(failed.code, 1);
     assert.equal((await json(path.join(dir, 'status.json'))).state, 'failed');
+    assert.equal(getStatus().monitoring, 'failed');
     const calls = await readFile(marker, 'utf8');
     const latched = await start().ended;
     assert.equal(latched.code, 0);
@@ -146,6 +167,7 @@ test(
       checks: [
         'graceful child stop and PID absence',
         'status has no credentials',
+        'stale/waiting/stopped/failed monitoring visible without a live coordinator',
         'failure latch prevents second launch',
         'unsafe secret permissions prevent launch',
         'frozen runtime/dependency drift prevents launch',

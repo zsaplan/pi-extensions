@@ -1,4 +1,14 @@
 import path from 'node:path';
+import {randomUUID} from 'node:crypto';
+import {
+  configureBacklog,
+  currentReservations,
+  modelBudget,
+  nextModelSlot,
+  MODEL_RESERVATION_SECONDS,
+  type BacklogState,
+  type ModelReservation,
+} from './backlog.ts';
 import {getAgentDir} from '@earendil-works/pi-coding-agent';
 import {literalMention, type DiscoveryOptions} from './discovery.ts';
 import type {Receipt} from './intake.ts';
@@ -24,12 +34,14 @@ interface Admission {
   reserved_at: string;
 }
 interface State {
-  schema_version: 1;
+  schema_version: 1 | 2;
   approval: Record<string, unknown>;
   admissions: Admission[];
+  backlog?: BacklogState;
 }
 export interface RegularOptions {
   file: string;
+  backlogApproval?: string;
   workers: number;
   provider: string;
   model: string;
@@ -48,6 +60,8 @@ const validTime = (s: unknown): s is string =>
 // An explicit operating-mode transition, never a renewed/deleted trial deadline.
 export class RegularUse {
   private occupied = 0;
+  private counts: Record<string, number> = {};
+  private budgetTail: Promise<unknown> = Promise.resolve();
   private constructor(
     private store: TaskStore,
     private state: State,
@@ -69,15 +83,30 @@ export class RegularUse {
   private get scope() {
     return record(this.state.approval.scope);
   }
+  get backlog() {
+    return this.state.backlog;
+  }
   get limits() {
     return {
-      max_open_tasks: Number(this.scope.max_open_tasks),
-      new_tasks_per_day: Number(this.scope.new_tasks_per_day),
+      max_open_tasks:
+        this.backlog?.approvals.at(-1)!.limits.max_tracked_tasks ??
+        Number(this.scope.max_open_tasks),
+      new_tasks_per_day: this.backlog
+        ? null
+        : Number(this.scope.new_tasks_per_day),
     };
   }
   get usage() {
     return {
       ...this.limits,
+      ...(this.backlog
+        ? {
+            backlog_approval_id: this.backlog.approvals.at(-1)!.id,
+            task_counts: this.counts,
+            model_budget: modelBudget(this.backlog),
+            next_investigation_slot_at: nextModelSlot(this.backlog, 120),
+          }
+        : {}),
       open_or_reserved: this.occupied,
       reserved_last_day: this.state.admissions.filter(
         a => Date.parse(a.reserved_at) >= Date.now() - 86400000,
@@ -199,16 +228,28 @@ export class RegularUse {
       throw new StoreError('regular_task_mismatch');
     if (
       saved &&
-      (saved.schema_version !== 1 ||
+      (![1, 2].includes(saved.schema_version) ||
+        (saved.schema_version === 1 && saved.backlog !== undefined) ||
+        (saved.schema_version === 2 && !saved.backlog) ||
         !same(saved.approval, approval) ||
         !Array.isArray(saved.admissions))
     )
       throw new StoreError('regular_scope_mismatch');
-    const state = saved ?? {
-      schema_version: 1 as const,
+    let state: State = saved ?? {
+      schema_version: 1,
       approval,
       admissions: [],
     };
+    if (state.schema_version === 2 && !options.backlogApproval)
+      throw new StoreError('backlog_scope_required');
+    if (options.backlogApproval) {
+      const backlog = configureBacklog(
+        state.backlog,
+        await readJson(options.backlogApproval),
+        approval,
+      );
+      state = {...state, schema_version: 2, backlog};
+    }
     const seen = new Set(original.admissions.map(key));
     for (const entry of state.admissions) {
       source(entry.source);
@@ -223,7 +264,7 @@ export class RegularUse {
     }
     const result = new RegularUse(store, state, original, selected);
     await result.validate();
-    if (!saved) {
+    if (!saved || !same(saved, state)) {
       store.assertOwner();
       await atomicJson(result.file, state);
     }
@@ -257,13 +298,21 @@ export class RegularUse {
       )
     )
       throw new StoreError('regular_task_mismatch');
+    this.counts = {};
+    for (const task of tasks)
+      this.counts[task.status] = (this.counts[task.status] ?? 0) + 1;
     this.occupied =
       tasks.filter(t => t.status !== 'done').length +
       this.state.admissions.filter(
         a => !tasks.some(t => t.task.id === id(a.source)),
       ).length;
   }
-  eligible(receipt: Receipt, selected: Inbox, related: boolean): boolean {
+  eligible(
+    receipt: Receipt,
+    selected: Inbox,
+    related: boolean,
+    ignoreCapacity = false,
+  ): boolean {
     if (
       !same(selected, this.selected) ||
       receipt.source.workspace_id !== selected.workspace_id ||
@@ -277,8 +326,10 @@ export class RegularUse {
     ].find(s => key(s) === key(receipt.source));
     if (reserved) return sourceKey(reserved) === sourceKey(receipt.source);
     if (
-      this.occupied >= this.limits.max_open_tasks ||
-      this.usage.reserved_last_day >= this.limits.new_tasks_per_day ||
+      (!ignoreCapacity &&
+        (this.occupied >= this.limits.max_open_tasks ||
+          (this.limits.new_tasks_per_day !== null &&
+            this.usage.reserved_last_day >= this.limits.new_tasks_per_day))) ||
       Number(receipt.source.message_ts) * 1000 <
         Date.parse(String(this.state.approval.approved_at))
     )
@@ -302,6 +353,43 @@ export class RegularUse {
         (!receipt.source.thread_ts ||
           receipt.source.thread_ts === receipt.source.message_ts))
     );
+  }
+  // Reservation precedes every paid attempt, including retries. Cancellation and
+  // restarts never refund it; replaying a saved classification uses no model call.
+  reserveModel(
+    kind: ModelReservation['kind'],
+    reference: string,
+    onReserved?: (id: string) => void,
+  ): Promise<boolean> {
+    const operation = this.budgetTail.then(async () => {
+      if (!this.backlog) return true;
+      const seconds = MODEL_RESERVATION_SECONDS[kind];
+      if (modelBudget(this.backlog).remaining_seconds < seconds) return false;
+      const reservationId = randomUUID();
+      const next: State = {
+        ...this.state,
+        backlog: {
+          ...this.backlog,
+          reservations: [
+            ...currentReservations(this.backlog),
+            {
+              id: reservationId,
+              kind,
+              reference,
+              seconds,
+              reserved_at: new Date().toISOString(),
+            },
+          ],
+        },
+      };
+      this.store.assertOwner();
+      await atomicJson(this.file, next);
+      this.state = next;
+      onReserved?.(reservationId);
+      return true;
+    });
+    this.budgetTail = operation.catch(() => {});
+    return operation;
   }
   async reserve(receipt: Receipt): Promise<void> {
     const reserved = [

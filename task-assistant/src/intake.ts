@@ -1,4 +1,5 @@
 import path from 'node:path';
+import {associatedSources} from './related-work.ts';
 import {reviewerDisposition} from './reviewer-handoff.ts';
 import {readdir} from 'node:fs/promises';
 import {
@@ -11,6 +12,7 @@ import {
   SlackError,
   object,
   objects,
+  transientSlackRead,
   type JsonObject,
 } from './slack.ts';
 import {
@@ -81,6 +83,7 @@ export interface IntakeReport {
   }[];
   retry_after_seconds: number;
   writes_performed: 0;
+  thread_coverage?: {total: number; selected: number; deferred: number};
 }
 export async function receipts(store: TaskStore): Promise<Receipt[]> {
   const directory = path.join(store.root, 'intake', 'receipts');
@@ -186,6 +189,9 @@ export async function pollIntake(
   signal: AbortSignal,
   inboxOnly = false,
   discovery: DiscoveryOptions = {},
+  threadLimit?: number,
+  recoverReads = false,
+  onUnavailable?: () => void,
 ): Promise<IntakeReport> {
   const now = Math.floor(Date.now() / 1000);
   const stateFile = path.join(store.root, 'intake', 'state.json');
@@ -198,11 +204,13 @@ export async function pollIntake(
     if (!absent(error)) throw error;
     state = {schema_version: 1, feeds: {}, cooldowns: {}};
   }
+  let lastRead = '';
   const call = async (
     identity: 'user' | 'bot',
     method: Parameters<ReadonlySlackClient['call']>[1],
     params: Record<string, string> = {},
   ) => {
+    lastRead = `${identity}:${method}`;
     if ((state.cooldowns[method] ?? 0) > Date.now() / 1000)
       throw new SlackError('rate_limited');
     try {
@@ -215,26 +223,61 @@ export async function pollIntake(
       throw error;
     }
   };
-  const user = await call('user', 'auth.test');
-  const bot = await call('bot', 'auth.test');
-  if (user.bot_id || !bot.bot_id || user.team_id !== bot.team_id)
-    throw new StoreError('identity_mismatch');
-  const selected: Inbox = inbox({
-    workspace_id: user.team_id,
-    channel_id: conversation,
-    owner_user_id: user.user_id,
-    bot_user_id: bot.user_id,
-  });
-  const info = object(
-    (await call('bot', 'conversations.info', {channel: conversation})).channel,
-  );
-  if (
-    info.id !== conversation ||
-    info.is_im !== true ||
-    info.user !== selected.owner_user_id ||
-    info.is_archived === true
-  )
-    throw new StoreError('inbox_mismatch');
+  let selected: Inbox;
+  let bot: JsonObject;
+  try {
+    const user = await call('user', 'auth.test');
+    bot = await call('bot', 'auth.test');
+    if (user.bot_id || !bot.bot_id || user.team_id !== bot.team_id)
+      throw new StoreError('identity_mismatch');
+    selected = inbox({
+      workspace_id: user.team_id,
+      channel_id: conversation,
+      owner_user_id: user.user_id,
+      bot_user_id: bot.user_id,
+    });
+    const info = object(
+      (await call('bot', 'conversations.info', {channel: conversation}))
+        .channel,
+    );
+    if (
+      info.id !== conversation ||
+      info.is_im !== true ||
+      info.user !== selected.owner_user_id ||
+      info.is_archived === true
+    )
+      throw new StoreError('inbox_mismatch');
+  } catch (error) {
+    onUnavailable?.();
+    if (
+      !recoverReads ||
+      !(error instanceof SlackError) ||
+      !transientSlackRead(error.code)
+    )
+      throw error;
+    const report: IntakeReport = {
+      schema_version: 1,
+      stage: 'intake',
+      at: new Date().toISOString(),
+      status: 'partial',
+      feeds: [
+        {id: `preflight:${lastRead}`, status: 'failed', error: error.code},
+      ],
+      retry_after_seconds: Math.max(
+        0,
+        ...Object.values(state.cooldowns).map(t =>
+          Math.ceil(t - Date.now() / 1000),
+        ),
+      ),
+      writes_performed: 0,
+    };
+    store.assertOwner();
+    await atomicJson(
+      path.join(store.root, 'intake', 'last-cycle.json'),
+      report,
+    );
+    return report;
+  }
   const bindingFile = path.join(store.root, 'inbox.json');
   try {
     if (
@@ -282,8 +325,20 @@ export async function pollIntake(
       : []),
     {id: 'inbox', kind: 'direct', channel: conversation, taskIds: []},
   ];
+  const associations = recoverReads
+    ? await associatedSources(
+        store,
+        tasks.map(t => t.task),
+        await receipts(store),
+      )
+    : [];
   for (const item of tasks.filter(item => item.status !== 'done')) {
-    for (const src of item.task.sources) {
+    for (const src of [
+      ...item.task.sources,
+      ...associations
+        .filter(a => a.task_id === item.task.id)
+        .map(a => a.source),
+    ]) {
       const root = src.thread_ts ?? src.message_ts;
       const id = `source:${src.channel_id}:${root}`;
       let feed = feeds.find(feed => feed.id === id);
@@ -320,7 +375,27 @@ export async function pollIntake(
     retry_after_seconds: 0,
     writes_performed: 0,
   };
-  for (const feed of feeds) {
+  const threadFeeds = feeds.filter(f => f.root);
+  const selectedThreads =
+    threadLimit === undefined
+      ? threadFeeds
+      : [...threadFeeds]
+          .sort(
+            (a, b) =>
+              (state.feeds[a.id]?.last_success_at ?? '').localeCompare(
+                state.feeds[b.id]?.last_success_at ?? '',
+              ) || a.id.localeCompare(b.id),
+          )
+          .slice(0, threadLimit);
+  if (threadLimit !== undefined)
+    report.thread_coverage = {
+      total: threadFeeds.length,
+      selected: selectedThreads.length,
+      deferred: threadFeeds.length - selectedThreads.length,
+    };
+  for (const feed of feeds.filter(
+    f => !f.root || selectedThreads.includes(f),
+  )) {
     store.assertOwner();
     if (signal.aborted) {
       report.status = 'partial';
@@ -560,6 +635,7 @@ export async function pollIntake(
       };
       report.feeds.push({id: feed.id, status: 'passed', saved});
     } catch (error) {
+      onUnavailable?.();
       const code =
         error instanceof SlackError || error instanceof StoreError
           ? error.code

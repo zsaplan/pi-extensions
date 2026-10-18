@@ -11,6 +11,7 @@ import {
 } from './store.ts';
 import type {Receipt} from './intake.ts';
 import type {JsonObject} from './slack.ts';
+import {intentPayload} from './slack-payload.ts';
 
 export function isReviewerResult(task: Task, receipt: Receipt): boolean {
   return (
@@ -52,7 +53,7 @@ export async function reviewerDisposition(
   for (const file of selected) {
     const intent = record(await readJson(path.join(directory, file)));
     if (
-      intent.schema_version !== 1 ||
+      ![1, 2].includes(Number(intent.schema_version)) ||
       intent.task_id !== task.id ||
       intent.channel !== task.inbox.channel_id ||
       typeof intent.id !== 'string' ||
@@ -64,6 +65,7 @@ export async function reviewerDisposition(
           !SLACK_TS.test(intent.message_ts)))
     )
       throw new StoreError('invalid_handoff_intent');
+    const payload = intentPayload(intent);
     if (intent.thread_ts !== task.slack.parent_ts) continue;
     if (
       intent.message_ts === message.ts ||
@@ -72,7 +74,7 @@ export async function reviewerDisposition(
     )
       return 'own_bot';
     if (intent.phase === 'sending') {
-      if (intent.text === message.text) return 'own_bot';
+      if (!payload.blocks && intent.text === message.text) return 'own_bot';
       uncertain = true;
     }
   }

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "releaseDir": "REPLACED_BY_INIT_CONFIG",
+  "dataRoot": "tasks",
+  "sessionLibrary": "session-library",
+  "parentAgentDir": "auth-parent",
+  "researcherAgentDir": "auth-researcher",
+  "serviceDir": "service",
+  "credentialsFile": "credentials.json",
+  "approvalFile": "approval.json",
+  "backlogApprovalFile": null,
+  "researchManifestFile": "github-research.json",
+  "researcher": true,
+  "conversation": "DREPLACE"
+}

@@ -23,6 +23,7 @@ import {
   type JsonObject,
 } from './slack.ts';
 import type {Receipt} from './intake.ts';
+import {richSlackContext} from './slack-content.ts';
 import {readReferencedSession, referenceText} from './reference-session.ts';
 
 export function isOwnerThreadReply(task: Task, receipt: Receipt): boolean {
@@ -55,6 +56,7 @@ function referenceMessage(row: Record<string, unknown>) {
         : null,
     text: clean.slice(0, 2000),
     text_truncated: clean.length > 2000,
+    ...richSlackContext(row, 2000, referenceText),
     attachments_not_fetched: Boolean(
       (Array.isArray(row.files) && row.files.length) ||
       (Array.isArray(row.attachments) && row.attachments.length),

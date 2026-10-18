@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {execFileSync, spawn} from 'node:child_process';
 import {once} from 'node:events';
-import {mkdir, mkdtemp, writeFile} from 'node:fs/promises';
+import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import {createServer} from 'node:http';
 import path from 'node:path';
 import process from 'node:process';
@@ -189,12 +189,19 @@ globalThis.fetch = (url, options) => {
   assert.ok(address && typeof address !== 'string');
   const origin = `http://127.0.0.1:${address.port}`;
   const evidence: unknown[] = [];
+  const releaseManifest = process.env.TASK_FIXTURE_RELEASE_MANIFEST
+    ? JSON.parse(
+        await readFile(process.env.TASK_FIXTURE_RELEASE_MANIFEST, 'utf8'),
+      )
+    : undefined;
   let revision = 'unavailable';
   try {
-    revision = execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd: root,
-      encoding: 'utf8',
-    }).trim();
+    revision =
+      releaseManifest?.source.commit ??
+      execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: root,
+        encoding: 'utf8',
+      }).trim();
   } catch {
     /* Packaged checks need not run inside Git. */
   }
@@ -211,7 +218,8 @@ globalThis.fetch = (url, options) => {
           invocation: 'npm run test --workspace task-assistant',
           node: process.version,
           base_revision: revision,
-          executed_from_worktree: true,
+          release_id: releaseManifest?.id,
+          executed_from_worktree: !releaseManifest,
           live_slack: false,
           model_invoked: false,
           outcomes: evidence,

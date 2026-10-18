@@ -135,6 +135,9 @@ async function run(directory: string) {
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       SLACK_USER_TOKEN: secrets.SLACK_USER_TOKEN,
       SLACK_BOT_TOKEN: secrets.SLACK_BOT_TOKEN,
+      ...(typeof secrets.GH_TOKEN === 'string'
+        ? {GH_TOKEN: secrets.GH_TOKEN}
+        : {}),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -190,7 +193,14 @@ async function run(directory: string) {
   });
   if (!stopping || exit.code !== 0 || logFailed) process.exitCode = 1;
 }
-async function install(directory: string, approvalFile: string) {
+async function install(
+  directory: string,
+  approvalFile: string,
+  backlogApproval?: string,
+  agentDir?: string,
+  dependencyLock?: string,
+  researchConfig?: string,
+) {
   const approval = record(await readJson(approvalFile)),
     scope = record(approval.scope);
   for (const key of [
@@ -204,7 +214,11 @@ async function install(directory: string, approvalFile: string) {
   ])
     if (typeof scope[key] !== 'string')
       throw new StoreError('invalid_regular_approval');
-  if (!process.env.SLACK_USER_TOKEN || !process.env.SLACK_BOT_TOKEN)
+  if (
+    !process.env.SLACK_USER_TOKEN ||
+    !process.env.SLACK_BOT_TOKEN ||
+    (researchConfig && !process.env.GH_TOKEN)
+  )
     throw new StoreError('background_credentials_unavailable');
   try {
     await stat(plistFile());
@@ -217,6 +231,7 @@ async function install(directory: string, approvalFile: string) {
   try {
     await RegularUse.open(store, {
       file: approvalFile,
+      backlogApproval,
       workers: Number(scope.workers),
       provider: String(scope.provider),
       model: String(scope.model),
@@ -270,15 +285,26 @@ async function install(directory: string, approvalFile: string) {
   const copiedApproval = path.join(directory, 'approval.json');
   await copyFile(approvalFile, copiedApproval);
   await chmod(copiedApproval, 0o600);
+  const copiedBacklog = path.join(directory, 'backlog-approval.json');
+  if (backlogApproval) {
+    await copyFile(backlogApproval, copiedBacklog);
+    await chmod(copiedBacklog, 0o600);
+  }
   await writeFile(
     path.join(directory, 'credentials.json'),
     JSON.stringify({
       SLACK_USER_TOKEN: process.env.SLACK_USER_TOKEN,
       SLACK_BOT_TOKEN: process.env.SLACK_BOT_TOKEN,
+      ...(researchConfig ? {GH_TOKEN: process.env.GH_TOKEN} : {}),
     }),
     {flag: 'wx', mode: 0o600},
   );
-  const lock = path.resolve(sourceDir, '../../package-lock.json');
+  const adjacentLock = path.resolve(sourceDir, '../package-lock.json');
+  const lock = dependencyLock
+    ? path.resolve(dependencyLock)
+    : (await optional(adjacentLock))
+      ? adjacentLock
+      : path.resolve(sourceDir, '../../package-lock.json');
   const args = [
     path.join(runtimeDir, 'cli.js'),
     'serve',
@@ -302,6 +328,11 @@ async function install(directory: string, approvalFile: string) {
     String(scope.session_library),
     '--regular-use',
     copiedApproval,
+    ...(backlogApproval ? ['--backlog-approval', copiedBacklog] : []),
+    ...(agentDir ? ['--agent-dir', path.resolve(agentDir)] : []),
+    ...(researchConfig
+      ? ['--github-research-config', path.resolve(researchConfig)]
+      : []),
     '--allow-slack-writes',
   ];
   await atomicJson(path.join(directory, 'settings.json'), {
@@ -311,7 +342,8 @@ async function install(directory: string, approvalFile: string) {
     runtime,
     dependency_lock: {file: lock, hash: digest(await readFile(lock, 'utf8'))},
   });
-  await atomicJson(path.join(directory, 'control.json'), {paused: false});
+  // Installation never connects to Slack or starts a worker. Start is explicit.
+  await atomicJson(path.join(directory, 'control.json'), {paused: true});
   const program = [
     process.execPath,
     path.join(runtimeDir, 'cli.js'),
@@ -323,10 +355,9 @@ async function install(directory: string, approvalFile: string) {
   const plist = `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>Label</key><string>${label}</string><key>ProgramArguments</key><array>${program.map(v => '<string>' + xml(v) + '</string>').join('')}</array><key>WorkingDirectory</key><string>${xml(directory)}</string><key>RunAtLoad</key><true/><key>KeepAlive</key><false/><key>ExitTimeOut</key><integer>40</integer><key>Umask</key><integer>63</integer><key>StandardOutPath</key><string>${xml(path.join(directory, 'service.log'))}</string><key>StandardErrorPath</key><string>${xml(path.join(directory, 'service.stderr'))}</string></dict></plist>`;
   await mkdir(path.dirname(plistFile()), {recursive: true});
   await writeFile(plistFile(), plist, {flag: 'wx', mode: 0o600});
-  control(['bootstrap', `gui/${process.getuid!()}`, plistFile()]);
   output({
     stage: 'background',
-    state: 'installed',
+    state: 'installed_paused',
     directory,
     plist: plistFile(),
     root: scope.root,
@@ -336,13 +367,32 @@ export async function backgroundCommand(args: string[]) {
   if (process.platform !== 'darwin')
     throw new StoreError('background_requires_macos');
   const action = args[0],
-    values = options(args.slice(1), ['--directory', '--approval']);
+    values = options(args.slice(1), [
+      '--directory',
+      '--approval',
+      '--backlog-approval',
+      '--agent-dir',
+      '--dependency-lock',
+      '--github-research-config',
+    ]);
+  if (
+    action !== 'install' &&
+    [...values.keys()].some(key => key !== '--directory')
+  )
+    throw new StoreError('invalid_background_arguments');
   const directory = path.resolve(
     values.get('--directory') ??
       path.join(os.homedir(), '.pi/agent/task-assistant-background'),
   );
   if (action === 'install')
-    return install(directory, required(values, '--approval'));
+    return install(
+      directory,
+      required(values, '--approval'),
+      values.get('--backlog-approval'),
+      values.get('--agent-dir'),
+      values.get('--dependency-lock'),
+      values.get('--github-research-config'),
+    );
   if (action === 'run') {
     const release = await lockfile.lock(directory, {
       retries: 0,
@@ -369,9 +419,29 @@ export async function backgroundCommand(args: string[]) {
     const cycle = await optional(
       path.join(config.root, 'runs/last-cycle.json'),
     );
+    const health = await optional(
+      path.join(config.root, 'runs/slack-read-health.json'),
+    );
+    const checked =
+      typeof health?.checked_at === 'string'
+        ? Date.parse(health.checked_at)
+        : NaN;
+    const running = alive(status?.pid) && alive(status?.worker_pid);
+    const monitoring = controls?.paused
+      ? 'paused'
+      : status?.state === 'failed'
+        ? 'failed'
+        : !running
+          ? 'stopped'
+          : !Number.isFinite(checked)
+            ? 'starting'
+            : Date.now() - checked > 2 * 150_000
+              ? 'stale'
+              : health?.state;
     output({
       stage: 'background',
       directory,
+      monitoring,
       paused: controls?.paused,
       status,
       supervisor_alive: alive(status?.pid),
@@ -382,8 +452,26 @@ export async function backgroundCommand(args: string[]) {
           ? Math.round((Date.now() - Date.parse(cycle.finished_at)) / 1000)
           : null,
       admission: cycle?.regular_use,
+      intake_health: health,
     });
     return;
+  }
+  if (action === 'start' || action === 'stop') {
+    // A second configuration must never control another directory's LaunchAgent.
+    const program = [
+      config.node,
+      path.join(directory, 'runtime', 'cli.js'),
+      'service',
+      'run',
+      '--directory',
+      directory,
+    ];
+    const expected =
+      '<key>ProgramArguments</key><array>' +
+      program.map(v => '<string>' + xml(v) + '</string>').join('') +
+      '</array>';
+    if (!(await readFile(plistFile(), 'utf8')).includes(expected))
+      throw new StoreError('background_service_identity_mismatch');
   }
   if (action === 'stop') {
     await atomicJson(path.join(directory, 'control.json'), {paused: true});

@@ -208,6 +208,15 @@ const inboxReview = {
   user: 'UBOT',
   text: 'INBOX512: Reviewer follow-up requests a regression test for cached mapping invalidation after rebuild. Changes requested, not approved. No production run or recovery was inspected. token=xoxb-hidden-reference',
   files: [{id: 'FNOTFETCHED'}],
+  blocks: [
+    {
+      type: 'section',
+      fields: [
+        {type: 'mrkdwn', text: 'Rich review: changes requested, not approved.'},
+        {type: 'plain_text', text: 'token=xoxb-rich-hidden'},
+      ],
+    },
+  ],
 };
 const inboxLink = `https://fixture.slack.com/archives/DFIXTURE/p${inboxReview.ts.replace('.', '')}`;
 let inboxFailure,
@@ -662,8 +671,8 @@ try {
     } else if (phase === 2.25) {
       assert.equal(
         replies().length,
-        4,
-        'Reviewer result should advance the task once',
+        3,
+        'Reviewer result should advance task state without an echo',
       );
       assert.equal(
         libraryReads.length,
@@ -686,7 +695,7 @@ try {
         text: `The reviewer posted a follow-up here: ${inboxLink}. Read that result, summarize the remaining issue, and do not repeat the review or treat it as approval.`,
       });
     } else if (phase === 2.5) {
-      assert.equal(replies().length, 5);
+      assert.equal(replies().length, 4);
       assert.equal(items[0].status, 'review');
       checks.reviewer_handoff = true;
       messages.push({
@@ -697,11 +706,11 @@ try {
         text: `I completed the review in Pi session ${guid}. Acknowledge that the review is done, distinguish reported work from execution/recovery, and do not ask me to paste the notes or perform production actions.`,
       });
     } else if (phase === 3) {
-      assert.equal(replies().length, 6);
+      assert.equal(replies().length, 5);
       assert.equal(items[0].status, 'done');
     } else {
       assert.equal(result.status, 'idle');
-      assert.equal(replies().length, 6);
+      assert.equal(replies().length, 5);
     }
     await store.close();
     store = await TaskStore.acquire(root);
@@ -851,6 +860,12 @@ try {
     assert.equal(exactInbox.messages.length, 1);
     assert.equal(exactInbox.messages[0].ts, inboxReview.ts);
     assert.equal(exactInbox.messages[0].attachments_not_fetched, true);
+    assert.match(
+      exactInbox.messages[0].formatted_text,
+      /Rich review: changes requested, not approved/,
+    );
+    assert.match(exactInbox.messages[0].formatted_text_scope, /context only/);
+    assert.doesNotMatch(JSON.stringify(exactInbox), /xoxb-rich-hidden/);
     assert.equal(exactInbox.untrusted_evidence, true);
     assert.doesNotMatch(
       JSON.stringify(exactInbox),

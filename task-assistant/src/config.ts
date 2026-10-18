@@ -7,7 +7,8 @@ export const HELP = `Usage:
   pi-task-assistant step --root PATH --provider ID --model ID [--agent-dir PATH]
   pi-task-assistant serve --root PATH --search-api legacy --conversation ID --provider ID --model ID [--agent-dir PATH] [--once] [--workers 1|2] [--mention-group ID] [--watch-channel ID] [--inbox-only] [--task-id ID | --task-ids ID,ID,ID | --discover-tasks 1..3 --exclude-threads PATH] [--pilot-seconds 1..600] [--allow-slack-writes]
   pi-task-assistant serve --root PATH --regular-use APPROVAL.json --search-api legacy --conversation ID --provider ID --model ID --workers 1|2 --mention-group ID --watch-channel ID --session-library PATH --allow-slack-writes [--once]
-  pi-task-assistant service install --approval APPROVAL.json [--directory PATH]
+  pi-task-assistant service install --approval APPROVAL.json [--backlog-approval PATH] [--directory PATH] [--agent-dir PATH] [--dependency-lock PATH] [--github-research-config PATH]
+    Installs paused; no connection or automatic startup. Use service start explicitly.
   pi-task-assistant service start|stop|status [--directory PATH]
   pi-task-assistant enqueue --root PATH < request.json
   pi-task-assistant list --root PATH
@@ -45,6 +46,10 @@ Options:
                              Preserves trial history; binds root/identity/model/discovery and limits.
                              Up to three open tasks and five new reservations per rolling day.
                              New discovery starts at approval; related task input is retained.
+  --backlog-approval PATH    serve/service install: separately approved regular-use capacity policy.
+                             Up to 50 tracked tasks; replaces the daily admission cap with a
+                             rolling model-effort budget. Keeps two workers, original cutoff,
+                             feeds, exclusions, sessions and closed trial history unchanged.
   --pilot-seconds N          Bounded serve pilot; stops after 1..600 seconds.
                              No --once; allows 30 seconds to finish shutdown.
   --log-site SITE            Enable fixed read-only application-log intake for this task.

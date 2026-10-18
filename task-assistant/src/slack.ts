@@ -59,6 +59,11 @@ export class SlackError extends Error {
   }
 }
 
+// Only read availability failures are recoverable. Auth/scope/identity errors,
+// malformed responses and all uncertain writes retain their fail-stop behavior.
+export const transientSlackRead = (code: string) =>
+  ['transport_error', 'service_unavailable', 'rate_limited'].includes(code);
+
 /** Merge concurrent intake/tool rate limits without dropping another method's deadline. */
 export async function extendCooldown(
   file: string,
