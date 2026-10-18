@@ -141,6 +141,7 @@ export async function runProfile(
     controller.abort(new Error('Profile time limit reached.'));
   }, manifest.timeoutSeconds * 1000);
   const fileEvidence = new FileEvidence();
+  let finalSummaryTurn = false;
   let customTools: ToolDefinition[] = parentTools.map(tool => ({
     name: tool.name,
     label: tool.name,
@@ -148,6 +149,8 @@ export async function runProfile(
     parameters: tool.parameters,
     async execute(_id, args, childSignal) {
       controller.signal.throwIfAborted();
+      if (finalSummaryTurn)
+        throw new Error('Final summary turn: source tools are disabled.');
       await assertPilotProfile();
       if (pilot) {
         transport!.assertComplete();
@@ -303,6 +306,28 @@ export async function runProfile(
       throw new Error('Child tool set did not match the profile.');
     }
     unsubscribe = session.subscribe(event => {
+      // turn_end follows all results, so the ninth batch finishes before the
+      // tool loadout and context change for the final (tenth) request.
+      if (
+        manifest.id === githubResearchProfileId &&
+        event.type === 'turn_end' &&
+        turns === manifest.maxTurns - 1 &&
+        event.message.role === 'assistant' &&
+        event.message.stopReason === 'toolUse' &&
+        !controller.signal.aborted
+      ) {
+        finalSummaryTurn = true;
+        session!.setActiveToolsByName([]);
+        void session!.sendCustomMessage(
+          {
+            customType: 'github-final-summary',
+            content:
+              'Final summary turn. Source tools are disabled. Return a concise report now using only retained observations. State unanswered parts and evidence gaps; do not invent findings or references.',
+            display: false,
+          },
+          {triggerTurn: false},
+        );
+      }
       if (event.type === 'message_end' && event.message.role === 'toolResult')
         observeToolResult?.(event.message);
       if (event.type === 'message_end' && event.message.role === 'assistant') {
@@ -436,6 +461,7 @@ export async function runProfile(
     startedAt,
     finishedAt: new Date().toISOString(),
     turns,
+    ...(manifest.id === githubResearchProfileId ? {finalSummaryTurn} : {}),
     tools: customTools.map(tool => tool.name),
     artifactDir,
     error,

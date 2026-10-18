@@ -271,11 +271,24 @@ if (!live) {
         assert.equal(request.service_tier, 'default');
         assert.equal(request.reasoning.effort, 'high');
         assert.equal(request.previous_response_id, undefined);
-        assert.deepEqual(request.tools.map(tool => tool.name).sort(), Object.values(childNames).sort());
-        const fileTool = request.tools.find(tool => tool.name === 'github_file');
-        assert.equal(fileTool.parameters.properties.limit.maximum, 40);
-        assert.equal(fileTool.parameters.properties.operation, undefined);
-        assert.ok(request.tools.find(tool => tool.name === 'github_search_directory').parameters.required.includes('directory'));
+        const tools = request.tools ?? [];
+        if (cfg.transportProbe) assert.deepEqual(tools, []);
+        else if (frames === 10) {
+          assert.deepEqual(tools, []);
+          assert.ok(JSON.stringify(request.input).includes('Final summary turn.'));
+          assert.equal(request.input.filter(item => item.type === 'function_call_output').length, 9);
+        } else {
+          assert.deepEqual(tools.map(tool => tool.name).sort(), Object.values(childNames).sort());
+          const fileTool = tools.find(tool => tool.name === 'github_file');
+          assert.equal(fileTool.parameters.properties.limit.maximum, 40);
+          assert.equal(fileTool.parameters.properties.operation, undefined);
+          assert.ok(tools.find(tool => tool.name === 'github_search_directory').parameters.required.includes('directory'));
+        }
+        record('model-request', {frame: frames, tools: tools.map(tool => tool.name)});
+        if (cfg.scenario === 'summary-cancel' && frames === 10) {
+          setTimeout(() => controller.abort(), 10);
+          return;
+        }
         if (cfg.scenario === 'work-deadline') return;
         if (cfg.scenario === 'cancel') {
           setTimeout(() => controller.abort(), 10);
@@ -303,6 +316,7 @@ if (!live) {
           },
         ];
         let action = actions[(frames - 1) % (actions.length + 1)] ?? null;
+        if (!tools.length && cfg.scenario !== 'summary-violates') action = null;
         const observed = (request.input ?? [])
           .flatMap(item => {
             if (
@@ -581,6 +595,22 @@ const loader = new DefaultResourceLoader({
   ],
 });
 try {
+  if (cfg.transportProbe) {
+    const {installResearchTransport} = await import(new URL('./github-transport.js', pathToFileURL(cfg.module)).href);
+    const runtime = await ModelRuntime.create({authPath: agent + '/auth.json', modelsPath: null});
+    const model = runtime.getModel('openai-codex', 'gpt-6-luna');
+    const transport = await installResearchTransport(runtime,
+      Date.now() + (cfg.scenario === 'transport-expired' ? -1 : 30000), cfg.output);
+    const context = {messages: [{role: 'user', content: 'Scripted transport admission check.', timestamp: Date.now()}]};
+    const count = cfg.scenario === 'transport-expired' ? 0 : 10;
+    for (let i = 0; i < count; i++) {
+      const message = await runtime.streamSimple(model, context, {reasoning: 'high'}).result();
+      assert.equal(message.stopReason, 'stop');
+    }
+    assert.throws(() => runtime.streamSimple(model, context, {reasoning: 'high'}), /admission refused/);
+    await assert.rejects(transport.close(), /admission refused/);
+    attempts.push({report: {status: 'failed', research: transport.summary()}});
+  } else {
   await loader.reload();
   assert.deepEqual(loader.getExtensions().errors, []);
   const runtime = await ModelRuntime.create({
@@ -675,6 +705,7 @@ try {
     });
     session.dispose();
     session = undefined;
+  }
   }
   report = attempts[0].report;
   await writeFile(

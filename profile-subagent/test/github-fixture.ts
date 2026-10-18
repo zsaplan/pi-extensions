@@ -208,6 +208,11 @@ export default async function (pi: ExtensionAPI) {
       record({
         child,
         tools: getCurrentTools(context.messages).map(t => t.name),
+        finalSummaryNotice: context.messages.some(
+          m =>
+            m.role === 'user' &&
+            JSON.stringify(m.content).includes('Final summary turn.'),
+        ),
         results: results.length,
         ...(child && results.length === 0
           ? {toolSchemas: getCurrentTools(context.messages)}
@@ -301,7 +306,19 @@ export default async function (pi: ExtensionAPI) {
           name: 'github_research_read',
           arguments: action,
         }));
-      } else if (results.length < cfg.actions.length) {
+      } else if (cfg.scenario === 'final-turn-batch' && results.length === 8) {
+        message.stopReason = 'toolUse';
+        message.content = cfg.actions.slice(8, 11).map((action, index) => ({
+          type: 'toolCall' as const,
+          id: `child-${8 + index}`,
+          name: 'github_research_read',
+          arguments: action,
+        }));
+      } else if (
+        results.length < cfg.actions.length &&
+        (getCurrentTools(context.messages).length > 0 ||
+          cfg.scenario === 'final-turn-violates')
+      ) {
         const action = {...cfg.actions[results.length]};
         if (
           cfg.scenario === 'assignment-reference-isolation' &&
@@ -311,12 +328,28 @@ export default async function (pi: ExtensionAPI) {
           delete action.commit;
         }
         if (action.revision === '@previous') {
+          // Parallel completion can omit the first requested window. Choose
+          // an actually delivered usable handle, not the first result's slot.
           const prior = results
             .flatMap(r => r.content)
-            .find(c => c.type === 'text');
-          action.revision = JSON.parse(
-            prior?.type === 'text' ? prior.text : '{}',
-          ).revisionHandle;
+            .flatMap(c => {
+              if (c.type !== 'text') return [];
+              try {
+                const value = JSON.parse(c.text);
+                // reference-redact deliberately tries an untrusted handle.
+                return (cfg.scenario === 'reference-redact' ||
+                  value.evidenceRetention?.usableReferences) &&
+                  typeof value.revisionHandle === 'string'
+                  ? [value]
+                  : [];
+              } catch {
+                return [];
+              }
+            })
+            .at(0);
+          if (!prior)
+            throw new Error('Fixture requires a retained revision handle.');
+          action.revision = prior.revisionHandle;
           if (cfg.scenario !== 'reference-conflict') delete action.commit;
         }
         const name =

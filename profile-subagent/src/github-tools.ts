@@ -16,7 +16,7 @@ const descriptions = {
   ],
   list: [
     'github_list_directory',
-    'List one directory, not a file. Use directory="." for the root. Listing is shallow and bounded.',
+    'List one directory, not a file. Use directory="." for the root. Listing is shallow: twenty safe entries per page. Use optional literal case-sensitive nameContains for a known name, or returned nextPage only for a relevant unresolved lead. No automatic inventory.',
   ],
   search: [
     'github_search_directory',

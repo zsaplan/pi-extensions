@@ -87,7 +87,7 @@ The child sees seven narrow tools instead of one multi-operation union schema:
 | --- | --- |
 | `github_file` | File `path`; optional `start` and `limit` **1–40** (default 30) |
 | `github_search_directory` | `directory` and literal `term`; at most five direct files |
-| `github_list_directory` | `directory`; root is `"."` |
+| `github_list_directory` | `directory` (root `"."`); optional `nameContains` and `page` |
 | `github_history` | `path`, optional page and UTC date filters |
 | `github_repositories` | Focused repository query |
 | `github_resolve` | Repository and optional ref |
@@ -126,6 +126,20 @@ Acceptance for this increment:
 - [ ] Separate installation/reload and authorized live acceptance. No live run is authorized by this local implementation.
 
 Private verification record: `tmp/evidence-retention/verified-SoLlGH/VERIFICATION.md`. `test/github-retention-check.ts` checks actual child transcripts against retained post-hook records in source, packed and bundled fixtures. Reproduce through the package/root commands below; these are scripted mechanism tests, not model-quality acceptance.
+
+## Bounded completion and directory navigation
+
+The GitHub runner reserves turn ten for synthesis. After every result in the ninth tool batch has returned, it removes the source tools and adds a final-summary instruction. The child must answer from retained observations and identify unresolved parts. `finalSummaryTurn` records whether that boundary was reached, not whether the report is complete. Earlier answers do not incur another turn. A tool call in the synthesis slot still fails closed; cancellation, time limits, retained-reference validation and all existing budgets remain enforced. Other profiles are unchanged.
+
+Directory listings accept optional `nameContains` (case-sensitive literal basename substring, 1–100 characters) and `page` (1–100). Filtering follows sensitive-path/type checks, before the existing twenty-entry window. Each response reports its page, matching entry count, earlier-page limitation, `hasMore` and `nextPage` (null when no allowed next page remains). `omitted` includes unsafe, filtered and other-page entries. Pages are explicit calls through the same permission/retention/accounting pipeline; no automatic paging or inventory. Immutable tree reuse does not bypass hooks. Content search remains limited to the first five regular files among the original first twenty safe direct entries, without listing filters or recursive search.
+
+Native request accounting distinguishes `attemptedRequests`, `refusedRequests`, admitted `requests`, `sentRequests` and usage-bearing `terminals`. A local refusal no longer increments admitted requests. Accounting completeness requires matching admitted/send/terminal counts; actual missing usage still fails closed. An SDK cancellation race may attempt a local continuation after a disobedient final tool response; the transport refuses it without an eleventh send. A complete accounting record does not turn that failed run into success or establish an invoice.
+
+Local acceptance for this increment is recorded in `tmp/bounded-finish/VERIFICATION.md`. Source and packed/native fixtures cover ninth-batch completion, a tool-free tenth request with the final instruction, explicit disobedience, synthesis cancellation, admission-limit/deadline refusals, and listing navigation/safety/schema boundaries. These are mechanism checks, not proof of autonomous discovery, semantic citation support or whole-workflow savings.
+
+- [x] Focused package (311 tests) and full root verification passed on Node 26.10.0 / SDK 0.99.2; one existing optional task-assistant test skipped. No live model or GitHub calls.
+- [ ] Preserving installation and fresh-session loading.
+- [ ] One separately authorized live test assessed; leave unexercised boundaries explicitly unverified.
 
 ## Host-owned opt-in
 
