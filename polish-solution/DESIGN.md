@@ -10,7 +10,7 @@ It should be read alongside the repo-level design in [`../DESIGN.md`](../DESIGN.
 
 ## Package role
 
-`polish-solution` is a **multi-category review extension** for the current git worktree.
+`polish-solution` is a **multi-category review extension** for a selected git worktree, defaulting to the session directory.
 
 It provides:
 
@@ -25,7 +25,7 @@ Its purpose is to give the primary coding agent a structured way to ask isolated
 
 This package owns:
 
-- determining the fixed review scope from the current git worktree and a base ref
+- determining the fixed review scope from a selected git worktree and a base ref
 - creating isolated reviewer sub-sessions for each review category
 - limiting that reviewer to a narrow, read-only inspection tool surface
 - enforcing a structured category review result shape and aggregating suite results
@@ -46,7 +46,7 @@ This package does **not** own:
 
 ### 1. Fixed-scope review
 
-The reviewer should analyze a fixed diff scope derived from the current worktree, not a moving target.
+The reviewer should analyze a fixed diff scope derived from the selected worktree, not a moving target. Optional `worktreePath` resolves against the session directory; omission preserves the default, while invalid explicit targets fail without fallback. Target selection does not change the parent session directory or weaken review safeguards.
 
 ### 2. Category focus
 
@@ -72,7 +72,7 @@ When review behavior is surprising, there should be enough artifacts and diagnos
 
 Primary tool:
 
-- `polish_solution_review(baseRef?)`
+- `polish_solution_review(worktreePath?, baseRef?, largeDiff?)`
 
 The tool returns structured JSON with:
 
@@ -82,6 +82,7 @@ The tool returns structured JSON with:
 - per-category results
 - deterministic conflict records
 - execution metadata such as elapsed time and aggregate token usage
+- the selected repository, branch, and base ref in visible `scope` metadata
 
 ## Skill
 
@@ -227,7 +228,7 @@ The package should fail fast and explicitly when a trustworthy review cannot be 
 
 Expected failure cases include:
 
-- not being in a git repo/worktree
+- a blank explicit target or a selected directory that is missing/not in a git repo/worktree
 - base ref resolution failure
 - no merge-base
 - no effective diff
@@ -298,7 +299,7 @@ That is appropriate because the package's value comes from trustworthy skepticis
 
 ## Summary
 
-`polish-solution` is designed as a constrained multi-category reviewer for the current git worktree:
+`polish-solution` is designed as a constrained multi-category reviewer for a selected git worktree:
 
 - freeze a review scope
 - run isolated category reviewers

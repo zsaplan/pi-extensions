@@ -1,13 +1,13 @@
 # polish-solution
 
-A pi extension and skill for iterative multi-category review of the current git worktree.
+A pi extension and skill for iterative multi-category review of a selected git worktree, defaulting to the session directory.
 
 ## What it does
 
 - registers `polish_solution_review`
 - ships a checked-in `polish-solution` skill that teaches the iterate/remediate/rerun workflow
 - runs a fixed suite of isolated reviewer sub-sessions: adversarial, simplify, standardize, prune, and DRY
-- gives each reviewer only the current diff by default, plus read-only inspection tools if it needs repository context
+- gives each reviewer the fixed review scope and read-only tools to inspect its diff and repository context
 - returns structured JSON using the upstream status names:
   - `needs-attention`
   - `approve`
@@ -16,12 +16,22 @@ A pi extension and skill for iterative multi-category review of the current git 
 
 ## Tool
 
-- `polish_solution_review(baseRef?, largeDiff?)`
+- `polish_solution_review(worktreePath?, baseRef?, largeDiff?)`
+
+`worktreePath` is an optional absolute or session-relative directory. It selects the checkout without moving or restarting the session; omitting it preserves the existing current-directory behavior. An invalid explicit path never falls back to another checkout. `baseRef` selects lineage within that checkout, not a different worktree.
+
+For example, a session started elsewhere can review a known worktree with:
+
+```json
+{"worktreePath": "/path/to/feature-worktree"}
+```
+
+The tool shows the selected repository and branch before reviewers start. The visible result also includes the repository, branch, and base ref in `scope`. Artifacts retain the session directory, requested path, and resolved scope separately. Keep edits and validation on that same target when following up on findings; read its repository instructions before remediation.
 
 The tool:
 
 - defaults to `origin/main` when available, otherwise `main`
-- diffs against the merge-base with the current worktree, not the base tip directly
+- diffs against the merge-base with the selected worktree, not the base tip directly
 - includes uncommitted tracked changes and non-ignored untracked files
 - accepts diffs up to 6,000 lines or 150 KiB by default
 - supports an explicit `largeDiff: true` opt-in for diffs up to 10,000 lines or 250 KiB; this costs more, takes longer, and may reduce review quality through context dilution
@@ -37,11 +47,13 @@ The tool:
 
 The tool fails fast when:
 
-- the current working directory is not inside a git repo or worktree
+- an explicit `worktreePath` is blank, or the selected directory is missing/not inside a git repo or worktree
 - the requested base ref cannot be resolved
 - no merge-base can be found
 - there is no effective diff to review
 - the diff is too large for a single category reviewer pass
+
+Selecting a different target does not disable fixed-snapshot, submodule, or reviewer-control checks. A clean external reviewer source is still required when those self-review protections apply; a skipped/failed review is not approval.
 
 ## Skill
 
@@ -73,7 +85,7 @@ npm run verify --workspace polish-solution
 cd polish-solution && npm run verify
 ```
 
-Package-local `verify` runs GTS lint, TypeScript, and deterministic unit tests for review-scope/path safety helpers.
+Package-local `verify` runs GTS lint, TypeScript, existing unit checks, and a native SDK E2E test of checkout selection and scope boundaries. The E2E test uses real Git worktrees and a local scripted model, not a live reviewer. It prints an ignored `tmp/worktree-target/run-*` directory containing `evidence.json` and native JSONL artifacts for repeatable inspection.
 
 Then either:
 
