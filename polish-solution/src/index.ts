@@ -92,7 +92,9 @@ import {
 } from './review-prompts.js';
 import {REVIEW_TOOL_PARAMS} from './review-tool-contract.js';
 
-type ReviewToolResult = ReviewSuiteResult;
+type ReviewToolResult = ReviewSuiteResult & {
+  scope: Pick<ReviewScope, 'repoRoot' | 'branch' | 'baseRef'>;
+};
 
 type ReviewArtifactRef = {
   id: string;
@@ -120,6 +122,8 @@ type ReviewRunRecord = {
   runId: string;
   createdAt: string;
   cwd: string;
+  sessionCwd: string;
+  requestedWorktreePath?: string;
   requestedBaseRef?: string;
   model?: string;
   thinkingLevel: ReturnType<ExtensionAPI['getThinkingLevel']>;
@@ -141,6 +145,8 @@ type ReviewArtifactEntry =
   | (ReviewArtifactEntryBase & {
       entryType: 'run-started';
       cwd: string;
+      sessionCwd: string;
+      requestedWorktreePath?: string;
       requestedBaseRef?: string;
       thinkingLevel: ReturnType<ExtensionAPI['getThinkingLevel']>;
       model?: string;
@@ -487,8 +493,18 @@ function buildReviewMeta(
   };
 }
 
-function buildReviewToolResult(review: ReviewSuiteResult): ReviewToolResult {
-  return review;
+function buildReviewToolResult(
+  review: ReviewSuiteResult,
+  scope: ReviewScope,
+): ReviewToolResult {
+  return {
+    ...review,
+    scope: {
+      repoRoot: scope.repoRoot,
+      branch: scope.branch,
+      baseRef: scope.baseRef,
+    },
+  };
 }
 
 function buildReviewScopeRecord(scope: ReviewScope): ReviewScopeRecord {
@@ -536,6 +552,8 @@ async function createReviewArtifactWriter(options: {
   toolCallId: string;
   runId: string;
   cwd: string;
+  sessionCwd: string;
+  requestedWorktreePath?: string;
   requestedBaseRef?: string;
   thinkingLevel: ReturnType<ExtensionAPI['getThinkingLevel']>;
   model?: string;
@@ -588,6 +606,8 @@ async function createReviewArtifactWriter(options: {
       ...buildReviewArtifactEntryBase(options.toolCallId, options.runId),
       entryType: 'run-started',
       cwd: options.cwd,
+      sessionCwd: options.sessionCwd,
+      requestedWorktreePath: options.requestedWorktreePath,
       requestedBaseRef: options.requestedBaseRef,
       thinkingLevel: options.thinkingLevel,
       model: options.model,
@@ -1638,7 +1658,7 @@ async function getRepoRoot(cwd: string, signal?: AbortSignal): Promise<string> {
     signal,
   }).catch(() => {
     throw new Error(
-      'polish_solution_review requires the current working directory to already be inside a git repository or worktree.',
+      `polish_solution_review could not find a git repository or worktree at ${formatModelTextValue(cwd)}. Pass worktreePath for the intended checkout; baseRef does not select a worktree.`,
     );
   });
 
@@ -2312,7 +2332,7 @@ async function buildReviewScope(
       await ensureNoDirtySubmodules(repoRoot, signal);
 
       progress?.update(
-        `Review scope ready: ${scopedDiff.changedFiles.length} file(s), ${scopedDiff.diffLines} diff line(s).`,
+        `Review target ${formatModelTextValue(repoRoot)} (${formatModelTextValue(branch)}): ${scopedDiff.changedFiles.length} file(s), ${scopedDiff.diffLines} diff line(s).`,
         {
           phase: 'scope-ready',
           repoRoot,
@@ -3196,12 +3216,13 @@ export default function polishSolution(pi: ExtensionAPI): void {
     name: 'polish_solution_review',
     label: 'Polish Solution Review',
     description:
-      'Run an isolated multi-category review suite on the current git worktree against a main-like base ref and return structured JSON findings.',
+      'Run an isolated multi-category review suite on a selected git worktree (default: the session directory) against a main-like base ref and return structured JSON findings.',
     promptSnippet:
-      'Run a multi-category review suite on the current git worktree and return structured JSON findings.',
+      'Run a multi-category review suite on a selected git worktree and return structured JSON findings.',
     promptGuidelines: [
       'Use this tool when you want an iterative multi-category review suite over the current change set.',
-      'It defaults to origin/main when available, otherwise main, and it reviews the full current worktree state including non-ignored untracked files.',
+      'Use worktreePath when the intended checkout differs from the session directory; it does not change the session cwd. Keep that target for review, edits, and validation.',
+      'It defaults to origin/main when available, otherwise main, and it reviews the full selected worktree state including non-ignored untracked files.',
       'Use largeDiff only when the user explicitly opts in after being warned that larger reviews cost more, take longer, and may reduce review quality through context dilution.',
       'Rerun it after each substantial remediation pass until it approves or you need user direction.',
     ],
@@ -3214,7 +3235,11 @@ export default function polishSolution(pi: ExtensionAPI): void {
       ctx,
     ) {
       const startedAtMs = Date.now();
-      const currentCwd = ctx.cwd ?? process.cwd();
+      const sessionCwd = ctx.cwd ?? process.cwd();
+      const currentCwd =
+        params.worktreePath === undefined
+          ? sessionCwd
+          : path.resolve(sessionCwd, params.worktreePath);
       const thinkingLevel = pi.getThinkingLevel();
       const runId = randomUUID();
       const requestedBaseRef = normalizeBaseRef(params.baseRef);
@@ -3225,6 +3250,8 @@ export default function polishSolution(pi: ExtensionAPI): void {
         toolCallId,
         runId,
         cwd: currentCwd,
+        sessionCwd,
+        requestedWorktreePath: params.worktreePath,
         requestedBaseRef,
         thinkingLevel,
         model: describeModel(ctx.model),
@@ -3264,6 +3291,14 @@ export default function polishSolution(pi: ExtensionAPI): void {
       }
 
       try {
+        if (
+          params.worktreePath !== undefined &&
+          params.worktreePath.trim().length === 0
+        ) {
+          throw new Error(
+            'worktreePath must name a directory; omit it to use the session directory.',
+          );
+        }
         progress.update(
           'Starting review suite…',
           {
@@ -3322,7 +3357,7 @@ export default function polishSolution(pi: ExtensionAPI): void {
         reviewerMessages = reviewSuite.reviewerMessages;
         reviewerToolAccess = reviewSuite.reviewerToolAccess;
         reviewMeta = review.meta;
-        toolResult = buildReviewToolResult(review);
+        toolResult = buildReviewToolResult(review, scope);
 
         progress.update(
           `polish_solution_review finished: ${review.status} (${reviewMeta.elapsed} · ${formatUsageSummary(reviewMeta.usage)}).`,
@@ -3369,6 +3404,8 @@ export default function polishSolution(pi: ExtensionAPI): void {
         runId,
         createdAt: reviewMeta.completedAt,
         cwd: currentCwd,
+        sessionCwd,
+        requestedWorktreePath: params.worktreePath,
         requestedBaseRef,
         model:
           reviewMeta.usage.model ??

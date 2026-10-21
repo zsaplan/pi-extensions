@@ -1,12 +1,12 @@
 ---
 name: polish-solution
-description: Run iterative multi-category review suites on the current git worktree with polish_solution_review, then remediate and rerun until material findings are exhausted.
+description: Run iterative multi-category review suites on a selected git worktree with polish_solution_review, then remediate and rerun until material findings are exhausted.
 compatibility: Requires a git repository or worktree with a meaningful diff against a main-like base ref.
 ---
 
 # polish-solution
 
-Use this skill when the user wants the current change set polished through a deliberate multi-category review suite rather than a single quick self-check.
+Use this skill when the user wants a change set polished through a deliberate multi-category review suite rather than a single quick self-check.
 
 ## Goal
 
@@ -18,6 +18,10 @@ Keep the primary coding agent in control of the loop:
 4. run relevant validation commands for the changed code
 5. rerun the full review suite from category 1 only after validation is back to green or any pre-existing failures are clearly understood
 6. stop when the suite approves or repeated findings/conflicts require user direction
+
+## Target worktree
+
+Resolve the intended checkout from the current task. Pass its absolute `worktreePath` when it differs from the session directory; do not require a new session just to review it. Confirm the reported repository and branch before addressing findings. Keep that target for every review pass, edit, and validation command, and read its applicable repository instructions before remediation. If the target is missing or ambiguous, ask rather than guessing another checkout.
 
 ## Workflow
 
@@ -42,7 +46,9 @@ Keep the primary coding agent in control of the loop:
 
 ## Tool notes
 
-- `polish_solution_review` automatically reviews the full current worktree state, including uncommitted tracked changes and non-ignored untracked files.
+- `polish_solution_review` automatically reviews the full selected worktree state, including uncommitted tracked changes and non-ignored untracked files.
+- `worktreePath` selects the checkout without changing the session directory. Relative paths resolve against the session directory; omission preserves the current-directory behavior. An invalid explicit path fails instead of falling back.
+- `baseRef` selects the comparison lineage, not the checkout. The selected directory must still be a valid Git repository/worktree; snapshot, diff-size, and reviewer-control safeguards still apply.
 - The default base is `origin/main` when available, otherwise `main`.
 - Use `baseRef` only when the user wants a different comparison base or the default lineage is wrong.
 - The default diff limit is 6,000 lines or 150 KiB. If the user explicitly opts in, `largeDiff: true` raises it to 10,000 lines or 250 KiB.
