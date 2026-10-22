@@ -25,7 +25,7 @@ export const REVIEW_CATEGORY_CONFIGS: readonly ReviewCategoryConfig[] = [
     category: 'adversarial',
     label: 'Adversarial Review',
     objective:
-      'Find material correctness, robustness, design, safety, and edge-case risks. Prioritize dangerous or expensive failures and report only material blocking risks.',
+      'Find material correctness, robustness, design, safety, and edge-case risks. Check whether the change addresses the underlying failure class rather than only the observed example. Flag narrow matching, hard-coded assumptions, or special cases that miss plausible nearby variants within the intended scope. Do not demand speculative generalization. Prioritize dangerous or expensive failures and report only material blocking risks.',
   },
   {
     category: 'simplify',
