@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type {ExtensionContext} from '@earendil-works/pi-coding-agent';
+import type {
+  ContextEvent,
+  ContextEventResult,
+  ExtensionContext,
+} from '@earendil-works/pi-coding-agent';
 import {
   createSlackApprovalGate,
   type SlackWriteConfirmationOptions,
@@ -34,7 +38,14 @@ function harness() {
     string,
     {handler: (args: string, ctx: ExtensionContext) => Promise<void>}
   >();
+  let contextHandler!: (
+    event: ContextEvent,
+    ctx: ExtensionContext,
+  ) => Promise<ContextEventResult>;
   const pi = {
+    on(_event: string, handler: typeof contextHandler) {
+      contextHandler = handler;
+    },
     appendEntry(customType: string, data: unknown) {
       entries.push({type: 'custom', customType, data: structuredClone(data)});
     },
@@ -75,8 +86,90 @@ function harness() {
     };
   };
   const reload = () => createSlackApprovalGate(pi as never, lookup);
-  return {entries, state, commands, ctx, reload, pi, lookup};
+  const context = (context = ctx, messages: ContextEvent['messages'] = []) =>
+    contextHandler({type: 'context', messages}, context);
+  return {entries, state, commands, ctx, reload, pi, lookup, context};
 }
+
+// Consequential failures: stale/revoked consent, wrong identity/session, and
+// unattended/global-bypass settings advertising an unsolicited destination.
+test('context advertises only current verified thread grants and refreshes after revoke', async t => {
+  const previous = {...process.env};
+  process.env.SLACK_BOT_TOKEN = config.token;
+  process.env.PI_SLACK_API_BASE_URL = config.apiBaseUrl;
+  t.after(() => {
+    for (const name of [
+      'SLACK_BOT_TOKEN',
+      'PI_SLACK_API_BASE_URL',
+      'PI_SLACK_SKIP_SEND_CONFIRM',
+    ]) {
+      if (previous[name] === undefined) delete process.env[name];
+      else process.env[name] = previous[name];
+    }
+  });
+  const h = harness();
+  const gate = h.reload();
+  const snapshot = async (ctx = h.ctx) => {
+    const result = await h.context(ctx);
+    return JSON.stringify(result.messages);
+  };
+  assert.match(await snapshot(), /None\./);
+  await gate(config, h.ctx, options);
+  const first = await h.context();
+  assert.match(JSON.stringify(first), /C12345678 thread 1.000001/);
+  assert.ok(!JSON.stringify(first).includes(config.token));
+  assert.equal(h.entries.length, 1); // Context snapshots are not persisted.
+  const refreshed = await h.context(h.ctx, first.messages);
+  assert.equal(refreshed.messages!.length, 1);
+  assert.match(await snapshot({...h.ctx, hasUI: false}), /None\./);
+  h.state.sessionId = 'fork';
+  assert.match(await snapshot(), /None\./);
+  h.state.sessionId = 'session-a';
+  for (const token of ['other-workspace', 'other-bot']) {
+    process.env.SLACK_BOT_TOKEN = token;
+    assert.match(await snapshot(), /None\./);
+  }
+  process.env.SLACK_BOT_TOKEN = config.token;
+  process.env.PI_SLACK_API_BASE_URL = 'https://other.test/api';
+  assert.match(await snapshot(), /None\./);
+  process.env.PI_SLACK_API_BASE_URL = config.apiBaseUrl;
+  h.reload();
+  assert.match(await snapshot(), /C12345678 thread 1.000001/);
+  await h.commands.get('slack-approvals')!.handler('clear', h.ctx);
+  assert.match(await snapshot(), /None\./);
+  process.env.PI_SLACK_SKIP_SEND_CONFIRM = '1';
+  assert.match(await snapshot(), /None\./);
+  delete process.env.SLACK_BOT_TOKEN;
+  assert.match(await snapshot(), /None\./);
+});
+
+test('Canvas grants and failed identity verification never advertise a thread', async t => {
+  const previousToken = process.env.SLACK_BOT_TOKEN;
+  const previousApi = process.env.PI_SLACK_API_BASE_URL;
+  process.env.SLACK_BOT_TOKEN = config.token;
+  process.env.PI_SLACK_API_BASE_URL = config.apiBaseUrl;
+  t.after(() => {
+    if (previousToken === undefined) delete process.env.SLACK_BOT_TOKEN;
+    else process.env.SLACK_BOT_TOKEN = previousToken;
+    if (previousApi === undefined) delete process.env.PI_SLACK_API_BASE_URL;
+    else process.env.PI_SLACK_API_BASE_URL = previousApi;
+  });
+  const h = harness();
+  const gate = h.reload();
+  h.state.choice = 'Approve Canvas content for this session';
+  await gate(config, h.ctx, {
+    ...options,
+    threadScope: undefined,
+    canvasScope: {canvasId: 'F123'},
+  });
+  assert.match(JSON.stringify(await h.context()), /None\./);
+  h.state.choice = 'Approve thread for this session';
+  await gate(config, h.ctx, options);
+  createSlackApprovalGate(h.pi as never, async () => {
+    throw new Error('unavailable');
+  });
+  assert.match(JSON.stringify(await h.context()), /None\./);
+});
 
 test('thread approval is reused and reload restores it without storing tokens', async () => {
   const {reload, ctx, state, entries} = harness();

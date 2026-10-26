@@ -1099,8 +1099,8 @@ export default function slackExtension(pi: ExtensionAPI) {
       'Post a Slack message or thread reply using SLACK_BOT_TOKEN.',
     promptGuidelines: [
       ...SLACK_MESSAGE_WRITING_GUIDELINES,
-      'Use slack_post_message only when the user explicitly asks to send or reply in Slack; do not use it for drafts unless the user asks to send.',
-      'For ongoing investigations, announce substantive new evidence, changed conclusions, or material uncertainty—not document editing, formatting, routine verification, or tool limitations. Keep operational status in the Pi session unless explicitly requested in Slack. Editorial-only changes need no announcement.',
+      'Use slack_post_message when the user asks to send or reply, or for a relevant substantive update to a thread listed in the current extension-verified proactive-update destinations. Respect draft-only requests and explicit user limits. A session grant permits concise proactive replies, not unrelated posts or other unsolicited mutations.',
+      'For ongoing investigations, announce substantive new evidence, changed conclusions, meaningful investigation blockers, material uncertainty, or final outcomes—not document editing, formatting, routine verification, or internal tool limitations. Keep routine operational status in the Pi session unless explicitly requested in Slack. Editorial-only changes need no announcement.',
       'slack_post_message sends chat.postMessage with SLACK_BOT_TOKEN, not SLACK_USER_TOKEN.',
       'slack_post_message requires interactive approval unless its exact thread has a session grant or PI_SLACK_SKIP_SEND_CONFIRM=1 is set. Choose Approve thread for this session to allow future replies/uploads there; conversational pre-approval alone does not create an extension grant.',
       'Use markdown for narrative reports or static blocks for metric dashboards, with an essential-content text fallback. Rich messages cannot be split. Ordinary long text is rejected by default; use longTextMode=split only when multi-part posting is acceptable.',

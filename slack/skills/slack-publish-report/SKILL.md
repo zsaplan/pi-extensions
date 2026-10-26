@@ -5,7 +5,7 @@ description: Write clear, audience-aware Slack messages and concise findings-onl
 
 # Write and publish in Slack
 
-Only publish when the user requests it. Establish the destination and audience from the request and relevant thread; ask only when ambiguity materially affects the content or authorization. For files and Canvases, confirm the selected evidence and intended access level. When given a channel name, use `slack_resolve_channel` before asking the human for its ID. Respect lookup budgets/cooldowns; incomplete or rate-limited lookup is not evidence that the channel does not exist. A user-token match does not establish bot posting permission. Do not upload whole sessions or unrelated sensitive data. Retain the extension's write confirmation gates.
+Publish when the user requests it, or send a concise, non-broadcast substantive update for work clearly relevant to a thread listed in the current extension-verified proactive-update destinations. Respect draft-only requests and explicit user limits. Read the thread when needed to establish relevance and avoid duplicates. Share new evidence, changed conclusions, meaningful investigation blockers, or final outcomes—not routine progress, tool failures, formatting, or unrelated work. Ask if multiple approved threads could fit and context does not resolve which one. This exception covers replies only, not unsolicited uploads, edits, Canvases, deletes, or top-level posts. Global confirmation bypass settings are not proactive posting permission. Establish the destination and audience from the request and relevant thread; ask only when ambiguity materially affects the content or authorization. For files and Canvases, confirm the selected evidence and intended access level. When given a channel name, use `slack_resolve_channel` before asking the human for its ID. Respect lookup budgets/cooldowns; incomplete or rate-limited lookup is not evidence that the channel does not exist. A user-token match does not establish bot posting permission. Do not upload whole sessions or unrelated sensitive data. Retain the extension's write confirmation gates.
 
 ## Message voice
 
@@ -54,7 +54,7 @@ For ongoing updates to one authorized Canvas, the human can select **Approve Can
 
 ## Investigation updates versus editing status
 
-For an authorized ongoing investigation, post substantive new evidence, changed conclusions, or material uncertainty. Do not announce formatting, structural cleanup, routine verification, revision hashes, or tool limitations. Keep editing progress and operational blockers in the Pi session unless the user explicitly requests them in Slack. If only presentation changed, send no thread announcement. This is editorial guidance, not an automatic content filter.
+For an authorized ongoing investigation, post substantive new evidence, changed conclusions, meaningful investigation blockers, material uncertainty, or final outcomes. Do not announce formatting, structural cleanup, routine verification, revision hashes, or internal tool limitations. Keep editing progress and routine operational status in the Pi session unless the user explicitly requests them in Slack. If only presentation changed, send no thread announcement. This is editorial guidance, not an automatic content filter.
 
 ## Choose a surface
 
