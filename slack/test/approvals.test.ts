@@ -86,13 +86,11 @@ function harness() {
     };
   };
   const reload = () => createSlackApprovalGate(pi as never, lookup);
-  const context = (context = ctx, messages: ContextEvent['messages'] = []) =>
-    contextHandler({type: 'context', messages}, context);
+  const context = (context = ctx) =>
+    contextHandler({type: 'context', messages: []}, context);
   return {entries, state, commands, ctx, reload, pi, lookup, context};
 }
 
-// Consequential failures: stale/revoked consent, wrong identity/session, and
-// unattended/global-bypass settings advertising an unsolicited destination.
 test('context advertises only current verified thread grants and refreshes after revoke', async t => {
   const previous = {...process.env};
   process.env.SLACK_BOT_TOKEN = config.token;
@@ -119,8 +117,6 @@ test('context advertises only current verified thread grants and refreshes after
   assert.match(JSON.stringify(first), /C12345678 thread 1.000001/);
   assert.ok(!JSON.stringify(first).includes(config.token));
   assert.equal(h.entries.length, 1); // Context snapshots are not persisted.
-  const refreshed = await h.context(h.ctx, first.messages);
-  assert.equal(refreshed.messages!.length, 1);
   assert.match(await snapshot({...h.ctx, hasUI: false}), /None\./);
   h.state.sessionId = 'fork';
   assert.match(await snapshot(), /None\./);

@@ -146,7 +146,7 @@ Non-interactive runs never consume interactive grants; the existing environment 
 
 ## Proactive thread-update context
 
-The approval gate registers a `context` handler that supplies a nonpersisted snapshot before each model call, including tool continuations. It uses the same session grant reconstruction and cached verified bot identity as the write gate, filtering out Canvas grants, other identities/API bases, revoked grants, and inherited grants from other sessions. Missing configuration or identity evidence and non-interactive contexts advertise no destinations. Snapshots replace any prior request-local snapshot rather than accumulating in session history.
+The approval gate registers a `context` handler that supplies a nonpersisted snapshot before each model call, including tool continuations. It uses the same session grant reconstruction and cached verified bot identity as the write gate, filtering out Canvas grants, other identities/API bases, revoked grants, and inherited grants from other sessions. Missing configuration or identity evidence and non-interactive contexts advertise no destinations. The handler appends the snapshot only to request-local context, not session history. Stable posting policy stays in tool guidance and the publishing skill; the snapshot contains only current destinations.
 
 Prompt and skill guidance allow concise substantive replies for relevant work in listed threads without another explicit posting request. Explicit user limits take priority; unrelated work, duplicates, routine progress, and unsolicited non-reply mutations remain excluded. This is model guidance, not an automatic publisher or an authorization substitute. The existing execution-time approval gate is unchanged.
 

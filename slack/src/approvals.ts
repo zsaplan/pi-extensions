@@ -269,25 +269,17 @@ export function createSlackApprovalGate(
     }
     return {
       messages: [
-        ...event.messages.filter(
-          message =>
-            message.role !== 'custom' ||
-            message.customType !== 'slack-approved-threads',
-        ),
+        ...event.messages,
         {
           role: 'custom' as const,
           customType: 'slack-approved-threads',
           display: false,
           timestamp: Date.now(),
           content: [
-            'Current Slack proactive-update destinations (extension-verified session thread grants; this snapshot supersedes earlier snapshots):',
+            'Current Slack proactive-update destinations (extension-verified session thread grants):',
             ...(threads.length
               ? threads.map(grant => describe(grant))
-              : [
-                  'None. Do not infer proactive permission from earlier context or global confirmation bypass settings.',
-                ]),
-            'For work clearly relevant to a listed thread, use slack_post_message to share substantive new evidence, a changed conclusion, a meaningful investigation blocker, or a final outcome without waiting for another user request. Respect explicit user limits and draft-only requests. Read the thread when needed to establish relevance and avoid duplicate updates. Skip routine progress, tool failures, formatting, and unrelated work. If multiple threads could fit and context does not resolve the destination, ask rather than guess.',
-            'This proactive permission is for concise non-broadcast replies only, not unsolicited uploads, edits, Canvas changes, deletes, or top-level posts. Existing write gates remain authoritative. No listed destination means a new explicit posting request is needed.',
+              : ['None.']),
           ].join('\n'),
         },
       ],
