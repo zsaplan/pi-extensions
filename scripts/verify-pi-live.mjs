@@ -71,7 +71,7 @@ try {
   }).trim();
   assert.equal(
     report.piVersion,
-    '0.99.2',
+    '1.4.0',
     'Use the pinned test CLI, not the daily installation',
   );
   const credentialDeadline = await prepareLiveCredentials({
@@ -120,6 +120,7 @@ try {
     '--no-prompt-templates',
     '--no-themes',
     '--no-context-files',
+    '--no-mcp',
     '--no-approve',
   ];
 

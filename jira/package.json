@@ -9,9 +9,23 @@
     "url": "git+https://github.com/zsaplan/pi-extensions.git",
     "directory": "jira"
   },
-  "keywords": ["pi-package", "pi-extension", "jira", "atlassian"],
-  "files": ["src", "DESIGN.md", "README.md", "package.json"],
-  "pi": {"extensions": ["./src/index.ts"]},
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "jira",
+    "atlassian"
+  ],
+  "files": [
+    "src",
+    "DESIGN.md",
+    "README.md",
+    "package.json"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"
@@ -23,7 +37,7 @@
     "verify": "npm run lint && npm run typecheck && npm run test"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.80.5",
+    "@earendil-works/pi-coding-agent": "1.4.0",
     "@types/node": "^24.12.2",
     "gts": "^7.0.0",
     "typebox": "^1.1.24",
