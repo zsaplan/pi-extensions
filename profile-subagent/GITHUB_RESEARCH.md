@@ -148,7 +148,7 @@ Build with `npm run build --workspace profile-subagent` or pack with `npm pack .
 The trusted host must supply:
 - `token(): Promise<string>`: GitHub credentials in memory, never model arguments.
 - `getBinding(ctx, callId)`: a binding for the exact admitted outer call, or undefined.
-- For the reviewed native candidate, `standardPilot: {artifactRoot, authPath?}`: a private artifact root and optional Codex OAuth store path. This selects Luna/high, requested default tier, WebSocket-only, no Fast mode or hidden retry/fallback. Native transport is qualified only with the child SDK's pi-ai **0.99.2** and fails closed on another version. Node **26.10.0** was tested. The base factory without this option retains the existing Sol/medium runner; it does not provide the native transport guarantees.
+- For the reviewed native candidate, `standardPilot: {artifactRoot, authPath?}`: a private artifact root and optional Codex OAuth store path. This selects Luna/high, requested default tier, WebSocket-only, no Fast mode or hidden retry/fallback. Native transport requires both Pi coding-agent and pi-ai **1.4.0** and fails closed on another version. On macOS / Node **26.12.1**, 311 profile tests passed with local fixtures, including the real-Pi transport, tool boundaries and cleanup; live GitHub research on 1.4.0 has not been verified. Incremental tool declarations are disabled for this transport so the final summary request has no tools on the wire. The base factory without this option retains the existing Sol/medium runner; it does not provide the native transport guarantees.
 
 A binding contains `taskId, sessionId, threadKey, reservationId, deadlineAt`. Use the existing absolute worker deadline (at most 120 seconds ahead), not a fresh deadline per tool call.
 
