@@ -144,6 +144,12 @@ Pi custom entries (`slack-approval-v2`) persist grant/revoke/clear events. Legac
 
 Non-interactive runs never consume interactive grants; the existing environment flag plus explicit per-call confirmation remain required. The explicit global skip flag still bypasses all approvals as before. Existing conversational approvals are not automatically parsed into extension state.
 
+## Proactive thread-update context
+
+The approval gate registers a `context` handler that supplies a nonpersisted snapshot before each model call, including tool continuations. It uses the same session grant reconstruction and cached verified bot identity as the write gate, filtering out Canvas grants, other identities/API bases, revoked grants, and inherited grants from other sessions. Missing configuration or identity evidence and non-interactive contexts advertise no destinations. The handler appends the snapshot only to request-local context, not session history. Stable posting policy stays in tool guidance and the publishing skill; the snapshot contains only current destinations.
+
+Prompt and skill guidance allow concise substantive replies for relevant work in listed threads without another explicit posting request. Explicit user limits take priority; unrelated work, duplicates, routine progress, and unsolicited non-reply mutations remain excluded. This is model guidance, not an automatic publisher or an authorization substitute. The existing execution-time approval gate is unchanged.
+
 ## Canvas and file publishing
 
 `publishing.ts` owns native Canvas payloads, metadata allowlisting, upload validation/snapshots, and the external-upload flow. `publishing-tools.ts` registers publishing tools and delegates iterative Canvas tools to `canvas-tools.ts`, injecting the existing bot-client factory, confirmation gate, and truncated result formatter from `index.ts`. No new credential storage or Slack SDK is introduced.

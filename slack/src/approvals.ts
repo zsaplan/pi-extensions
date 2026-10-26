@@ -249,6 +249,43 @@ export function createSlackApprovalGate(
     );
   }
 
+  // Request-local context stays fresh after grants/revocations, including tool
+  // continuations. Never persist this snapshot or turn it into an outbound post.
+  pi.on('context', async (event, ctx) => {
+    let threads: Grant[] = [];
+    const grants = [...currentGrants(ctx).values()].filter(
+      grant => grant.kind === 'thread',
+    );
+    const config = readSlackWriteConfig().settings;
+    if (ctx.hasUI && config && grants.length) {
+      try {
+        const verified = await identity(config, ctx.signal);
+        threads = grants.filter(
+          grant => key(grant) === key({...grant, ...verified}),
+        );
+      } catch {
+        // Missing identity evidence must not advertise a proactive destination.
+      }
+    }
+    return {
+      messages: [
+        ...event.messages,
+        {
+          role: 'custom' as const,
+          customType: 'slack-approved-threads',
+          display: false,
+          timestamp: Date.now(),
+          content: [
+            'Current Slack proactive-update destinations (extension-verified session thread grants):',
+            ...(threads.length
+              ? threads.map(grant => describe(grant))
+              : ['None.']),
+          ].join('\n'),
+        },
+      ],
+    };
+  });
+
   pi.registerCommand('slack-approvals', {
     description:
       'Inspect/revoke session Slack grants; allow <thread-link> or allow-canvas <ID/link> explicitly pre-approves one scope.',

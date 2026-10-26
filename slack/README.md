@@ -91,6 +91,12 @@ Commands (interactive UI required):
 
 Use the parent thread permalink, or a permalink with the correct `thread_ts` query parameter. Pre-approval does not send a message. Normal Slack permissions and membership checks still apply.
 
+## Proactive thread updates
+
+Before each model call, the extension supplies a request-local snapshot of active thread grants matching the current session and verified bot/workspace/API identity. Interactive agents may use those destinations for concise, relevant substantive updates without a new posting request: new evidence, changed conclusions, meaningful investigation blockers, and final outcomes. Explicit user limits and draft-only requests take priority. Agents should skip routine progress, tool failures, formatting, unrelated work, and duplicate updates; ambiguous destinations require clarification.
+
+This guidance covers non-broadcast replies only. It does not authorize unsolicited uploads, edits, Canvas changes, deletes, or top-level posts. Canvas grants and global confirmation bypass flags do not create proactive destinations. Non-interactive runs receive no proactive destinations. The existing write gate still checks consent at execution time; the context snapshot is not an authorization token. No automatic posting hook or additional model call is added. Reload existing sessions to load this behavior.
+
 ## Writing voice
 
 Message posts, edits, and upload comments share drafting instructions in `src/writing-guidelines.ts`: adapt to the audience, lead with the outcome or request, use plain language and light Slack formatting, and make follow-ups about what changed. Routine updates should usually fit in a short paragraph or a lead plus a few bullets. Requested reports/plans and important qualifications take priority over brevity.
