@@ -28,10 +28,10 @@ export async function installResearchTransport(
     ?.map(p => join(p, '@earendil-works/pi-ai'))
     .find(p => existsSync(join(p, 'package.json')));
   if (
-    VERSION !== '0.99.2' ||
+    VERSION !== '1.4.0' ||
     !owner ||
     JSON.parse(readFileSync(join(owner, 'package.json'), 'utf8')).version !==
-      '0.99.2'
+      '1.4.0'
   )
     throw new Error(
       'Research native transport version requires requalification.',
@@ -161,7 +161,17 @@ export async function installResearchTransport(
       effort: 'high',
       tier: 'default',
     });
-    return runtime.stream(model as Model<'openai-codex-responses'>, context, {
+    // Keep the final summary request tool-free on the wire. Incremental
+    // additional_tools declarations cannot remove previously declared tools.
+    const wireModel = {
+      ...model,
+      compat: {
+        ...model.compat,
+        supportsAdditionalTools: false,
+        supportsToolSearch: false,
+      },
+    } as Model<'openai-codex-responses'>;
+    return runtime.stream(wireModel, context, {
       ...options,
       headers,
       sessionId: id,

@@ -36,7 +36,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
     "proper-lockfile": "^4.1.2",
     "typebox": "1.1.38",
     "yaml": "2.9.0"

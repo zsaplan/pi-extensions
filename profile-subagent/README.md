@@ -8,7 +8,7 @@ A trusted host can explicitly import the [bounded GitHub researcher](GITHUB_RESE
 
 ## Install
 
-See [installation, acceptance and rollback](RELEASE.md). Validated with Pi 0.99.2 / Node 26.10.0.
+See [installation, acceptance and rollback](RELEASE.md). Historical live validation used Pi 0.99.2 / Node 26.10.0; Pi 1.4.0 / Node 26.12.1 has passed the local fixture suite, not live acceptance.
 
 From a reviewed checkout with dependencies installed:
 

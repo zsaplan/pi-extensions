@@ -14,7 +14,7 @@ After separately approved merge/installation, start a fresh flagged session and 
 
 ## Installation contract
 
-- Validated with **Pi 0.99.2 / Node 26.10.0 on macOS**. Other platforms/Pi versions have not been validated against these SDK and nested-accounting APIs.
+- Historical live validation used **Pi 0.99.2 / Node 26.10.0 on macOS**. The local profile fixture suite also passed with Pi 1.4.0 / Node 26.12.1 on macOS; live acceptance on 1.4.0 and other platforms remains unverified.
 - The original five profiles require **`openai-codex/gpt-6.1-sol`, medium thinking** and working credentials for that provider. There is no model fallback. The parent may use a different model/provider.
 - All five original profiles require callable **`read`, `grep`, `find`, `ls`**. Stock Pi enables only `read`, `bash`, `edit`, `write`; installing this extension alone does not enable the other three tools.
 - The two file-only profiles work without BriteCore integrations. Postfix profiles additionally require the three approved `bc_site_db_*` tools listed in [README.md](README.md#tools-and-profiles). Missing tools make those profiles unavailable; do not enable broader substitutes.
