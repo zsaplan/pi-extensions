@@ -87,9 +87,9 @@
     "typebox": "*"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.99.2",
-    "@earendil-works/pi-coding-agent": "0.99.2",
-    "@earendil-works/pi-tui": "0.99.2",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-tui": "1.4.0",
     "@types/node": "^24.12.2",
     "gts": "^7.0.0",
     "knip": "^5.88.1",
