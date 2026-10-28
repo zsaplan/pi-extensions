@@ -37,7 +37,7 @@ export const REVIEW_CATEGORY_CONFIGS: readonly ReviewCategoryConfig[] = [
     category: 'standardize',
     label: 'Standardize Review',
     objective:
-      'Catch deviations from existing repository or package conventions. Prefer nearby patterns, established helpers, validation conventions, error shapes, and extension APIs.',
+      'Catch deviations from existing repository or package conventions. Prefer nearby patterns, established helpers, validation conventions, error shapes, and extension APIs. Before concluding that a new workflow or validator follows repository conventions, inspect an existing comparable implementation when available. Compare relevant behavior and trust boundaries, and distinguish demonstrated conventions from optional design preferences. State material comparison limitations in the summary rather than inventing a blocking finding.',
   },
   {
     category: 'prune',
