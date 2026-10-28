@@ -2629,15 +2629,17 @@ function createReviewerTools(
         }
 
         const pathSpec = normalizeRepoPath(params.path, scope.repoRoot);
+        // The frozen index searches the same snapshot without repeating its
+        // tree ID on every match and consuming the output budget on provenance.
         const args = [
           'grep',
+          '--cached',
           '-n',
           '--full-name',
           '-I',
           '-F',
           '--',
           pattern,
-          scope.snapshotTree,
         ];
         if (pathSpec) args.push('--', pathSpec);
 
@@ -2667,6 +2669,7 @@ function createReviewerTools(
             details: {
               pattern,
               path: pathSpec,
+              snapshotTree: scope.snapshotTree,
               matches: 0,
             },
           };
@@ -2687,6 +2690,7 @@ function createReviewerTools(
           details: {
             pattern,
             path: pathSpec,
+            snapshotTree: scope.snapshotTree,
           },
         };
       },
