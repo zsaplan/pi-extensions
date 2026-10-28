@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {execFileSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
+import {writeFileSync} from 'node:fs';
 import {
   cp,
   mkdir,
@@ -40,6 +41,8 @@ type ArtifactRecord = {
 
 // Boundary failures: review the session's decoy checkout, fall back after an
 // invalid target, misresolve relative paths, or bypass reviewer-control checks.
+// Search failures: use the live index, spend the budget on repeated tree IDs,
+// miss frozen untracked files, or silently accept genuinely oversized output.
 test(
   'native review tool keeps explicit/default targets and artifacts scoped',
   {timeout: 120_000},
@@ -80,6 +83,20 @@ test(
     let passed = false;
     let modelCalls = 0;
     let inspectedReads = 0;
+    let inspectedSearches = 0;
+    let mutateOnFirstRequest: string | undefined;
+    const searchLines = Array.from(
+      {length: 600},
+      () => `GREP_MATCH ${'x'.repeat(40)}`,
+    );
+    const searchContent = `${searchLines.join('\n')}\n`;
+    const expectedSearch = `${searchLines
+      .map((line, index) => `search.txt:${index + 1}:${line}`)
+      .join('\n')}\n`;
+    assert.ok(Buffer.byteLength(expectedSearch) < 50 * 1024);
+    assert.ok(
+      Buffer.byteLength(expectedSearch) + searchLines.length * 41 > 50 * 1024,
+    );
     const model: Model<'openai-completions'> = {
       id: 'scripted',
       name: 'Scoped review fixture',
@@ -109,7 +126,18 @@ test(
       ],
       streamSimple(activeModel, context) {
         modelCalls++;
-        assert.ok(!JSON.stringify(context.messages).includes('SESSION_ONLY'));
+        assert.doesNotMatch(
+          JSON.stringify(context.messages),
+          /SESSION_ONLY|LIVE_INDEX_ONLY/,
+        );
+        if (mutateOnFirstRequest) {
+          writeFileSync(
+            join(mutateOnFirstRequest, 'search.txt'),
+            'LIVE_INDEX_ONLY\n',
+          );
+          git(mutateOnFirstRequest, 'add', 'search.txt');
+          mutateOnFirstRequest = undefined;
+        }
         const results = context.messages.filter(
           message => message.role === 'toolResult',
         );
@@ -118,15 +146,58 @@ test(
         const read = results.find(result => result.toolName === 'read_file');
         if (read) {
           assert.match(JSON.stringify(read), /TARGET_ONLY/);
-          inspectedReads++;
+          if (!has('grep_repo')) inspectedReads++;
         }
+        const searches = results.filter(
+          result => result.toolName === 'grep_repo',
+        );
+        const searchText = (index: number) =>
+          searches[index].content
+            .filter(part => part.type === 'text')
+            .map(part => part.text)
+            .join('\n');
+        if (searches[0]) {
+          assert.equal(searches[0].isError, false);
+          assert.equal(searchText(0), expectedSearch);
+          assert.match(
+            (searches[0].details as {snapshotTree: string}).snapshotTree,
+            /^[a-f0-9]{40}$/,
+          );
+        }
+        if (searches[1]) {
+          assert.equal(searches[1].isError, false);
+          assert.equal(searchText(1), 'new.txt:1:target untracked\n');
+        }
+        if (searches[2]) {
+          assert.equal(searches[2].isError, false);
+          assert.equal(searchText(2), 'No matches found under "search.txt".');
+        }
+        for (const result of searches.slice(1, 3)) {
+          assert.equal(
+            (result.details as {snapshotTree: string}).snapshotTree,
+            (searches[0].details as {snapshotTree: string}).snapshotTree,
+          );
+        }
+        if (searches[3]) {
+          assert.equal(searches[3].isError, true);
+          assert.match(searchText(3), /grep_repo output is too large/);
+          inspectedSearches += searches.length;
+        }
+        const searchRequests: Array<Record<string, string>> = [
+          {pattern: 'GREP_MATCH'},
+          {pattern: 'target untracked', path: 'new.txt'},
+          {pattern: 'NO_MATCH', path: 'search.txt'},
+          {pattern: 'OVERSIZED_MATCH', path: 'oversized.txt'},
+        ];
         const name = !has('git_status')
           ? 'git_status'
           : !has('git_diff')
             ? 'git_diff'
             : !has('read_file')
               ? 'read_file'
-              : 'submit_review';
+              : searches.length < searchRequests.length
+                ? 'grep_repo'
+                : 'submit_review';
         const message: AssistantMessage = {
           role: 'assistant',
           api: activeModel.api,
@@ -142,13 +213,15 @@ test(
               arguments:
                 name === 'read_file'
                   ? {path: 'app.txt'}
-                  : name === 'submit_review'
-                    ? {
-                        status: 'approve',
-                        summary: 'Scripted scope check only.',
-                        findings: [],
-                      }
-                    : {},
+                  : name === 'grep_repo'
+                    ? searchRequests[searches.length]
+                    : name === 'submit_review'
+                      ? {
+                          status: 'approve',
+                          summary: 'Scripted scope check only.',
+                          findings: [],
+                        }
+                      : {},
             },
           ],
           usage: {
@@ -249,6 +322,11 @@ test(
       git(main, 'init', '-b', 'main');
       await writeFile(join(main, 'app.txt'), 'base\n');
       await writeFile(join(main, 'decoy.txt'), 'base\n');
+      await writeFile(join(main, 'search.txt'), searchContent);
+      await writeFile(
+        join(main, 'oversized.txt'),
+        `OVERSIZED_MATCH ${'x'.repeat(80)}\n`.repeat(800),
+      );
       git(main, 'add', '.');
       git(main, 'commit', '-m', 'fixture baseline');
       git(main, 'worktree', 'add', '-b', 'feature', target);
@@ -266,13 +344,18 @@ test(
         ['default', target, undefined],
       ] as const) {
         const beforeReads = inspectedReads;
+        const beforeSearches = inspectedSearches;
+        mutateOnFirstRequest = target;
         const {output, error, record, updates} = await probe(
           label,
           cwd,
           selected,
         );
+        await writeFile(join(target, 'search.txt'), searchContent);
+        git(target, 'add', 'search.txt');
         assert.equal(error, undefined);
         assert.equal(inspectedReads - beforeReads, 5);
+        assert.equal(inspectedSearches - beforeSearches, 20);
         assert.equal(record.status, 'success');
         assert.equal(record.scope?.repoRoot, target);
         assert.equal(record.scope?.branch, 'feature');
@@ -373,6 +456,7 @@ test(
             fixtureRoot: root,
             modelCalls,
             inspectedReads,
+            inspectedSearches,
             liveModelCalls: 0,
             scriptedReviewerApprovalOnly: true,
             observations,
