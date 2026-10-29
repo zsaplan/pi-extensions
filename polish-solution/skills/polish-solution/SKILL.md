@@ -59,7 +59,7 @@ Read `description_review` as well as code findings. A description-only finding c
 - `baseRef` selects the comparison lineage, not the checkout. The selected directory must still be a valid Git repository/worktree; snapshot, diff-size, and reviewer-control safeguards still apply.
 - The default base is `origin/main` when available, otherwise `main`.
 - Use `baseRef` only when the user wants a different comparison base or the default lineage is wrong.
-- The default diff limit is 6,000 lines or 150 KiB. If the user explicitly opts in, `largeDiff: true` raises it to 10,000 lines or 250 KiB.
+- The default diff limit is 6,000 lines or 150 KiB. If the user explicitly opts in, `largeDiff: true` raises it to 10,000 lines or 384 KiB (393,216 bytes).
 - Before using `largeDiff: true`, warn that larger reviews cost more, take longer, and may reduce review quality through context dilution.
 - The tool runs five isolated code reviewers in order: `adversarial`, `simplify`, `standardize`, `prune`, and `dry`. PR-aware mode then runs a separate `pr-description` reviewer; ordinary worktree mode is unchanged.
 - Each category has its own read-only reviewer session and its own internal `submit_review` call; only the parent tool aggregates IDs, category metadata, conflicts, and the final suite result.
