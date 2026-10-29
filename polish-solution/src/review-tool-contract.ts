@@ -1,6 +1,13 @@
 import {Type} from 'typebox';
 
 export const REVIEW_TOOL_PARAMS = Type.Object({
+  pullRequestUrl: Type.Optional(
+    Type.String({
+      minLength: 1,
+      description:
+        'Optional GitHub PR URL. Reviews its published head in a matching clean worktree, directly linked same-owner PRs, and description quality. No automatic checkout, fetch, push, or PR edits.',
+    }),
+  ),
   worktreePath: Type.Optional(
     Type.String({
       minLength: 1,

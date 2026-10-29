@@ -23,11 +23,19 @@ Keep the primary coding agent in control of the loop:
 
 Resolve the intended checkout from the current task. Pass its absolute `worktreePath` when it differs from the session directory; do not require a new session just to review it. Confirm the reported repository and branch before addressing findings. Keep that target for every review pass, edit, and validation command, and read its applicable repository instructions before remediation. If the target is missing or ambiguous, ask rather than guessing another checkout.
 
+## PR-aware review
+
+For a requested GitHub PR review, resolve the PR URL and its intended worktree, then pass `pullRequestUrl`. This mode captures the published description, base/head, and directly linked same-owner PRs; it adds a separate description review using the personal `/pr-update` writing priorities where available. Do not manufacture a task summary or manually broaden the related scope.
+
+The worktree must match the published head and be clean. The tool does not fetch, check out, push, or edit descriptions. Use ordinary worktree mode for unpublished remediation; repeat PR-aware mode after an authorized publication. Related findings identify their actual repository and source PR: do not change primary code to hide a companion defect. Description findings call for prose changes, not unnecessary implementation changes; draft the correction and obtain any required authorization before publishing it.
+
+Read `description_review` as well as code findings. A description-only finding can make the overall result `needs-attention` with no code findings. Report captured revisions and material limitations. Inaccessible, over-budget or incomplete required evidence is a failed review, never approval. The sixth check uses conceptual explanation/accuracy priorities; it does not require specific headings or invent intent, causes, testing evidence, or universal risk/documentation sections.
+
 ## Workflow
 
 1. Start with `polish_solution_review` using the default base unless the user explicitly wants a different lineage.
-2. Do not invent extra reviewer context or a task summary. The tool already provides the fixed reviewer instructions plus the current diff.
-3. If the tool returns `approve`, report that all review categories approved with no material findings and stop unless the user wants more changes.
+2. Do not invent extra reviewer context or a task summary. Use `pullRequestUrl` for PR context captured by the tool; otherwise it provides the fixed instructions and current diff.
+3. If the tool returns `approve`, report that the active code categories and, in PR-aware mode, description check approved with no material findings. Stop unless the user wants more changes.
 4. If the tool returns `needs-attention`, address the findings deliberately:
    - prefer code changes over comments
    - add comments only when they genuinely preserve design intent
@@ -53,7 +61,7 @@ Resolve the intended checkout from the current task. Pass its absolute `worktree
 - Use `baseRef` only when the user wants a different comparison base or the default lineage is wrong.
 - The default diff limit is 6,000 lines or 150 KiB. If the user explicitly opts in, `largeDiff: true` raises it to 10,000 lines or 250 KiB.
 - Before using `largeDiff: true`, warn that larger reviews cost more, take longer, and may reduce review quality through context dilution.
-- The tool runs five isolated internal child reviewer sessions in order: `adversarial`, `simplify`, `standardize`, `prune`, and `dry`.
+- The tool runs five isolated code reviewers in order: `adversarial`, `simplify`, `standardize`, `prune`, and `dry`. PR-aware mode then runs a separate `pr-description` reviewer; ordinary worktree mode is unchanged.
 - Each category has its own read-only reviewer session and its own internal `submit_review` call; only the parent tool aggregates IDs, category metadata, conflicts, and the final suite result.
 - Unresolved conflicts are represented as `status: "needs-attention"` with `conflicts[].resolution = "needs-user-direction"`; there is no top-level `blocked` status.
 - The tool fails fast when there is no effective diff, when the base ref cannot be resolved, when no merge-base exists, or when the selected diff limit is exceeded.

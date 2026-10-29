@@ -467,6 +467,71 @@ test('conflict analysis ignores overlapping findings without explicit opposing a
   );
 });
 
+test('same-path findings from different PR sources do not conflict', () => {
+  const primary = makeCategoryResultWithFinding({
+    category: 'adversarial',
+    title: 'Keep guard',
+    recommendation: 'Keep the guard.',
+  });
+  const related = makeCategoryResultWithFinding({
+    category: 'prune',
+    title: 'Delete guard',
+    recommendation: 'Delete the guard.',
+  });
+  related.findings[0].source = 'related-1';
+  assert.deepEqual(analyzeReviewConflicts([primary, related]).conflicts, []);
+});
+
+test('related findings require an inspected source and its own changed hunk', () => {
+  const scope = makeScope();
+  const related = makeScope({
+    changedFileDetails: {
+      'src/changed.ts': {
+        ranges: [{start: 30, end: 32}],
+        enforceLineValidation: true,
+      },
+    },
+  });
+  const finding = {
+    source: 'related-1',
+    file: 'src/changed.ts',
+    line_start: 31,
+    line_end: 31,
+    title: 'Related contract',
+    body: 'Contract differs.',
+    confidence: 'high' as const,
+    recommendation: 'Align the contract.',
+  };
+  const input = {
+    status: 'needs-attention' as const,
+    summary: 'Related finding.',
+    findings: [finding],
+  };
+  assert.throws(
+    () => validateReviewResult(input, scope),
+    /inspected, captured/,
+  );
+  const accepted = validateReviewResult(input, scope, {'related-1': related});
+  assert.equal(accepted.findings[0].source, 'related-1');
+  assert.throws(
+    () =>
+      validateReviewResult(
+        {...input, findings: [{...finding, line_start: 11, line_end: 11}]},
+        scope,
+        {'related-1': related},
+      ),
+    /changed hunk/,
+  );
+  assert.throws(
+    () =>
+      validateReviewResult(
+        {...input, findings: [{...finding, source: undefined}]},
+        scope,
+      ),
+    /changed hunk/,
+  );
+});
+
 test('suite aggregation approves only when all categories approve and no conflicts exist', () => {
   const approvedCategoryResults = REVIEW_CATEGORY_ORDER.map(category =>
     buildCategoryReviewResult(
