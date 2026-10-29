@@ -9,6 +9,7 @@ test('public polish_solution_review parameters expose optional target and large-
   };
 
   assert.deepEqual(Object.keys(schema.properties ?? {}), [
+    'pullRequestUrl',
     'worktreePath',
     'baseRef',
     'largeDiff',

@@ -12,7 +12,9 @@ export const REVIEW_CATEGORY_ORDER = [
   'dry',
 ] as const;
 
-export type ReviewCategory = (typeof REVIEW_CATEGORY_ORDER)[number];
+export type ReviewCategory =
+  | (typeof REVIEW_CATEGORY_ORDER)[number]
+  | 'pr-description';
 
 export type ReviewCategoryConfig = {
   category: ReviewCategory;
@@ -54,6 +56,7 @@ export const REVIEW_CATEGORY_CONFIGS: readonly ReviewCategoryConfig[] = [
 ];
 
 export type ReviewerFindingInput = {
+  source?: string;
   title: string;
   body: string;
   file: string;
@@ -839,7 +842,7 @@ export function analyzeReviewConflicts(
       const left = findings[leftIndex];
       const right = findings[rightIndex];
       if (left.category === right.category) continue;
-      if (left.file !== right.file) continue;
+      if (left.file !== right.file || left.source !== right.source) continue;
       if (
         !(
           left.line_start <= right.line_end && left.line_end >= right.line_start
@@ -1022,16 +1025,67 @@ export function buildReviewSuiteResult(
   };
 }
 
+export type FindingScope = Pick<
+  ReviewScope,
+  'changedFiles' | 'changedFileDetails'
+>;
+
+export function validateFindingLocation(
+  finding: {
+    source?: string;
+    file: string;
+    line_start: number;
+    line_end: number;
+  },
+  primary: FindingScope,
+  sources: Record<string, FindingScope> = {},
+): void {
+  const scope =
+    finding.source === undefined
+      ? primary
+      : Object.hasOwn(sources, finding.source)
+        ? sources[finding.source]
+        : undefined;
+  if (!scope)
+    throw new Error(
+      'Finding source must be an inspected, captured PR reference.',
+    );
+  if (
+    !Number.isSafeInteger(finding.line_start) ||
+    finding.line_start < 1 ||
+    !Number.isSafeInteger(finding.line_end) ||
+    finding.line_end < finding.line_start
+  ) {
+    throw new Error(
+      'finding.line_end must be greater than or equal to finding.line_start (positive integers).',
+    );
+  }
+  if (!scope.changedFiles.includes(finding.file)) {
+    throw new Error(
+      `finding.file must reference a changed file: ${finding.file}`,
+    );
+  }
+  const details = scope.changedFileDetails[finding.file];
+  if (
+    details?.enforceLineValidation &&
+    !rangesIntersect(details.ranges, finding.line_start, finding.line_end)
+  ) {
+    throw new Error(
+      `finding line range must intersect a changed hunk in ${finding.file}`,
+    );
+  }
+}
+
 export function validateReviewResult(
   input: ReviewSubmitInput,
   scope: ReviewScope,
+  sources: Record<string, FindingScope> = {},
 ): ReviewResult {
   const summary = input.summary.trim();
   if (!summary) {
     throw new Error('summary must not be empty');
   }
 
-  const changedFileSet = new Set(scope.changedFiles);
   const findings = input.findings.map(finding => {
     const title = finding.title.trim();
     const body = finding.body.trim();
@@ -1044,26 +1098,10 @@ export function validateReviewResult(
     if (!recommendation) {
       throw new Error('finding.recommendation must not be empty');
     }
-    if (finding.line_end < finding.line_start) {
-      throw new Error(
-        'finding.line_end must be greater than or equal to finding.line_start',
-      );
-    }
-    if (!changedFileSet.has(file)) {
-      throw new Error(`finding.file must reference a changed file: ${file}`);
-    }
-
-    const fileDetails = scope.changedFileDetails[file];
-    if (
-      fileDetails?.enforceLineValidation &&
-      !rangesIntersect(fileDetails.ranges, finding.line_start, finding.line_end)
-    ) {
-      throw new Error(
-        `finding line range must intersect a changed hunk in ${file}`,
-      );
-    }
+    validateFindingLocation({...finding, file}, scope, sources);
 
     return {
+      ...(finding.source === undefined ? {} : {source: finding.source}),
       title,
       body,
       file,

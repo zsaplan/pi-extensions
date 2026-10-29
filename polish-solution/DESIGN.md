@@ -72,7 +72,7 @@ When review behavior is surprising, there should be enough artifacts and diagnos
 
 Primary tool:
 
-- `polish_solution_review(worktreePath?, baseRef?, largeDiff?)`
+- `polish_solution_review(worktreePath?, baseRef?, largeDiff?, pullRequestUrl?)`
 
 The tool returns structured JSON with:
 
@@ -165,6 +165,16 @@ Each child reviewer must produce one of two outcomes:
 - `approve`
 
 with structured findings only when material category-specific issues exist. The parent tool then assigns visible finding IDs, adds category metadata, detects conservative conflicts, and builds the final suite result.
+
+### Opt-in PR context and description review
+
+`pullRequestUrl` adds host-captured metadata and bounded, one-hop related PRs without changing ordinary worktree behavior. This mode requires a clean matching published head and uses the captured base SHA. The host, not repository text or child arguments, decides allowed same-owner PR identities, GitHub GET endpoints, pinned revisions and shared budgets. Primary/related diffs share the selected diff budget. Missing or partial required evidence fails the review; it is not converted into an empty diff or an approval.
+
+Related file context is read through commit/tree/blob APIs, checked against Git object identities, and shared within the run. Children can name only captured reference IDs, safe relative paths and bounded line windows. They receive no shell, arbitrary URL, repository discovery or write authority. Related code findings must reference an inspected source diff and its changed hunks; conflict matching includes source identity, not just filename.
+
+A sixth reviewer evaluates the primary description's conceptual coverage and factual accuracy. Its personal policy comes only from `prompts/pr-update.md` under the agent directory, with explicit bundled fallback and recorded policy identity. The template's writing priorities are reference material, not operational permission. A policy being changed by the reviewed PR cannot evaluate itself. This reviewer explicitly includes description concerns otherwise excluded from code reviews, without enforcing formatting templates or assuming self-reported validation is independently verified.
+
+Description findings have their own body-line/evidence schema under `description_review`; they do not bypass code-location validation with invented filenames. The suite's status accounts for both code and description results. Artifacts retain captured descriptions, hashes, revisions, policy, progress, and errors. Visible `pr_context` contains identities and accounting rather than full bodies/diffs. A failed description check preserves completed code results and never emits an overall approval.
 
 ### Conflict model
 

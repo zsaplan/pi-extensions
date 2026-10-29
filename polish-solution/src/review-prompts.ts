@@ -83,6 +83,21 @@ export const SUBMIT_REVIEW_SCHEMA = Type.Object({
   findings: Type.Array(REVIEW_FINDING_SCHEMA),
 });
 
+export const PR_SUBMIT_REVIEW_SCHEMA = Type.Object({
+  ...SUBMIT_REVIEW_SCHEMA.properties,
+  findings: Type.Array(
+    Type.Object({
+      ...REVIEW_FINDING_SCHEMA.properties,
+      source: Type.Optional(
+        Type.String({
+          description:
+            'Captured related PR reference ID; omit for primary repository.',
+        }),
+      ),
+    }),
+  ),
+});
+
 function formatPromptEnum(values: readonly string[]): string {
   return values.map(value => `"${value}"`).join(' | ');
 }
