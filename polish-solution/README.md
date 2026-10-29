@@ -34,7 +34,7 @@ The tool:
 - diffs against the merge-base with the selected worktree, not the base tip directly
 - includes uncommitted tracked changes and non-ignored untracked files
 - accepts diffs up to 6,000 lines or 150 KiB by default
-- supports an explicit `largeDiff: true` opt-in for diffs up to 10,000 lines or 250 KiB; this costs more, takes longer, and may reduce review quality through context dilution
+- supports an explicit `largeDiff: true` opt-in for diffs up to 10,000 lines or 384 KiB (393,216 bytes); this costs more, takes longer, and may reduce review quality through context dilution
 - respects `.gitignore`
 - uses the currently active model
 - runs the five review categories sequentially in fixed order: `adversarial`, `simplify`, `standardize`, `prune`, `dry`

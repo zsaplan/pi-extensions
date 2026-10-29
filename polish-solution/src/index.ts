@@ -92,6 +92,7 @@ import {
   buildReviewerSystemPrompt,
 } from './review-prompts.js';
 import {REVIEW_TOOL_PARAMS} from './review-tool-contract.js';
+import {DEFAULT_DIFF_BUDGET, LARGE_DIFF_BUDGET} from './diff-budget.js';
 import {
   PullRequestContext,
   PullRequestReader,
@@ -316,14 +317,6 @@ const DEFAULT_THINKING_LEVEL = 'low' as const;
 const MAX_REPAIR_ATTEMPTS = 3;
 const MAX_AGENT_EXECUTION_MS = 900_000;
 const MAX_REVIEWER_STALL_MS = 90_000;
-const DEFAULT_DIFF_BUDGET: OutputBudget = {
-  maxBytes: DEFAULT_MAX_BYTES * 3,
-  maxLines: DEFAULT_MAX_LINES * 3,
-};
-const LARGE_DIFF_BUDGET: OutputBudget = {
-  maxBytes: 250 * 1024,
-  maxLines: 10_000,
-};
 const MAX_READ_FILE_BYTES = DEFAULT_MAX_BYTES * 4;
 const MAX_READ_FILE_LINES = DEFAULT_MAX_LINES * 10;
 const MAX_GREP_BYTES = DEFAULT_MAX_BYTES;
