@@ -141,7 +141,7 @@ export function registerCanvasTools(
     promptSnippet: 'Locate exact Canvas blocks for targeted edits.',
     promptGuidelines: [
       'Use slack_find_canvas_sections with specific text, then inspect matches in slack_read_canvas. Never pick the first ambiguous match blindly.',
-      'Slack sections can be individual headings, paragraphs, list items, or table cells. slack_find_canvas_sections matching a heading does not select all content beneath it.',
+      'Slack sections can be individual headings, paragraphs, list items, tables, or table cells. Use sectionType=table with distinctive table text to obtain the table ID for row/column changes. A heading does not select all content beneath it.',
     ],
     parameters: Type.Object({
       canvasId,
@@ -195,10 +195,14 @@ export function registerCanvasTools(
         canvasId: params.canvasId,
         revision: snapshot.revision,
         sections,
+        ...(params.sectionType ? {lookupSectionType: params.sectionType} : {}),
         totalMatches: matches.totalMatches,
         returnedMatches: sections.length,
         truncated: matches.truncated || sections.length < matches.totalMatches,
-        note: 'Use previews to disambiguate, not to overwrite unseen content. Narrow the query if truncated. A match absent from the snapshot may indicate a concurrent edit; read again.',
+        note:
+          params.sectionType === 'table'
+            ? 'Table IDs returned by Slack may be absent from the HTML export. They are valid edit targets: slack_edit_canvas_section revalidates them with table-only API lookup. Read the complete table in format=html (without sectionId when its ID is absent); preserve existing content in replacement Markdown. Do not infer table identity from lookup order. Narrow ambiguous matches with distinctive table text.'
+            : 'Use previews to disambiguate, not to overwrite unseen content. Narrow the query if truncated. A match absent from the snapshot may indicate a concurrent edit; read again.',
       };
       return deps.result(JSON.stringify(details, null, 2), details);
     },
@@ -260,12 +264,13 @@ export function registerCanvasTools(
     name: 'slack_edit_canvas_section',
     label: 'Slack Edit Canvas Section',
     description:
-      'Replace a single Canvas section or insert before/after it, optionally appending a timestamped revision note (off by default). Requires a fresh full-document hash and approval (per-call or exact Canvas session grant). Re-reads after confirmation to reject stale content; not atomic against other Slack editors. No deletion or whole-document replacement.',
+      'Replace a single Canvas section (including a complete table to add/change rows or columns) or insert before/after it. Optional revision note is off by default. Requires a fresh full-document hash and approval. Revalidates API-only table IDs and rejects stale content after confirmation; not atomic against other Slack editors. No deletion or whole-document replacement.',
     promptSnippet:
       'Polish an existing Canvas with guarded targeted edits; return change summaries without cluttering the report.',
     promptGuidelines: [
       'Use slack_edit_canvas_section only for authorized edits after slack_read_canvas and section lookup. Revise the existing summary, findings, and important unknowns instead of accumulating follow-up chapters. Preserve human contributions and material uncertainty; move technical chronology to the thread or appendix. Keep findings-only unless recommendations are explicitly requested, and avoid the phrase "bottom line".',
       'slack_edit_canvas_section can reuse a session grant for this exact Canvas, including its revision note; sharing/access changes are never covered. Scoped approval does not bypass revision checks.',
+      'For a new table column, find the whole table with sectionType=table and replace only that table with complete Markdown including the new column. Do not substitute text in existing cells. Read all original table HTML first; previews are not lossless Markdown. Preserve content, links, and formatting; stop if unsupported content cannot be preserved. Slack limits tables to 300 cells. API-only table IDs need not appear in the export. Never fall back silently to whole-Canvas replacement or change sharing permissions.',
       'slack_edit_canvas_section requires expectedRevision and a short changeSummary. It changes one Slack block, not an entire chapter. Read again before each subsequent edit. appendRevisionNote defaults to false; enable it only when the user requests a visible change log. Return routine change summaries to the Pi session, not the Canvas or Slack thread.',
       'If slack_edit_canvas_section reports that the edit succeeded but its revision note failed, do not repeat the edit. Read the Canvas and repair only the missing note with an authorized append.',
     ],

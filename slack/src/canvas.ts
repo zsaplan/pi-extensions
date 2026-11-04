@@ -177,12 +177,15 @@ export function canvasPage(
 export async function findCanvasSections(
   client: SlackApiCaller,
   canvasId: string,
-  containsText: string,
+  containsText: string | undefined,
   sectionType?: string,
   signal?: AbortSignal,
 ) {
   requireSlackId(canvasId, 'F', 'canvasId');
-  requireText(containsText, 'containsText', 500);
+  if (containsText !== undefined)
+    requireText(containsText, 'containsText', 500);
+  else if (sectionType !== 'table')
+    throw new Error('A text filter is required except for table-only lookup.');
   const types = [
     'any_header',
     'h1',
@@ -202,7 +205,7 @@ export async function findCanvasSections(
     {
       canvas_id: canvasId,
       criteria: {
-        contains_text: containsText,
+        ...(containsText !== undefined ? {contains_text: containsText} : {}),
         ...(sectionType ? {section_types: [sectionType]} : {}),
       },
     },
@@ -288,14 +291,30 @@ export async function editCanvasSection(
     async () => {
       const current = await readCanvas(client, token, input.canvasId, signal);
       checkRevision(current, input.expectedRevision);
-      // Presence check is not an HTML-to-Markdown transformation. Slack IDs remain exact.
+      // Table IDs can be returned by Slack lookup but omitted from HTML exports.
+      // Verify those IDs against the table-only API result; never guess from cell IDs.
+      // This is not an HTML-to-Markdown transformation.
       if (
         !current.html.includes(`id="${input.sectionId}"`) &&
         !current.html.includes(`id='${input.sectionId}'`)
-      )
-        throw new Error(
-          'The target section is absent from the current export. No edit was made; look it up again.',
+      ) {
+        const tables = await findCanvasSections(
+          client,
+          input.canvasId,
+          undefined,
+          'table',
+          signal,
         );
+        if (!tables.sections.some(section => section.id === input.sectionId))
+          throw new Error(
+            'The target section is absent from the current export and table lookup. No edit was made; look it up again.',
+          );
+        // The extra lookup must not let an intervening document change go unnoticed.
+        checkRevision(
+          await readCanvas(client, token, input.canvasId, signal),
+          input.expectedRevision,
+        );
+      }
       signal?.throwIfAborted();
       await publishingWrite(
         () =>

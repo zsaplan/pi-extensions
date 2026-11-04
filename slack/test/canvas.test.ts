@@ -25,6 +25,8 @@ function fixture(t: {after: (fn: () => void) => void}) {
     html: fixtureHtml,
     title: 'Test',
     failHistory: false,
+    tableIds: [] as string[],
+    duringLookup: () => {},
     writes: [] as Record<string, unknown>[],
     url: 'https://files.slack.com/files-pri/T123-F123/canvas',
   };
@@ -54,8 +56,19 @@ function fixture(t: {after: (fn: () => void) => void}) {
             url_private: state.url,
           },
         } as unknown as T;
-      if (method === 'canvases.sections.lookup')
-        return {ok: true, sections: [{id: sectionId}]} as unknown as T;
+      if (method === 'canvases.sections.lookup') {
+        state.duringLookup();
+        const criteria = body.criteria as {
+          contains_text?: string;
+          section_types?: string[];
+        };
+        return {
+          ok: true,
+          sections: criteria.section_types?.includes('table')
+            ? state.tableIds.map(id => ({id}))
+            : [{id: sectionId}],
+        } as unknown as T;
+      }
       assert.equal(method, 'canvases.edit');
       state.writes.push(body);
       const change = (
@@ -198,6 +211,85 @@ test('missing section rejects the edit even with a current revision', async t =>
       sectionId: 'temp:C:missing',
     }),
     /target section is absent/,
+  );
+  assert.equal(state.writes.length, 0);
+});
+
+test('API-only table ID allows one table replacement with an additional column', async t => {
+  const {client, state} = fixture(t);
+  const tableId = 'temp:C:table123';
+  state.tableIds = [tableId];
+  state.html = fixtureHtml.replace(
+    '</div>',
+    '<table><tr><th>Name</th></tr><tr><td>Host</td></tr></table></div>',
+  );
+  const snapshot = await readCanvas(client, 'test-token', canvasId);
+  const markdown = '| Name | Since |\n| --- | --- |\n| Host | 2026-11-03 |';
+  const result = await editCanvasSection(client, 'test-token', {
+    ...input(snapshot.revision),
+    sectionId: tableId,
+    markdown,
+  });
+  assert.equal(result.status, 'section_updated');
+  assert.equal(state.writes.length, 1);
+  assert.deepEqual(state.writes[0], {
+    canvas_id: canvasId,
+    changes: [
+      {
+        operation: 'replace',
+        section_id: tableId,
+        document_content: {type: 'markdown', markdown},
+      },
+    ],
+  });
+});
+
+test('table-only lookup omits text and retains its type filter', async () => {
+  const client: SlackApiCaller = {
+    async call<T extends SlackApiEnvelope>(
+      method: string,
+      body?: Record<string, unknown>,
+    ) {
+      assert.equal(method, 'canvases.sections.lookup');
+      assert.deepEqual(body, {
+        canvas_id: canvasId,
+        criteria: {section_types: ['table']},
+      });
+      return {ok: true, sections: [{id: 'temp:C:table123'}]} as unknown as T;
+    },
+  };
+  assert.deepEqual(
+    (await findCanvasSections(client, canvasId, undefined, 'table')).sections,
+    [{id: 'temp:C:table123'}],
+  );
+  await assert.rejects(
+    findCanvasSections(client, canvasId, undefined),
+    /text filter is required/,
+  );
+});
+
+test('table lookup failure or intervening human change prevents any mutation', async t => {
+  const {client, state} = fixture(t);
+  state.tableIds = ['temp:C:table123'];
+  const snapshot = await readCanvas(client, 'test-token', canvasId);
+  const tableInput = {
+    ...input(snapshot.revision),
+    sectionId: state.tableIds[0],
+  };
+  state.duringLookup = () => {
+    throw new Error('missing_scope');
+  };
+  await assert.rejects(
+    editCanvasSection(client, 'test-token', tableInput),
+    /missing_scope/,
+  );
+  assert.equal(state.writes.length, 0);
+  state.duringLookup = () => {
+    state.html = state.html.replace('Human notes', 'New human notes');
+  };
+  await assert.rejects(
+    editCanvasSection(client, 'test-token', tableInput),
+    /changed since/,
   );
   assert.equal(state.writes.length, 0);
 });

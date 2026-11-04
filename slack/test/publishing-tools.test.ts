@@ -406,6 +406,106 @@ test('section tool re-reads after confirmation and rejects an intervening human 
   assert.equal(writes, 0);
 });
 
+test('API-only table lookup supports an approved column replacement without changing other content', async t => {
+  const {tools} = setup(t);
+  const tableId = 'temp:C:table123';
+  const before = '<table><tr><th>Name</th></tr><tr><td>Host</td></tr></table>';
+  const after =
+    '<table><tr><th>Name</th><th>Since</th></tr><tr><td>Host</td><td>2026-11-03</td></tr></table>';
+  const notes =
+    '<p id="temp:C:human">Human caveat and <a href="https://example.com">evidence</a></p>';
+  let html = `<div class="quip-canvas-content">${before}${notes}</div>`;
+  const writes: Record<string, unknown>[] = [];
+  const lookups: Record<string, unknown>[] = [];
+  globalThis.fetch = async (url, init) => {
+    assert.equal(
+      new Headers(init?.headers).get('authorization'),
+      'Bearer xoxb-test',
+    );
+    if (String(url).includes('/files-pri/'))
+      return new Response(html, {headers: {'content-type': 'text/html'}});
+    const method = String(url).split('/').pop();
+    if (method === 'auth.test')
+      return Response.json({ok: false, error: 'missing_scope'});
+    if (method === 'files.info')
+      return Response.json({
+        ok: true,
+        file: {
+          id: 'F123',
+          mimetype: 'application/vnd.slack-docs',
+          url_private: 'https://files.slack.com/files-pri/T123-F123/canvas',
+        },
+      });
+    const body = JSON.parse(String(init?.body));
+    if (method === 'canvases.sections.lookup') {
+      lookups.push(body);
+      return Response.json({ok: true, sections: [{id: tableId}]});
+    }
+    assert.equal(method, 'canvases.edit');
+    writes.push(body);
+    assert.deepEqual(body, {
+      canvas_id: 'F123',
+      changes: [
+        {
+          operation: 'replace',
+          section_id: tableId,
+          document_content: {
+            type: 'markdown',
+            markdown: '| Name | Since |\n| --- | --- |\n| Host | 2026-11-03 |',
+          },
+        },
+      ],
+    });
+    html = html.replace(before, after);
+    return Response.json({ok: true});
+  };
+  const run = (
+    name: string,
+    params: Record<string, unknown>,
+    approved = false,
+  ) =>
+    tools
+      .get(name)!
+      .execute('test', {canvasId: 'F123', ...params}, undefined, undefined, {
+        hasUI: true,
+        ui: {notify() {}, confirm: async () => approved},
+      });
+  const read = await run('slack_read_canvas', {format: 'html'});
+  assert.ok(read.content[0].text.includes(before));
+  const lookup = await run('slack_find_canvas_sections', {
+    containsText: 'Name',
+    sectionType: 'table',
+    expectedRevision: read.details.revision,
+  });
+  assert.equal(lookup.details.lookupSectionType, 'table');
+  assert.deepEqual(lookup.details.sections, [
+    {id: tableId, foundInSnapshot: false},
+  ]);
+  assert.match(String(lookup.details.note), /valid edit targets/);
+  const edit = {
+    sectionId: tableId,
+    operation: 'replace',
+    expectedRevision: read.details.revision,
+    markdown: '| Name | Since |\n| --- | --- |\n| Host | 2026-11-03 |',
+    changeSummary: 'Add Since column',
+  };
+  await assert.rejects(
+    run('slack_edit_canvas_section', edit),
+    /cancelled by user/,
+  );
+  assert.equal(writes.length, 0);
+  await run('slack_edit_canvas_section', edit, true);
+  assert.equal(writes.length, 1);
+  assert.deepEqual(lookups[1], {
+    canvas_id: 'F123',
+    criteria: {section_types: ['table']},
+  });
+  const result = await run('slack_read_canvas', {format: 'html'});
+  assert.ok(result.content[0].text.includes(after));
+  assert.ok(result.content[0].text.includes(notes));
+  assert.notEqual(result.details.revision, read.details.revision);
+});
+
 test('rate limiting is surfaced without retrying a Canvas write', async t => {
   const {tools} = setup(t);
   process.env.PI_SLACK_ALLOW_NONINTERACTIVE_WRITES = '1';
