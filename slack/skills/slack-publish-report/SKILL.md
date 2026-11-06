@@ -32,10 +32,21 @@ After all scripted transformations and before sending, briefly compare the sourc
 
 On readback, inspect the actual message body using `formatMode=verbatim` or the full block content. Fallback previews, block-type lists, and boolean checks alone cannot establish that the visible wording is correct. Narrow clipped reads before claiming verification. This is a brief editorial check, not a new reviewer model, automation layer, or report. Readback findings do not authorize extra writes or automatic retries; retain the existing approval gates.
 
+### Compact comparison summaries
+
+For several related risks, checks, options, or before/after results, prefer a compact native `markdown` summary when a table makes the differences easier to scan—even in a thread reply, without turning it into a formal report:
+
+1. Start with a sentence whose conclusion is **bold**. Keep any qualification that limits it in the same paragraph.
+2. Use a short table with descriptive row labels and concise evidence. Keep row-specific unknowns in that row; link evidence where it supports the finding.
+3. Follow with one brief paragraph for limitations affecting the whole comparison and labeled source links. Do not repeat every row or invent recommendations.
+
+Skip a title, headings, status icons, and dividers when the thread already supplies context. Prefer prose or bullets for a single finding, unrelated points, or cells that would become long paragraphs. A simple follow-up should stay a sentence or two. See the compact comparison in [message examples](references/message-examples.md). This is a drafting choice, not an automatic text conversion.
+
 ### Rich message mechanics
 
 - Use either `markdown` or `blocks`, never both. Leave both out for ordinary text. `mrkdwn=false` is for text-only messages, not rich layouts.
 - Rich messages are single-part: no `longTextMode=split`. Shorten the report or use an already authorized longer-lived surface; do not create extra posts or artifacts merely to bypass limits.
+- New posts request no link or media previews (`unfurl_links=false`, `unfurl_media=false`), including evidence links in rich layouts and fallbacks. Keep descriptive links in the message; do not delete sources to avoid previews. Actual client rendering still needs a visual check. This does not remove previews from existing messages.
 - Markdown is rendered by Slack. Static blocks support `header`, `section` (text and/or up to ten metric fields), `divider`, `context`, and simple `table` cells (`raw_text`/`raw_number`). Use Markdown for formatted table cells. No buttons, interactive elements, custom renderer, or second model is needed.
 - Read the current message before editing. `formatMode=verbatim` is a readable projection of blocks and text, not replacement Markdown. `formatMode=blocks` exposes original message JSON subject to output limits. Returned block types may exceed the small authoring schema; never blindly round-trip a projection or truncated source.
 - When scripting block changes, identify the unique original block before inserting its replacement. Do not insert a similarly worded section and then take the first loose text match; it may select the new section. Retain distinct content from the original block, including caveats, and inspect the assembled result. Prefer building a small final layout directly when simpler.

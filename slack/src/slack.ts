@@ -748,6 +748,8 @@ export async function postMessage(
       reply_broadcast: options.replyBroadcast,
       text: options.text,
       thread_ts: options.threadTs,
+      unfurl_links: false,
+      unfurl_media: false,
     },
     signal,
   );

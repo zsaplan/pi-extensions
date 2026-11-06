@@ -79,6 +79,27 @@ Use a compact table when it makes comparisons easier. Supply both the visible `m
 
 One status, one table, one necessary safeguard, one evidence link. A short follow-up should still be a sentence or two, not another full report.
 
+## Compact comparison in a thread
+
+The thread already asks whether a data cleanup caused new smoke-test failures. A compact comparison is easier to scan than a dense paragraph; it does not need a report title or extra headings. These facts and links are fictional. This draft payload is not authorization to post:
+
+```json
+{
+  "channel": "C0123456789",
+  "threadTs": "1700000000.000100",
+  "text": "No evidence so far links the cleanup to the reported failures, though an indirect effect remains possible. Quote: the same validation error occurred before cleanup. Search: an earlier run also failed, but the later timeout's cause is unconfirmed. Export: timed out before and after; this is not a new symptom. The runs are not directly comparable: test helpers changed and the later run left tests unrun. Earlier run: https://example.com/before Later run: https://example.com/after",
+  "markdown": "I found **no evidence so far that the cleanup caused the reported failures**, though an indirect effect remains possible.\n\n| Reported failure | Evidence |\n| --- | --- |\n| **Quote** | The same validation error occurred in the [earlier run](https://example.com/before). This symptom predates cleanup. |\n| **Search** | An earlier run also failed. The later timeout has an unconfirmed cause. |\n| **Export** | Timed out before and after cleanup; this is not a new symptom. |\n\nThe runs aren’t directly comparable: test helpers changed and the [later run](https://example.com/after) left tests unrun."
+}
+```
+
+The headline distinguishes lack of evidence from proof of no effect. The search row keeps its own unknown; the final paragraph gives the comparison-wide limitation. Bold row labels aid scanning without a separate heading for every finding. Evidence links stay descriptive and clickable; the extension requests no link/media previews on new posts.
+
+If the next request is simply to mention the changed helpers, send a short follow-up, not another table:
+
+```text
+The test helpers changed between runs, so the results aren’t directly comparable. <https://example.com/helper-change|Helper change>
+```
+
 ## Recurring dashboard: static blocks
 
 Use metric fields for a small set of related numbers. A context footer is for sources or secondary context, not qualifications that change the headline. Here the status icon has a text label; no decorative icons are needed elsewhere.

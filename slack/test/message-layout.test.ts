@@ -212,6 +212,8 @@ test('rich message workflows over local HTTP, with a repeatable evidence report'
       plainTs = (result.details.parts as Array<{ts: string}>)[0].ts;
       assert.equal(writes()[0].body.text, 'Plain update');
       assert.equal(writes()[0].body.blocks, undefined);
+      assert.equal(writes()[0].body.unfurl_links, false);
+      assert.equal(writes()[0].body.unfurl_media, false);
       const before = writes().length;
       await write('slack_post_message', {
         text: 'Repeated line.\n'.repeat(100),
@@ -250,6 +252,8 @@ test('rich message workflows over local HTTP, with a repeatable evidence report'
         ]);
         assert.equal(writes().at(-1)!.body.thread_ts, plainTs);
         assert.equal(writes().at(-1)!.body.reply_broadcast, false);
+        assert.equal(writes().at(-1)!.body.unfurl_links, false);
+        assert.equal(writes().at(-1)!.body.unfurl_media, false);
       },
     );
     await step(

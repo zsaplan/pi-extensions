@@ -109,9 +109,13 @@ This is prompt guidance, not automatic rewriting or a hard word limit. There is 
 
 Slack write tools preflight message length, code-fence balance, and code-block size before calling Slack. Messages over the safe limit are rejected by default so the agent can shorten them before causing Slack-side `msg_too_long` failures or accidental auto-splitting. If a multi-part message is acceptable, pass `longTextMode=split`; the extension splits on line/code-block boundaries, labels parts, closes/reopens code fences across chunks, and returns every posted timestamp.
 
+New posts disable link and media unfurl requests, so evidence links need not become preview cards. Links remain clickable. This applies to plain text, rich messages, and split continuations; it does not remove existing previews. Slack client appearance still needs visual verification.
+
 ### Rich message layouts
 
 The existing post/update tools accept optional `markdown` or `blocks` (mutually exclusive). Required `text` is the ordinary message when neither is supplied; with a rich layout it is the accessible fallback and must contain all essential facts, caveats, and links—not just a title. Write agent-authored fallbacks separately in plain language, without pipe tables or code fences, rather than mechanically stripping Markdown. No new OAuth scopes or interactivity service are needed. Writes still use `chat:write` on the bot token, and approvals are unchanged.
+
+For a compact comparison in a thread, prefer a bold conclusion with its immediate caveat, a short evidence table, then a brief paragraph covering shared limitations and labeled sources. Skip headings when the thread supplies context. Use prose or bullets when a table adds little, and keep simple follow-ups simple. See the [comparison example](skills/slack-publish-report/references/message-examples.md#compact-comparison-in-a-thread).
 
 - `markdown`: standard Markdown sent as a native Slack Markdown block, including headings, tables, dividers, and links. Slack performs the translation; there is no local Markdown renderer.
 - `blocks`: a static subset for dashboards: header, section text/metric fields, divider, context, and table. Table cells accept `raw_text` (`text`) or `raw_number` (both numeric `value` and display `text`); Markdown handles more elaborate table formatting. No interactive elements or arbitrary block passthrough.
