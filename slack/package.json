@@ -20,6 +20,7 @@
   "files": [
     "src",
     "skills",
+    "prompts",
     "scripts",
     "DESIGN.md",
     "README.md",
@@ -28,7 +29,9 @@
   "pi": {
     "extensions": [
       "./src/index.ts"
-    ]
+    ],
+    "skills": ["./skills"],
+    "prompts": ["./prompts/*.md"]
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

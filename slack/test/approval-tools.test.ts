@@ -32,6 +32,8 @@ test('thread approval covers uploads/replies and verified edits but excludes bro
   let authCalls = 0;
   let selects = 0;
   let confirms = 0;
+  const confirmationBodies: string[] = [];
+  const selectionTitles: string[] = [];
   const calls: {method: string; body: Record<string, unknown>}[] = [];
   globalThis.fetch = async (url, init) => {
     if (String(url).includes('/files-pri/'))
@@ -113,13 +115,15 @@ test('thread approval covers uploads/replies and verified edits but excludes bro
     },
     ui: {
       notify() {},
-      select: async (_title: string, choices: string[]) => {
+      select: async (title: string, choices: string[]) => {
+        selectionTitles.push(title);
         selects++;
         return choices.includes('Approve Canvas content for this session')
           ? 'Approve Canvas content for this session'
           : 'Approve thread for this session';
       },
-      confirm: async () => {
+      confirm: async (_title: string, body: string) => {
+        confirmationBodies.push(body);
         confirms++;
         return true;
       },
@@ -167,6 +171,18 @@ test('thread approval covers uploads/replies and verified edits but excludes bro
   });
   assert.equal(confirms, 5);
   assert.equal(selects, 1);
+  assert.match(
+    selectionTitles[0],
+    /Target: Thread reply only: C12345678; parent 1\.000001/,
+  );
+  assert.match(
+    confirmationBodies[0],
+    /Target: BROADCAST reply to channel: C12345678; parent 1\.000001/,
+  );
+  assert.match(
+    confirmationBodies[1],
+    /Target: New top-level message: C12345678/,
+  );
   // Simulate extension reload using the same actual session entries.
   slackExtension(pi as never);
   await execute('slack_post_message', {...thread, text: 'After reload'});

@@ -1124,9 +1124,10 @@ export default function slackExtension(pi: ExtensionAPI) {
         longTextMode: normalizeLongTextMode(params.longTextMode),
         maxChars: params.maxChars,
       });
+      const destination = conversationDisplayName(conversation);
       const target = params.threadTs
-        ? `${conversationDisplayName(conversation)} thread ${params.threadTs}`
-        : conversationDisplayName(conversation);
+        ? `${params.replyBroadcast ? 'BROADCAST reply to channel' : 'Thread reply only'}: ${destination}; parent ${params.threadTs}`
+        : `New top-level message: ${destination}`;
       await confirmSlackWrite(config, ctx, {
         confirm: params.confirm,
         preview:

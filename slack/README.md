@@ -97,6 +97,12 @@ Before each model call, the extension supplies a request-local snapshot of activ
 
 This guidance covers non-broadcast replies only. It does not authorize unsolicited uploads, edits, Canvas changes, deletes, or top-level posts. Canvas grants and global confirmation bypass flags do not create proactive destinations. Non-interactive runs receive no proactive destinations. The existing write gate still checks consent at execution time; the context snapshot is not an authorization token. No automatic posting hook or additional model call is added. Reload existing sessions to load this behavior.
 
+## `/slack-reply` prompt
+
+Use `/slack-reply` to draft from the current findings, or `/slack-reply send <permalink> [direction]` to request a reply. Drafting is the default; a link alone does not authorize sending. The prompt follows the publishing skill, preserves useful tables and material uncertainty, and checks the destination, requested mentions, and evidence links. It does not start monitoring or create extra artifacts. Existing tool approval gates still apply.
+
+The package includes the prompt; run `/reload` after updating. Send confirmations distinguish a new top-level message, a thread-only reply, and a broadcast reply, with the parent timestamp for replies.
+
 ## Writing voice
 
 Message posts, edits, and upload comments share drafting instructions in `src/writing-guidelines.ts`: adapt to the audience, lead with the outcome or request, use plain language and light Slack formatting, and make follow-ups about what changed. Routine updates should usually fit in a short paragraph or a lead plus a few bullets. Requested reports/plans and important qualifications take priority over brevity.
