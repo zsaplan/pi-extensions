@@ -70,6 +70,14 @@ function render(value: unknown, depth = 0): string {
       ]
         .filter(Boolean)
         .join('\n');
+    case 'container':
+      return [
+        child(item.rich_text_title ?? item.title ?? ''),
+        child(item.subtitle ?? ''),
+        ...array(item.child_blocks).map(child),
+      ]
+        .filter(Boolean)
+        .join('\n');
     case 'rich_text':
       return children('\n');
     case 'rich_text_section':

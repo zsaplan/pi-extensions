@@ -12,87 +12,108 @@ const textObject = (maxLength: number) =>
   );
 
 // A deliberately small, static subset. Markdown handles narrative formatting;
-// these blocks add dashboard fields and explicitly aligned table columns.
+// these blocks add dashboard fields, tables and collapsible supporting detail.
+const contentBlock = Type.Union([
+  Type.Object(
+    {
+      type: Type.Literal('header'),
+      text: Type.Object(
+        {
+          type: Type.Literal('plain_text'),
+          text: Type.String({minLength: 1, maxLength: 150}),
+        },
+        closed,
+      ),
+    },
+    closed,
+  ),
+  Type.Object(
+    {
+      type: Type.Literal('section'),
+      text: Type.Optional(textObject(3000)),
+      fields: Type.Optional(
+        Type.Array(textObject(2000), {minItems: 1, maxItems: 10}),
+      ),
+    },
+    closed,
+  ),
+  Type.Object({type: Type.Literal('divider')}, closed),
+  Type.Object(
+    {
+      type: Type.Literal('context'),
+      elements: Type.Array(textObject(3000), {minItems: 1, maxItems: 10}),
+    },
+    closed,
+  ),
+  Type.Object(
+    {
+      type: Type.Literal('table'),
+      rows: Type.Array(
+        Type.Array(
+          Type.Union([
+            Type.Object(
+              {
+                type: Type.Literal('raw_text'),
+                text: Type.String({maxLength: 10000}),
+              },
+              closed,
+            ),
+            Type.Object(
+              {
+                type: Type.Literal('raw_number'),
+                value: Type.Number(),
+                text: Type.String({minLength: 1, maxLength: 10000}),
+              },
+              closed,
+            ),
+          ]),
+          {minItems: 1, maxItems: 20},
+        ),
+        {minItems: 1, maxItems: 100},
+      ),
+      column_settings: Type.Optional(
+        Type.Array(
+          Type.Union([
+            Type.Null(),
+            Type.Object(
+              {
+                align: Type.Optional(
+                  Type.Union([
+                    Type.Literal('left'),
+                    Type.Literal('center'),
+                    Type.Literal('right'),
+                  ]),
+                ),
+                is_wrapped: Type.Optional(Type.Boolean()),
+              },
+              closed,
+            ),
+          ]),
+          {maxItems: 20},
+        ),
+      ),
+    },
+    closed,
+  ),
+]);
+
 export const MESSAGE_BLOCKS_SCHEMA = Type.Array(
   Type.Union([
+    contentBlock,
     Type.Object(
       {
-        type: Type.Literal('header'),
-        text: Type.Object(
+        type: Type.Literal('container'),
+        title: Type.Object(
           {
             type: Type.Literal('plain_text'),
             text: Type.String({minLength: 1, maxLength: 150}),
           },
           closed,
         ),
-      },
-      closed,
-    ),
-    Type.Object(
-      {
-        type: Type.Literal('section'),
-        text: Type.Optional(textObject(3000)),
-        fields: Type.Optional(
-          Type.Array(textObject(2000), {minItems: 1, maxItems: 10}),
-        ),
-      },
-      closed,
-    ),
-    Type.Object({type: Type.Literal('divider')}, closed),
-    Type.Object(
-      {
-        type: Type.Literal('context'),
-        elements: Type.Array(textObject(3000), {minItems: 1, maxItems: 10}),
-      },
-      closed,
-    ),
-    Type.Object(
-      {
-        type: Type.Literal('table'),
-        rows: Type.Array(
-          Type.Array(
-            Type.Union([
-              Type.Object(
-                {
-                  type: Type.Literal('raw_text'),
-                  text: Type.String({maxLength: 10000}),
-                },
-                closed,
-              ),
-              Type.Object(
-                {
-                  type: Type.Literal('raw_number'),
-                  value: Type.Number(),
-                  text: Type.String({minLength: 1, maxLength: 10000}),
-                },
-                closed,
-              ),
-            ]),
-            {minItems: 1, maxItems: 20},
-          ),
-          {minItems: 1, maxItems: 100},
-        ),
-        column_settings: Type.Optional(
-          Type.Array(
-            Type.Union([
-              Type.Null(),
-              Type.Object(
-                {
-                  align: Type.Optional(
-                    Type.Union([
-                      Type.Literal('left'),
-                      Type.Literal('center'),
-                      Type.Literal('right'),
-                    ]),
-                  ),
-                  is_wrapped: Type.Optional(Type.Boolean()),
-                },
-                closed,
-              ),
-            ]),
-            {maxItems: 20},
-          ),
-        ),
+        is_collapsible: Type.Optional(Type.Boolean()),
+        default_collapsed: Type.Optional(Type.Boolean()),
+        // No interactive children or nested containers in this static subset.
+        child_blocks: Type.Array(contentBlock, {minItems: 1, maxItems: 10}),
       },
       closed,
     ),
@@ -101,7 +122,7 @@ export const MESSAGE_BLOCKS_SCHEMA = Type.Array(
     minItems: 1,
     maxItems: 50,
     description:
-      'Static Slack blocks for dashboards: header, section (text/metric fields), divider, context, or table (raw_text/raw_number cells). Mutually exclusive with markdown. No interactive elements. Supply all essential content in text too.',
+      'Static Slack blocks: header, section (text/metric fields), divider, context, table, or container with up to 10 non-interactive child blocks. Use is_collapsible=true and default_collapsed=true for initially hidden supporting details. No nested containers. Mutually exclusive with markdown. Supply all essential content in text too.',
   },
 );
 
@@ -174,7 +195,15 @@ export function prepareMessageLayout(options: LayoutOptions):
     }
     let tableCharacters = 0;
     let characters = 0;
-    for (const block of blocks) {
+    const contentBlocks = blocks.flatMap(block => {
+      if (block.type !== 'container') return [block];
+      if (block.default_collapsed && !block.is_collapsible) {
+        throw new Error('default_collapsed requires is_collapsible=true.');
+      }
+      characters += block.title.text.length;
+      return block.child_blocks;
+    });
+    for (const block of contentBlocks) {
       switch (block.type) {
         case 'header':
           characters += block.text.text.length;

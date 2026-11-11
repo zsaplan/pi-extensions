@@ -206,6 +206,28 @@ test('rich message workflows over local HTTP, with a repeatable evidence report'
       ],
     },
   ];
+  const confirmation = {
+    type: 'container',
+    title: {type: 'plain_text', text: 'show confirmation methods'},
+    is_collapsible: true,
+    default_collapsed: true,
+    child_blocks: [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: 'Read-only confirmation: 25 lines checked; application testing remains separate.',
+        },
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: 'Historical changes are estimated. <https://example.com/confirmation|Evidence>',
+        },
+      },
+    ],
+  };
   try {
     await step('ordinary text and splitting remain unchanged', async () => {
       const result = await write('slack_post_message', {text: 'Plain update'});
@@ -327,6 +349,90 @@ test('rich message workflows over local HTTP, with a repeatable evidence report'
           {markdown: 'text', longTextMode: ' Split '},
           {markdown: 'x'.repeat(12001)},
           {blocks: [{type: 'actions', elements: []}]},
+          {blocks: [{...confirmation, child_blocks: []}]},
+          {
+            blocks: [
+              {
+                ...confirmation,
+                child_blocks: [{type: 'actions', elements: []}],
+              },
+            ],
+          },
+          {blocks: [{...confirmation, child_blocks: [confirmation]}]},
+          {blocks: [{...confirmation, child_blocks: [{type: 'section'}]}]},
+          {
+            blocks: [
+              {
+                ...confirmation,
+                child_blocks: Array(11).fill(confirmation.child_blocks[0]),
+              },
+            ],
+          },
+          {
+            blocks: [
+              {
+                ...confirmation,
+                title: {type: 'mrkdwn', text: 'Wrong title format'},
+              },
+            ],
+          },
+          {
+            blocks: [
+              {
+                ...confirmation,
+                title: {type: 'plain_text', text: 'x'.repeat(151)},
+              },
+            ],
+          },
+          {blocks: [{...confirmation, is_collapsible: false}]},
+          {
+            blocks: [
+              {
+                ...confirmation,
+                child_blocks: Array.from({length: 5}, () => ({
+                  type: 'section',
+                  text: {type: 'plain_text', text: 'x'.repeat(3000)},
+                })),
+              },
+            ],
+          },
+          {
+            blocks: [
+              {
+                ...confirmation,
+                child_blocks: [
+                  {
+                    type: 'table',
+                    rows: [
+                      [
+                        {type: 'raw_text', text: 'x'.repeat(6000)},
+                        {type: 'raw_text', text: 'y'.repeat(6000)},
+                      ],
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            blocks: [
+              {
+                ...confirmation,
+                child_blocks: [
+                  {
+                    type: 'table',
+                    rows: [
+                      [{type: 'raw_text', text: 'one'}],
+                      [
+                        {type: 'raw_text', text: 'two'},
+                        {type: 'raw_text', text: 'extra'},
+                      ],
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
           {blocks: []},
           {blocks: [{type: 'section'}]},
           {blocks: [{type: 'table', rows: [[{type: 'raw_number', value: 0}]]}]},
@@ -518,6 +624,73 @@ test('rich message workflows over local HTTP, with a repeatable evidence report'
         });
         assert.match(readText(research), /Found 1 result/);
         assert.match(readText(research), /retrievePolicy/i);
+      },
+    );
+    await step(
+      'collapsed confirmation containers preserve approvals, transport, updates and readable child evidence',
+      async () => {
+        const layout = [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: 'Seed data is confirmed available for testing.',
+            },
+          },
+          confirmation,
+        ];
+        const approved = structuredClone(layout);
+        const fallback =
+          'Seed data is confirmed available for testing. Historical changes are estimated. Read-only confirmation checked 25 lines; application testing remains separate. Evidence: https://example.com/confirmation';
+        const result = await write(
+          'slack_post_message',
+          {text: fallback, blocks: layout},
+          {
+            hasUI: true,
+            ui: {
+              confirm: async (_title: string, preview: string) => {
+                previews.push(preview);
+                confirmation.child_blocks[0].text.text =
+                  'Mutation after approval';
+                return true;
+              },
+            },
+          },
+        );
+        const ts = (result.details.parts as Array<{ts: string}>)[0].ts;
+        assert.match(previews.at(-1)!, /25 lines checked/);
+        assert.match(previews.at(-1)!, /Historical changes are estimated/);
+        assert.deepEqual(writes().at(-1)!.body.blocks, approved);
+        await write('slack_update_message', {
+          ts,
+          text: fallback,
+          blocks: approved,
+        });
+        assert.deepEqual(writes().at(-1)!.body.blocks, approved);
+        const readable = readText(
+          await run('slack_read_thread', {
+            channel,
+            threadTs: ts,
+            formatMode: 'verbatim',
+          }),
+        );
+        for (const expected of [
+          'show confirmation methods',
+          '25 lines checked',
+          'Historical changes are estimated',
+          'https://example.com/confirmation',
+        ]) {
+          assert.ok(readable.includes(expected), expected);
+        }
+        assert.doesNotMatch(readable, /Unsupported Slack content: container/);
+        const source = readText(
+          await run('slack_read_thread', {
+            channel,
+            threadTs: ts,
+            formatMode: 'blocks',
+          }),
+        );
+        assert.match(source, /"default_collapsed": true/);
       },
     );
     await step(
