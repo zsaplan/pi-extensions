@@ -8,6 +8,7 @@ import {
   readConversationHistory,
   readThreadReplies,
   resolveConversation,
+  SlackApiError,
   type SlackApiCaller,
   type SlackConversation,
   type SlackMessage,
@@ -20,6 +21,7 @@ const DEFAULT_MAX_CHANNELS = 100;
 const DEFAULT_MAX_MESSAGES_PER_CHANNEL = 200;
 const DEFAULT_MAX_RESULTS = 20;
 const DEFAULT_THREAD_REPLY_LIMIT = 50;
+const MAX_RESEARCH_THREADS = 20;
 const MAX_QUERY_TERMS = 12;
 const SNIPPET_LENGTH = 260;
 
@@ -64,6 +66,9 @@ export interface SlackResearchResult {
   channelTypes: string;
   searchedChannels: SlackConversation[];
   searchedMessages: number;
+  scannedThreads: number;
+  candidateThreads: number;
+  rateLimit?: {method: string; retryAfterSeconds?: number};
   hits: SlackResearchHit[];
 }
 
@@ -322,65 +327,88 @@ export async function researchSlackMessages(
   const channelSource = normalizeChannelSource(options.channelSource);
   const channelTypes = options.channelTypes?.trim() || 'public_channel';
 
-  const channels = await resolveResearchChannels(
-    client,
-    options,
-    maxChannels,
-    channelSource,
-    channelTypes,
-    signal,
-  );
   const hits: SlackResearchHit[] = [];
+  const searchedChannels: SlackConversation[] = [];
+  const threads: Array<{
+    channel: SlackConversation;
+    ts: string;
+    score: number;
+  }> = [];
   let searchedMessages = 0;
+  let scannedThreads = 0;
+  let rateLimit: SlackResearchResult['rateLimit'];
 
-  for (const channel of channels) {
-    const messages = await readConversationHistory(
+  try {
+    const channels = await resolveResearchChannels(
       client,
-      channel.id,
-      {
-        latest,
-        limit: maxMessagesPerChannel,
-        oldest,
-      },
+      options,
+      maxChannels,
+      channelSource,
+      channelTypes,
       signal,
     );
-    searchedMessages += messages.length;
+    for (const channel of channels) {
+      const messages = await readConversationHistory(
+        client,
+        channel.id,
+        {latest, limit: maxMessagesPerChannel, oldest},
+        signal,
+      );
+      searchedChannels.push(channel);
+      searchedMessages += messages.length;
 
-    for (const message of messages) {
-      addScoredHit(hits, channel, message, options.query, terms);
+      for (const message of messages) {
+        addScoredHit(hits, channel, message, options.query, terms);
+        if (options.includeThreadReplies && message.reply_count) {
+          threads.push({
+            channel,
+            ts: message.thread_ts ?? message.ts,
+            score: hits.at(-1)?.message === message ? hits.at(-1)!.score : 0,
+          });
+        }
+      }
+    }
 
-      if (!options.includeThreadReplies || !message.reply_count) continue;
-
-      const threadTs = message.thread_ts ?? message.ts;
+    threads.sort((a, b) => b.score - a.score || b.ts.localeCompare(a.ts));
+    for (const {channel, ts} of threads.slice(0, MAX_RESEARCH_THREADS)) {
       const replies = await readThreadReplies(
         client,
         channel.id,
-        threadTs,
-        {
-          latest,
-          limit: threadReplyLimit,
-          oldest,
-        },
+        ts,
+        {latest, limit: threadReplyLimit, oldest},
         signal,
       );
-      const replyMessages = replies.filter(reply => reply.ts !== message.ts);
-      searchedMessages += replyMessages.length;
-
-      for (const reply of replyMessages) {
-        addScoredHit(hits, channel, reply, options.query, terms, threadTs);
+      scannedThreads++;
+      for (const reply of replies) {
+        if (reply.ts === ts) continue;
+        searchedMessages++;
+        addScoredHit(hits, channel, reply, options.query, terms, ts);
       }
     }
+
+    if (options.includePermalinks) {
+      await hydratePermalinks(
+        client,
+        rankedHits().slice(0, maxResults),
+        signal,
+      );
+    }
+  } catch (error) {
+    if (!(error instanceof SlackApiError) || error.status !== 429) throw error;
+    rateLimit = {
+      method: error.method,
+      retryAfterSeconds: error.retryAfterSeconds,
+    };
   }
 
-  hits.sort((left, right) => {
-    if (right.score !== left.score) return right.score - left.score;
-    return right.message.ts.localeCompare(left.message.ts);
-  });
-
-  const selectedHits = hits.slice(0, maxResults);
-  if (options.includePermalinks) {
-    await hydratePermalinks(client, selectedHits, signal);
+  function rankedHits() {
+    return hits.sort(
+      (left, right) =>
+        right.score - left.score ||
+        right.message.ts.localeCompare(left.message.ts),
+    );
   }
+  const selectedHits = rankedHits().slice(0, maxResults);
 
   return {
     channelSource,
@@ -390,8 +418,11 @@ export async function researchSlackMessages(
     lookbackDays,
     oldest,
     query: options.query,
-    searchedChannels: channels,
+    searchedChannels,
     searchedMessages,
+    scannedThreads,
+    candidateThreads: threads.length,
+    rateLimit,
     terms,
   };
 }
@@ -430,6 +461,16 @@ export function formatResearchResult(result: SlackResearchResult): string {
       result.searchedChannels.length
     } channels.`,
     `Found ${result.hits.length} result(s).`,
+    ...(result.candidateThreads
+      ? [
+          `Scanned ${result.scannedThreads} of ${result.candidateThreads} candidate threads; unread threads may contain matches.`,
+        ]
+      : []),
+    ...(result.rateLimit
+      ? [
+          `Partial results: ${result.rateLimit.method} was rate limited.${result.rateLimit.retryAfterSeconds === undefined ? '' : ` Retry after ${result.rateLimit.retryAfterSeconds} seconds.`} Do not restart this scan; read only the remaining relevant channels or threads.`,
+        ]
+      : []),
   ].join('\n');
 
   if (result.hits.length === 0) return header;

@@ -1415,7 +1415,7 @@ export default function slackExtension(pi: ExtensionAPI) {
     promptGuidelines: [
       'Use slack_research_messages when the user asks to research what teammates discussed in Slack, find Slack context for a topic, or check recent mentions.',
       'For mention checks, use slack_auth_test with tokenKind=user and/or tokenKind=bot to get IDs, then query Slack mention syntax such as <@USER_ID> plus any text aliases.',
-      'Prefer slack_research_messages with channelSource=member and channelTypes=public_channel for broad scans of channels the selected token belongs to; add includeThreadReplies=true when replies matter.',
+      'Start with top-level messages. Add includeThreadReplies=true for a bounded second pass when replies matter. If rate limited, use the partial results and retry time; do not restart the full scan.',
       'Use oldest/latest ISO date-time bounds for calendar-day requests such as “today”; otherwise use lookbackDays for recent-window searches.',
       'Prefer passing specific channels to slack_research_messages when the likely Slack channels are known; broad research scans are capped.',
     ],
@@ -1453,6 +1453,9 @@ export default function slackExtension(pi: ExtensionAPI) {
         query: result.query,
         searchedChannels: result.searchedChannels.map(channel => channel.id),
         searchedMessages: result.searchedMessages,
+        scannedThreads: result.scannedThreads,
+        candidateThreads: result.candidateThreads,
+        rateLimit: result.rateLimit,
         tokenKind,
       });
     },

@@ -8,7 +8,7 @@ import {
   researchSlackMessages,
   scoreSlackText,
 } from '../src/research.ts';
-import type {SlackApiCaller} from '../src/slack.ts';
+import {SlackApiError, type SlackApiCaller} from '../src/slack.ts';
 
 class FakeSlackClient implements SlackApiCaller {
   readonly calls: Array<{method: string; body: Record<string, unknown>}> = [];
@@ -28,6 +28,48 @@ class FakeSlackClient implements SlackApiCaller {
     return response as T;
   }
 }
+
+test('reply throttling preserves top-level hits without issuing more reply requests', async () => {
+  const methods: string[] = [];
+  const client: SlackApiCaller = {
+    async call<T>(method: string): Promise<T> {
+      methods.push(method);
+      if (method === 'users.conversations')
+        return {ok: true, channels: [{id: 'C1', name: 'general'}]} as T;
+      if (method === 'conversations.history')
+        return {
+          ok: true,
+          messages: [
+            {ts: '2.0', text: 'needle in parent', reply_count: 1},
+            {ts: '1.0', text: 'another thread', reply_count: 1},
+          ],
+        } as T;
+      throw new SlackApiError(method, 'rate limited', {
+        status: 429,
+        retryAfterSeconds: 10,
+      });
+    },
+  };
+  const result = await researchSlackMessages(client, {
+    query: 'needle',
+    includeThreadReplies: true,
+  });
+  assert.deepEqual(methods, [
+    'users.conversations',
+    'conversations.history',
+    'conversations.replies',
+  ]);
+  assert.equal(result.hits[0].message.ts, '2.0');
+  assert.equal(result.scannedThreads, 0);
+  assert.deepEqual(result.rateLimit, {
+    method: 'conversations.replies',
+    retryAfterSeconds: 10,
+  });
+  assert.match(
+    formatResearchResult(result),
+    /Partial results: .* Retry after 10 seconds/,
+  );
+});
 
 test('extractQueryTerms keeps quoted phrases and useful words', () => {
   assert.deepEqual(extractQueryTerms('"month end" celery failures'), [
