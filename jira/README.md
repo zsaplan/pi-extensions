@@ -44,7 +44,7 @@ Descriptions and comments accept Jira-flavored Markdown and are converted to nat
 
 Legacy all-uppercase section labels and `•` bullets are also upgraded automatically. Blank input lines separate blocks without creating empty spacer paragraphs.
 
-Read results retain raw ADF and add extracted plain-text fields. Status is returned by normal issue reads/searches and changed only through workflow transitions.
+Issue reads retain raw ADF and add extracted plain text. `jira_list_comments` returns structured plain-text pages. Pass `nextStartAt` as the next `startAt`; a comment with `bodyTruncated: true` contains a preview only. Codemode callers should read the returned object directly. Status is returned by normal issue reads/searches and changed only through workflow transitions.
 
 Writes do not display an approval dialog. Tool guidance requires an explicit user request before mutation.
 

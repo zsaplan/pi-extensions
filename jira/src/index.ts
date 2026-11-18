@@ -7,6 +7,7 @@ import {
   type ExtensionCommandContext,
 } from '@earendil-works/pi-coding-agent';
 import {Type, type Static} from 'typebox';
+import {buildCommentPage, commentPageSchema} from './comment-page.ts';
 import {getJiraConfigStatusMessage, readJiraConfig} from './config.ts';
 import {
   JiraClient,
@@ -443,26 +444,28 @@ export default function jiraExtension(pi: ExtensionAPI) {
     name: 'jira_list_comments',
     label: 'Jira List Comments',
     description:
-      'List comments on a Jira issue. Each ADF body includes extracted plain text.',
+      'List a bounded page of Jira comments with plain-text bodies, truncation flags, and a resume offset.',
     promptSnippet: 'Read comments on a Jira issue.',
     promptGuidelines: [
-      'Use jira_list_comments to read issue discussion; keep maxResults narrow.',
+      'Use jira_list_comments to read issue discussion; keep maxResults narrow. In Codemode the result is an object, not text. Follow nextStartAt; a bodyTruncated flag means the full body was not read.',
     ],
     parameters: LIST_COMMENTS_SCHEMA,
+    outputSchema: commentPageSchema,
     async execute(_id, params: ListCommentsParams, signal) {
+      const startAt = params.startAt ?? 0;
+      const maxResults = bounded(params.maxResults, 15, 100);
       const response = await listComments(
         requireClient(),
         params.issueKey,
-        {
-          startAt: params.startAt ?? 0,
-          maxResults: bounded(params.maxResults, 25, 100),
-        },
+        {startAt, maxResults},
         signal,
       );
-      return result(
-        {...response, comments: (response.comments ?? []).map(enrichComment)},
-        {issueKey: params.issueKey},
-      );
+      const page = buildCommentPage(response, startAt, maxResults);
+      return {
+        content: [{type: 'text', text: JSON.stringify(page)}],
+        details: {issueKey: params.issueKey, truncated: page.truncated},
+        structuredContent: page,
+      };
     },
   });
 
