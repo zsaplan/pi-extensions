@@ -31,6 +31,10 @@ The status line favors explicit state over silence:
 
 `/pr-refresh` also reports the same state through an info, warning, or error notification.
 
+## CI checks
+
+`github_ci_run_checkpoint` checks a known GitHub Actions run once (up to 10 seconds). Pass `repository`, a string `runId`, and an absolute ISO 8601 `deadline`. If it returns `pending` or `unavailable`, reuse the returned `checkpoint` without extending the deadline. There is no background polling. A `completed` run can still have a failing conclusion.
+
 ## Commands
 
 ### `/pr-refresh`

@@ -131,17 +131,23 @@ export class SlackApiError extends Error {
   readonly method: string;
   readonly slackError?: string;
   readonly status?: number;
+  readonly retryAfterSeconds?: number;
 
   constructor(
     method: string,
     message: string,
-    options: {slackError?: string; status?: number} = {},
+    options: {
+      slackError?: string;
+      status?: number;
+      retryAfterSeconds?: number;
+    } = {},
   ) {
     super(message);
     this.name = 'SlackApiError';
     this.method = method;
     this.slackError = options.slackError;
     this.status = options.status;
+    this.retryAfterSeconds = options.retryAfterSeconds;
   }
 }
 
@@ -240,7 +246,16 @@ export class SlackClient implements SlackApiCaller {
         retryAfter
           ? `Slack API ${method} was rate limited; retry after ${retryAfter} seconds.`
           : `Slack API ${method} was rate limited.`,
-        {slackError, status: response.status},
+        {
+          slackError,
+          status: response.status,
+          retryAfterSeconds:
+            retryAfter &&
+            /^\d+$/.test(retryAfter) &&
+            Number.isSafeInteger(Number(retryAfter))
+              ? Number(retryAfter)
+              : undefined,
+        },
       );
     }
 

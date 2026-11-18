@@ -89,6 +89,7 @@ function createRuntime(
   let ghCallCount = 0;
 
   const pi = {
+    registerTool() {},
     registerCommand(name: string, options: {handler: CommandHandler}) {
       commands.set(name, options.handler);
     },
@@ -272,7 +273,7 @@ test('session cron schedules refreshes, uses cache, and clears on shutdown', asy
 
     await waitFor(
       () =>
-        runtime.getGhCallCount() === 1 && widgetUpdates(updates).length >= 1,
+        runtime.getGhCallCount() === 1 && widgetUpdates(updates).length >= 2,
       'initial PR refresh did not complete',
     );
 
@@ -294,7 +295,7 @@ test('session cron schedules refreshes, uses cache, and clears on shutdown', asy
 
     intervalRef.current?.callback();
     await waitFor(
-      () => widgetUpdates(updates).length >= 2,
+      () => widgetUpdates(updates).length >= 3,
       'cached interval refresh did not update the status widget',
     );
     assert.equal(runtime.getGhCallCount(), 1);
@@ -306,7 +307,7 @@ test('session cron schedules refreshes, uses cache, and clears on shutdown', asy
     intervalRef.current?.callback();
     await waitFor(
       () =>
-        runtime.getGhCallCount() === 2 && widgetUpdates(updates).length >= 3,
+        runtime.getGhCallCount() === 2 && widgetUpdates(updates).length >= 4,
       'expired interval refresh did not call gh again',
     );
     const refreshedLine = renderWidget(widgetUpdates(updates).at(-1)!, 200);

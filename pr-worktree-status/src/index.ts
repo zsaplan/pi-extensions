@@ -6,6 +6,7 @@ import type {
   ExtensionCommandContext,
   ExtensionContext,
 } from '@earendil-works/pi-coding-agent';
+import {registerCiCheckpoint} from './ci-checkpoint.ts';
 
 const DISPLAY_KEY = 'pr-worktree-status';
 const CACHE_VERSION = 1;
@@ -1250,6 +1251,7 @@ async function handlePrWorktree(
 }
 
 export default function prWorktreeStatus(pi: ExtensionAPI) {
+  registerCiCheckpoint(pi);
   const refreshTimers = new Map<string, NodeJS.Timeout>();
 
   function clearRefreshTimer(sessionId: string): void {
