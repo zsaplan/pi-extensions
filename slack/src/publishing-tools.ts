@@ -259,9 +259,9 @@ export function registerPublishingTools(
       'Upload evidence, reports, images, or syntax-formatted snippets to Slack.',
     promptGuidelines: [
       ...SLACK_MESSAGE_WRITING_GUIDELINES,
-      'Use slack_upload_file for files/content the user asks to upload, or for a purpose-built HTML visualization of specific findings the user asks to share in a known Slack thread when they request a visual or leave the format open. Do not upload on the strength of a proactive thread grant alone. Provide exactly one of path or content.',
+      'Use slack_upload_file for files/content the user asks to upload, or for an HTML visual reply selected under the slack-publish-report skill’s format and scope rules. A proactive update alone does not authorize an upload. Provide exactly one of path or content.',
       'slack_upload_file uploads are private without channel. threadTs must be the parent message timestamp. A session thread grant covers uploads only to that exact thread. Do not upload an entire session or unrelated sensitive evidence.',
-      'For an HTML visualization, use a descriptive .html filename, omit snippetType, and include the takeaway and material caveats in initialComment on the upload itself. Use brief message mrkdwn. snippetType is for source/logs/SQL; a Markdown snippet is not a rendered Canvas.',
+      'For an HTML visualization, use a descriptive .html filename, omit snippetType, and put the takeaway, material caveats, and any verified user-requested Slack mentions in initialComment on the upload itself. Use brief message mrkdwn. snippetType is for source/logs/SQL; a Markdown snippet is not a rendered Canvas.',
       'If slack_upload_file reports a failed or uncertain stage, inspect the returned fileId with slack_get_file_info before deciding whether to retry.',
     ],
     parameters: Type.Object({
