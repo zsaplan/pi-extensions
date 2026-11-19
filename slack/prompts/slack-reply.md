@@ -14,6 +14,6 @@ Preserve established conclusions, scope, and material uncertainty. Omit investig
 
 Reuse the substantive findings and useful comparison tables already developed in Pi. Use native Slack-supported formatting, not a raw pipe table in ordinary message text. Otherwise prefer a short paragraph or a few bullets. Include relevant verified evidence links and use verified Slack mentions for requested recipients; do not guess identities or links.
 
-Choose a format without asking when the user leaves it open. Use the publishing skill’s HTML visualization workflow if a diagram, timeline, or expandable walkthrough would materially aid understanding; otherwise use native Slack formatting. This can produce one local HTML draft and its caption, but draft mode never uploads it. Do not create other artifacts, start a watch, or conduct a new investigation merely to polish the message. For sends, inspect the final content before calling the write tool, then verify the returned result without automatically retrying an uncertain write.
+Use the publishing skill to choose the format, including whether to prepare a local HTML draft and caption. Draft mode never uploads the file. Do not create other artifacts, start a watch, or conduct a new investigation merely to polish the message. For sends, inspect the final content before calling the write tool, then verify the returned result without automatically retrying an uncertain write.
 
 Additional direction: $ARGUMENTS
