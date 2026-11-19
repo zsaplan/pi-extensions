@@ -99,7 +99,7 @@ This guidance covers non-broadcast replies only. It does not authorize unsolicit
 
 ## `/slack-reply` prompt
 
-Use `/slack-reply` to draft from the current findings, or `/slack-reply send <permalink> [direction]` to request a reply. Drafting is the default; a link alone does not authorize sending. The prompt follows the publishing skill, preserves useful tables and material uncertainty, and checks the destination, requested mentions, and evidence links. It does not start monitoring or create extra artifacts. Existing tool approval gates still apply.
+Use `/slack-reply` to draft from the current findings, or `/slack-reply send <permalink> [direction]` to request a reply. Drafting is the default; a link alone does not authorize sending. The prompt follows the publishing skill, preserves useful tables and material uncertainty, and checks the destination, requested mentions, and evidence links. It does not start monitoring. When the presentation is left open, it can prepare one local HTML visualization and caption if a native Slack reply would not explain the findings as well. Drafting never uploads the file. Existing tool approval gates still apply.
 
 The package includes the prompt; run `/reload` after updating. Send confirmations distinguish a new top-level message, a thread-only reply, and a broadcast reply, with the parent timestamp for replies.
 
@@ -108,6 +108,8 @@ The package includes the prompt; run `/reload` after updating. Send confirmation
 Message posts, edits, and upload comments share drafting instructions in `src/writing-guidelines.ts`: adapt to the audience, lead with the outcome or request, use plain language and light Slack formatting, and make follow-ups about what changed. Routine updates should usually fit in a short paragraph or a lead plus a few bullets. Requested reports/plans and important qualifications take priority over brevity.
 
 The [publishing skill](skills/slack-publish-report/SKILL.md) includes the writing workflow and [fictional message examples](skills/slack-publish-report/references/message-examples.md) for mixed audiences, operators, requests, follow-ups, and release handoffs. Formatting-only edits preserve the strength and scope of claims, not just numbers. A brief source/message/fallback check verifies count-to-environment/checkpoint relationships, uncertainty, ownership, and permission. Inspect the final assembled body after scripted changes and the actual body on readback—not just fallback previews or block types—and remove redundant wording without weakening qualifications. It is available for ordinary messages as well as Canvas reports.
+
+When asked to share specific findings in a known thread, the agent can choose one HTML visualization if a diagram, timeline, or expandable walkthrough helps more than a native Slack reply. It shares only those findings and puts the takeaway and caveats in the upload comment. Proactive updates still do not include attachments.
 
 This is prompt guidance, not automatic rewriting or a hard word limit. There is no extra model call, and existing posting permissions and verbatim-text requests are unchanged. Run `/reload` in an existing Pi session to load updated tool instructions and skill metadata.
 

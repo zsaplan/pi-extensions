@@ -76,7 +76,16 @@ For an authorized ongoing investigation, post substantive new evidence, changed 
 - Current findings for decision makers: `slack_create_canvas`, with native Markdown headings, compact tables, and evidence links. The Canvas is the current report, not the investigation diary.
 - Technical discussion: use focused thread replies for evidence and questions relevant to the participants. A thread is not a reason to dump the full investigation. Keep long logs, queries, and chronology in existing linked evidence or explicitly requested attachments/appendices. Link relevant contributions rather than copying them into every update or Canvas.
 - Exact SQL, code, logs: `slack_upload_file` with `snippetType` (e.g. `sql`). A Markdown snippet is source text, not a rendered report.
+- Visual explanation: use the workflow below when native Slack text, tables, or collapsible blocks would not explain the findings as well.
 - Downloadable evidence or images: `slack_upload_file` with a local `path`; set image `altText` when applicable.
+
+### HTML visual replies
+
+When the user asks to share specific findings in a known thread, treat presentation as your decision unless they specified a format. “Share the rollout findings in that thread” is enough to choose a timeline if seeing the order or dependencies would materially help. A simple status or a comparison that fits a Slack table stays native. Do not ask permission just to choose the format. “Share” does not authorize uploading raw logs, a transcript, or other out-of-scope material. Proactive replies without a send request never include an attachment.
+
+1. Save a self-contained HTML page outside the working tree, with inline CSS and native controls such as `<details>`. Do not use scripts, external assets, or forms. Put `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">` early in the head. If the `visualize` skill is available, use its HTML authoring guidance; this Slack workflow governs whether the file is shared.
+2. Review the final page for scope, accuracy, and sensitive content. Keep the takeaway and any material caveat in the caption too. In draft mode, return the local file and caption in Pi without uploading.
+3. For an authorized send, use `slack_upload_file` once with a descriptive `.html` filename, the intended channel and parent `threadTs`, and the caption as `initialComment`. Omit `snippetType`. Use the existing approval flow; the preview shows file metadata and caption, not the rendered page. Verify the result and thread readback; don’t claim the client rendered the controls from API readback alone.
 
 ## Editorial policy and report shape
 
